@@ -1,0 +1,81 @@
+// Pure helpers shared with the headless contract checks.
+export const CORE_BUS = 'org.zaiko.Companion';
+export const CORE_PATH = '/org/zaiko/Companion';
+export const DESKTOP_BUS = 'org.zaiko.Desktop';
+export const DESKTOP_PATH = '/org/zaiko/Desktop';
+
+export const DESKTOP_XML = `<node>
+  <interface name="org.zaiko.Desktop">
+    <method name="Present"/>
+    <method name="OpenApp">
+      <arg name="app" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+      <arg name="message" type="s" direction="out"/>
+    </method>
+  </interface>
+</node>`;
+
+export const APP_IDS = Object.freeze({
+    terminal: ['io.github.z99natza.zter.desktop'],
+    vscode: ['code.desktop', 'code-oss.desktop'],
+});
+
+export function parseSnapshot(payload) {
+    const snapshot = JSON.parse(payload);
+    if (!snapshot || !Array.isArray(snapshot.messages) ||
+        !['idle', 'thinking', 'working', 'error'].includes(snapshot.state))
+        throw new Error('Invalid companion snapshot');
+
+    const messages = snapshot.messages.map(message => {
+        if (!message || typeof message.role !== 'string' ||
+            typeof message.content !== 'string')
+            throw new Error('Invalid companion message');
+        return {role: message.role, content: message.content};
+    });
+
+    return {
+        messages,
+        state: snapshot.state,
+        request_id: typeof snapshot.request_id === 'string' ? snapshot.request_id : null,
+        error: typeof snapshot.error === 'string' ? snapshot.error : null,
+        provider: typeof snapshot.provider === 'string' ? snapshot.provider : '',
+        model: typeof snapshot.model === 'string' ? snapshot.model : '',
+    };
+}
+
+export function parseEvent(payload) {
+    const event = JSON.parse(payload);
+    if (!event || !['state', 'message', 'error', 'present'].includes(event.type))
+        throw new Error('Invalid companion event');
+    return event;
+}
+
+export function isBusy(snapshot) {
+    return ['thinking', 'working'].includes(snapshot.state);
+}
+
+export function expressionFor(snapshot) {
+    if (snapshot.state === 'error')
+        return 'sad';
+    if (snapshot.state === 'thinking')
+        return 'shy';
+    if (snapshot.state === 'working')
+        return 'surprised';
+    return snapshot.messages.at(-1)?.role === 'assistant' ? 'happy' : 'neutral';
+}
+
+export function clampPosition(x, y, width, height, area, margin = 8) {
+    const left = area.x + margin;
+    const top = area.y + margin;
+    return {
+        x: Math.round(Math.max(left, Math.min(x, Math.max(left, area.x + area.width - width - margin)))),
+        y: Math.round(Math.max(top, Math.min(y, Math.max(top, area.y + area.height - height - margin)))),
+    };
+}
+
+export function chatPosition(character, chat, area) {
+    const left = character.x - chat.width - 12;
+    const x = left >= area.x + 8 ? left : character.x + character.width + 12;
+    return clampPosition(x, character.y + character.height - chat.height,
+        chat.width, chat.height, area);
+}

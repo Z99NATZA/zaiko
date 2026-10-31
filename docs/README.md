@@ -10,19 +10,22 @@ A small 2D AI character for Linux, with a chat panel that can be shown or hidden
 The character stays visible when chat is hidden.
 
 Use Rust as the core. Start with GNOME on Wayland.
-The first tools open a terminal, a notes app, and VS Code from chat.
+The first tools open zter and VS Code from chat.
 
 Current state
 ----------
 
-Documentation and planning only. Application code and run commands are pending.
-The inspected desktop runs GNOME Shell 50.1 on Wayland.
+The Rust core, GNOME extension, app tools, and user-local installer are implemented.
+The target desktop runs GNOME Shell 50.1 on Wayland.
 ```
 
 ## Documentation
 
 | Document | Purpose |
 |---|---|
+| [Setup and run](../README.md) | Main entry point for local configuration and application commands |
+| [Runtime and development](runtime.md) | Lifecycle, configuration, paths, limits, and verification commands |
+| [IPC contract](ipc.md) | Rust/GNOME session D-Bus methods, signals, and ownership |
 | [Scope](scope.md) | Confirmed requirements, proposals, open decisions, milestones, team, and acceptance criteria |
 | [Docs format guide](docs-format-guide.md) | Layout examples for project documentation |
 
@@ -37,6 +40,13 @@ Put essential information first. Place optional explanations and extended detail
 near the end of each file for readers who want the full context.
 
 Follow docs-format-guide.md. scope.md retains its existing Markdown structure.
+
+Environment files
+----------
+
+Whenever variables are added, removed, or renamed in .env, update .env.example
+in the same change. Both files must have exactly the same variable names.
+Keep API keys and other secrets empty in .env.example.
 
 Commits
 ----------
@@ -54,7 +64,17 @@ Project: /home/znnn/my_code/zaiko
 
 zter and zhyprbola provide examples of desktop tools already used on this machine.
 The Aiko images in wfchat provide character assets and visual references.
-Their use in Zaiko remains subject to the decisions recorded in scope.md.
+Use copies of the existing images as the initial Zaiko asset set.
+The confirmed terminal is zter. The note tool is deferred from the MVP.
+
+Configuration
+----------
+
+The local .env is ready for OpenAI and DeepSeek API keys and is excluded from Git.
+.env.example has the same four variables with empty keys and can be committed.
+See the main README for the setup command, which preserves an existing .env.
+Provider/model selection uses environment configuration at startup.
+The installed runtime reads the user-local configuration copied at first install.
 
 Initial planning
 ----------

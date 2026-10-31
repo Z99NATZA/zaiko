@@ -1,0 +1,7 @@
+{
+  "uuid": "zaiko@znnn.local",
+  "name": "Zaiko",
+  "description": "A small desktop AI companion with chat and app tools.",
+  "shell-version": ["50"],
+  "version": 1
+}

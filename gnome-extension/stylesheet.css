@@ -1,0 +1,46 @@
+.zaiko-character { background-color: transparent; }
+.zaiko-chat {
+    color: #edf0ff;
+    background-color: rgba(19, 23, 40, 0.97);
+    border: 1px solid #39466f;
+    border-radius: 18px;
+    padding: 14px;
+    spacing: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+    font-size: 13px;
+}
+.zaiko-header { spacing: 8px; }
+.zaiko-title { font-size: 17px; font-weight: bold; color: #cbd4ff; }
+.zaiko-button {
+    background-color: #28324f;
+    border-radius: 9px;
+    padding: 7px 11px;
+    color: #edf0ff;
+}
+.zaiko-button:hover, .zaiko-button:focus { background-color: #3c4c79; }
+.zaiko-button:insensitive { color: #7b86a5; background-color: #20283e; }
+.zaiko-primary { background-color: #3454b9; }
+.zaiko-primary:hover, .zaiko-primary:focus { background-color: #4568d5; }
+.zaiko-quiet { padding: 5px 8px; font-size: 11px; }
+.zaiko-status { color: #a9b8e7; font-size: 11px; }
+.zaiko-error { color: #ffb6c7; }
+.zaiko-history { spacing: 9px; padding-right: 5px; }
+.zaiko-message { spacing: 4px; padding: 10px; border-radius: 10px; background-color: #202840; }
+.zaiko-message-user { background-color: #293969; }
+.zaiko-message-role { color: #afbfef; font-size: 10px; font-weight: bold; }
+.zaiko-message-content { color: #f0f1fa; }
+.zaiko-placeholder { color: #9daaca; padding: 14px 5px; }
+.zaiko-composer { spacing: 8px; }
+.zaiko-entry {
+    background-color: #11172a;
+    color: #f0f1fa;
+    border: 1px solid #3c496d;
+    border-radius: 10px;
+    padding: 10px;
+    selection-background-color: #4262bc;
+    selected-color: #ffffff;
+    caret-color: #d7dfff;
+}
+.zaiko-entry:focus { border-color: #7998ff; }
+.zaiko-entry StLabel { color: #8996b8; }
+.zaiko-hint { color: #8e9abd; font-size: 10px; }

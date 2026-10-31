@@ -1,0 +1,559 @@
+use std::{collections::HashSet, sync::Arc, time::Duration};
+
+use serde::Serialize;
+use serde_json::{Value, json};
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
+use zbus::{Connection, Proxy, fdo, object_server::SignalEmitter};
+
+use crate::{
+    config::Config,
+    provider::{App, Client, Message, Tools},
+};
+
+const BUS: &str = "org.zaiko.Companion";
+const PATH: &str = "/org/zaiko/Companion";
+const MAX_TEXT: usize = 8192;
+const MAX_MESSAGES: usize = 32;
+const MAX_HISTORY_BYTES: usize = 65_536;
+const MAX_REQUEST_IDS: usize = 4096;
+
+#[derive(Serialize)]
+struct Snapshot {
+    messages: Vec<Message>,
+    state: &'static str,
+    request_id: Option<String>,
+    error: Option<String>,
+    provider: String,
+    model: String,
+}
+
+struct Active {
+    id: String,
+    cancel: CancellationToken,
+}
+
+struct State {
+    snapshot: Snapshot,
+    active: Option<Active>,
+    seen: HashSet<String>,
+    stopping: bool,
+}
+
+impl State {
+    fn reserve(
+        &mut self,
+        id: &str,
+        content: String,
+    ) -> fdo::Result<(CancellationToken, Vec<Message>)> {
+        if id.is_empty()
+            || id.len() > 128
+            || !id
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+        {
+            return Err(fdo::Error::InvalidArgs(
+                "Request ID must contain 1–128 letters, digits, dots, hyphens or underscores."
+                    .to_owned(),
+            ));
+        }
+        if self.stopping {
+            return Err(fdo::Error::Failed("Core is stopping.".to_owned()));
+        }
+        if self.seen.contains(id) {
+            return Err(fdo::Error::Failed(
+                "Duplicate request ID; request was not executed again.".to_owned(),
+            ));
+        }
+        if self.active.is_some() {
+            return Err(fdo::Error::Failed(
+                "A request is already active.".to_owned(),
+            ));
+        }
+        if self.seen.len() >= MAX_REQUEST_IDS {
+            return Err(fdo::Error::Failed(
+                "Session request limit reached. Restart Zaiko to start a new session.".to_owned(),
+            ));
+        }
+        let cancel = CancellationToken::new();
+        self.seen.insert(id.to_owned());
+        self.active = Some(Active {
+            id: id.to_owned(),
+            cancel: cancel.clone(),
+        });
+        self.snapshot.request_id = Some(id.to_owned());
+        self.snapshot.state = "thinking";
+        self.snapshot.error = None;
+        self.append(Message {
+            role: "user".into(),
+            content,
+        });
+        Ok((cancel, self.snapshot.messages.clone()))
+    }
+
+    fn append(&mut self, message: Message) {
+        self.snapshot.messages.push(message);
+        while self.snapshot.messages.len() > MAX_MESSAGES
+            || self
+                .snapshot
+                .messages
+                .iter()
+                .map(|m| m.content.len())
+                .sum::<usize>()
+                > MAX_HISTORY_BYTES
+        {
+            self.snapshot.messages.remove(0);
+        }
+    }
+
+    fn owns(&self, id: &str) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|active| active.id == id && !active.cancel.is_cancelled())
+    }
+}
+
+struct Runtime {
+    state: Mutex<State>,
+    config: Result<Config, String>,
+    shutdown: CancellationToken,
+}
+
+impl Runtime {
+    fn new(config: Result<Config, String>) -> Arc<Self> {
+        let error = config.as_ref().err().cloned();
+        Arc::new(Self {
+            state: Mutex::new(State {
+                snapshot: Snapshot {
+                    messages: Vec::new(),
+                    state: if error.is_some() { "error" } else { "idle" },
+                    request_id: None,
+                    error,
+                    provider: config
+                        .as_ref()
+                        .map(|c| c.provider.name().to_owned())
+                        .unwrap_or_default(),
+                    model: config.as_ref().map(|c| c.model.clone()).unwrap_or_default(),
+                },
+                active: None,
+                seen: HashSet::new(),
+                stopping: false,
+            }),
+            config,
+            shutdown: CancellationToken::new(),
+        })
+    }
+
+    fn clean(&self, text: &str) -> String {
+        match &self.config {
+            Ok(config) => text.replace(&config.api_key, "[redacted]"),
+            Err(_) => text.to_owned(),
+        }
+    }
+
+    async fn accept(
+        self: &Arc<Self>,
+        connection: &Connection,
+        id: &str,
+        text: &str,
+        app: Option<App>,
+    ) -> fdo::Result<()> {
+        let text = text.trim();
+        if text.is_empty() || text.len() > MAX_TEXT {
+            return Err(fdo::Error::InvalidArgs(
+                "Text must contain 1–8192 UTF-8 bytes.".to_owned(),
+            ));
+        }
+        let (cancel, history) = {
+            let mut state = self.state.lock().await;
+            let safe_text = self.clean(text);
+            let (cancel, history) = state.reserve(id, safe_text.clone())?;
+            emit(
+                connection,
+                json!({"type":"message","request_id":id,"role":"user","content":safe_text}),
+            )
+            .await;
+            emit(
+                connection,
+                json!({"type":"state","request_id":id,"state":"thinking"}),
+            )
+            .await;
+            (cancel, history)
+        };
+        let runtime = self.clone();
+        let connection = connection.clone();
+        let id = id.to_owned();
+        tokio::spawn(async move {
+            let work = async {
+                let mut tools = DesktopTools {
+                    runtime: &runtime,
+                    connection: &connection,
+                    id: &id,
+                };
+                if let Some(app) = app {
+                    let result = tools.open_app(app).await?;
+                    if result["success"] == true {
+                        Ok(None)
+                    } else {
+                        Err(result["message"]
+                            .as_str()
+                            .unwrap_or("App launch failed.")
+                            .to_owned())
+                    }
+                } else {
+                    let client = Client::new(runtime.config.clone()?)?;
+                    client.chat(&history, &mut tools).await.map(Some)
+                }
+            };
+            let result = tokio::select! {
+                biased;
+                _=cancel.cancelled()=>return,
+                result=tokio::time::timeout(Duration::from_secs(90),work)=>match result {
+                    Ok(result)=>result,
+                    Err(_)=>Err("Request timed out. You can try again.".to_owned()),
+                }
+            };
+            runtime.finish(&connection, &id, result).await;
+        });
+        Ok(())
+    }
+
+    async fn finish(
+        &self,
+        connection: &Connection,
+        id: &str,
+        result: Result<Option<String>, String>,
+    ) {
+        let mut state = self.state.lock().await;
+        if !state.owns(id) {
+            return;
+        }
+        state.active = None;
+        state.snapshot.request_id = None;
+        match result {
+            Ok(reply) => {
+                if let Some(content) = reply {
+                    let content = self.clean(&content);
+                    state.append(Message {
+                        role: "assistant".into(),
+                        content: content.clone(),
+                    });
+                    emit(connection,json!({"type":"message","request_id":id,"role":"assistant","content":content})).await;
+                }
+                state.snapshot.state = "idle";
+                state.snapshot.error = None;
+                emit(
+                    connection,
+                    json!({"type":"state","request_id":id,"state":"idle"}),
+                )
+                .await;
+            }
+            Err(error) => {
+                let error = self.clean(&error);
+                state.snapshot.state = "error";
+                state.snapshot.error = Some(error.clone());
+                emit(
+                    connection,
+                    json!({"type":"error","request_id":id,"state":"error","message":error}),
+                )
+                .await;
+            }
+        }
+    }
+
+    async fn cancel(&self, connection: &Connection, id: &str) {
+        let mut state = self.state.lock().await;
+        if !state.owns(id) {
+            return;
+        }
+        if let Some(active) = state.active.take() {
+            active.cancel.cancel();
+        }
+        state.snapshot.request_id = None;
+        state.snapshot.state = "idle";
+        state.snapshot.error = None;
+        let content = "Request cancelled. An app launch already requested cannot be undone.";
+        state.append(Message {
+            role: "assistant".into(),
+            content: content.into(),
+        });
+        emit(
+            connection,
+            json!({"type":"message","request_id":id,"role":"assistant","content":content}),
+        )
+        .await;
+        emit(
+            connection,
+            json!({"type":"state","request_id":id,"state":"idle"}),
+        )
+        .await;
+    }
+}
+
+struct DesktopTools<'a> {
+    runtime: &'a Runtime,
+    connection: &'a Connection,
+    id: &'a str,
+}
+
+impl Tools for DesktopTools<'_> {
+    async fn open_app(&mut self, app: App) -> Result<Value, String> {
+        {
+            let mut state = self.runtime.state.lock().await;
+            if !state.owns(self.id) {
+                return Err("Request cancelled.".into());
+            }
+            state.snapshot.state = "working";
+            emit(self.connection,json!({"type":"state","request_id":self.id,"state":"working","content":format!("Opening {}…",app.name())})).await;
+        }
+        let result = tokio::time::timeout(Duration::from_secs(10), async {
+            let desktop = Proxy::new(
+                self.connection,
+                "org.zaiko.Desktop",
+                "/org/zaiko/Desktop",
+                "org.zaiko.Desktop",
+            )
+            .await?;
+            desktop
+                .call::<_, _, (bool, String)>("OpenApp", &(app.name(),))
+                .await
+        })
+        .await;
+        let (success, message) = match result {
+            Ok(Ok((success, message))) => (success, message),
+            Ok(Err(_)) => (
+                false,
+                "Desktop service is unavailable. Enable the Zaiko GNOME extension.".into(),
+            ),
+            Err(_) => (
+                false,
+                "Desktop app request timed out; launch outcome is unknown.".into(),
+            ),
+        };
+        let message = truncate(&self.runtime.clean(&message), 2048);
+        let mut state = self.runtime.state.lock().await;
+        if !state.owns(self.id) {
+            return Err("Request cancelled.".into());
+        }
+        let content = format!("{}: {}", app.name(), message);
+        state.append(Message {
+            role: "assistant".into(),
+            content: content.clone(),
+        });
+        emit(
+            self.connection,
+            json!({"type":"message","request_id":self.id,"role":"assistant","content":content}),
+        )
+        .await;
+        state.snapshot.state = "thinking";
+        emit(
+            self.connection,
+            json!({"type":"state","request_id":self.id,"state":"thinking"}),
+        )
+        .await;
+        Ok(json!({"success":success,"message":message,"app":app.name()}))
+    }
+}
+
+fn truncate(value: &str, max: usize) -> String {
+    if value.len() <= max {
+        return value.to_owned();
+    }
+    let mut end = max;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_owned()
+}
+
+async fn emit(connection: &Connection, payload: Value) {
+    let _ = connection
+        .emit_signal(None::<&str>, PATH, BUS, "Event", &(payload.to_string(),))
+        .await;
+}
+
+struct Companion {
+    runtime: Arc<Runtime>,
+}
+
+#[zbus::interface(name = "org.zaiko.Companion")]
+impl Companion {
+    async fn submit(
+        &self,
+        request_id: &str,
+        text: &str,
+        #[zbus(connection)] connection: &Connection,
+    ) -> fdo::Result<()> {
+        self.runtime
+            .accept(connection, request_id, text, None)
+            .await
+    }
+
+    async fn open_app(
+        &self,
+        request_id: &str,
+        app: &str,
+        #[zbus(connection)] connection: &Connection,
+    ) -> fdo::Result<()> {
+        let app = App::parse(app).map_err(fdo::Error::InvalidArgs)?;
+        self.runtime
+            .accept(
+                connection,
+                request_id,
+                &format!("Open {}", app.name()),
+                Some(app),
+            )
+            .await
+    }
+
+    async fn cancel(&self, request_id: &str, #[zbus(connection)] connection: &Connection) {
+        self.runtime.cancel(connection, request_id).await;
+    }
+
+    async fn get_snapshot(&self) -> String {
+        serde_json::to_string(&self.runtime.state.lock().await.snapshot)
+            .expect("snapshot serialization")
+    }
+
+    async fn show(&self, #[zbus(connection)] connection: &Connection) {
+        emit(connection, json!({"type":"present"})).await;
+        let connection = connection.clone();
+        tokio::spawn(async move {
+            let _ = tokio::time::timeout(Duration::from_secs(3), async {
+                let desktop = Proxy::new(
+                    &connection,
+                    "org.zaiko.Desktop",
+                    "/org/zaiko/Desktop",
+                    "org.zaiko.Desktop",
+                )
+                .await?;
+                desktop.call::<_, _, ()>("Present", &()).await
+            })
+            .await;
+        });
+    }
+
+    async fn quit(&self) {
+        let mut state = self.runtime.state.lock().await;
+        state.stopping = true;
+        if let Some(active) = state.active.take() {
+            active.cancel.cancel();
+        }
+        let shutdown = self.runtime.shutdown.clone();
+        tokio::spawn(async move {
+            // Let the D-Bus method response leave before releasing the service.
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            shutdown.cancel();
+        });
+    }
+
+    #[zbus(signal)]
+    async fn event(emitter: &SignalEmitter<'_>, payload: &str) -> zbus::Result<()>;
+}
+
+pub async fn run(config: Result<Config, String>) -> Result<(), String> {
+    let runtime = Runtime::new(config);
+    let connection = zbus::connection::Builder::session()
+        .map_err(|_| "Cannot connect to the session D-Bus.".to_owned())?
+        .serve_at(
+            PATH,
+            Companion {
+                runtime: runtime.clone(),
+            },
+        )
+        .map_err(|_| "Cannot register the core D-Bus interface.".to_owned())?
+        .build()
+        .await
+        .map_err(|_| {
+            "Cannot start core service. Is Zaiko already running, or is session D-Bus unavailable?"
+                .to_owned()
+        })?;
+    // Set DoNotQueue explicitly. Builder::name() in zbus 5.19 queues by
+    // default despite its documentation describing a DoNotQueue default.
+    let ownership = connection
+        .request_name_with_flags(BUS, zbus::fdo::RequestNameFlags::DoNotQueue.into())
+        .await
+        .map_err(|_| "Cannot own core service name. Is Zaiko already running?".to_owned())?;
+    if !matches!(
+        ownership,
+        zbus::fdo::RequestNameReply::PrimaryOwner | zbus::fdo::RequestNameReply::AlreadyOwner
+    ) {
+        return Err("Zaiko is already running.".to_owned());
+    }
+    tokio::select! {
+        _=runtime.shutdown.cancelled()=>{},
+        _=tokio::signal::ctrl_c()=>{},
+        _=terminate_signal()=>{},
+    }
+    let mut state = runtime.state.lock().await;
+    state.stopping = true;
+    if let Some(active) = state.active.take() {
+        active.cancel.cancel();
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn terminate_signal() {
+    if let Ok(mut signal) =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+    {
+        signal.recv().await;
+    } else {
+        std::future::pending::<()>().await;
+    }
+}
+
+#[cfg(not(unix))]
+async fn terminate_signal() {
+    std::future::pending::<()>().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn request_ids_and_active_slot_prevent_reexecution() {
+        let runtime = Runtime::new(Err("Missing test config".into()));
+        let mut state = runtime.state.lock().await;
+        assert!(state.reserve("one", "เปิด terminal".into()).is_ok());
+        assert!(state.reserve("one", "again".into()).is_err());
+        assert!(state.reserve("two", "busy".into()).is_err());
+        state.active.take().unwrap().cancel.cancel();
+        assert!(state.reserve("one", "old id".into()).is_err());
+        assert!(state.reserve("two", "new id".into()).is_ok());
+        assert!(!state.owns("one"));
+        assert!(state.owns("two"));
+    }
+
+    #[tokio::test]
+    async fn history_is_bounded_and_snapshot_has_no_credentials() {
+        let runtime = Runtime::new(Ok(Config {
+            provider: crate::config::Provider::OpenAi,
+            model: "gpt-6.1-sol".into(),
+            api_key: "dummy-secret-value".into(),
+        }));
+        let mut state = runtime.state.lock().await;
+        for _ in 0..100 {
+            state.append(Message {
+                role: "user".into(),
+                content: "x".repeat(4096),
+            });
+        }
+        assert!(
+            state
+                .snapshot
+                .messages
+                .iter()
+                .map(|m| m.content.len())
+                .sum::<usize>()
+                <= MAX_HISTORY_BYTES
+        );
+        assert!(
+            !serde_json::to_string(&state.snapshot)
+                .unwrap()
+                .contains("dummy-secret-value")
+        );
+    }
+}

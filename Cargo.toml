@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/zaiko-core"]
+resolver = "2"
