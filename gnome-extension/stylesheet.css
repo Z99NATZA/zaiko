@@ -1,9 +1,8 @@
-/* Geometry/type mirror zhyprbola's cards and SettingsPanel.qml. Colors are
- * scoped to Zaiko by themes.js, including hover, focus and disabled states. */
+/* Shared geometry and typography follow zhyprbola's controls. */
 .zaiko-character { background-color: transparent; }
-.zaiko-chat {
+.zaiko-panel {
     border: none;
-    border-radius: 26px;
+    border-radius: 22px;
     padding: 20px 24px;
     spacing: 16px;
     box-shadow: none;
@@ -21,27 +20,13 @@
     font-size: 14px;
     font-weight: 400;
 }
-.zaiko-quiet { padding: 5px 8px; font-size: 12px; }
 .zaiko-close { padding: 2px 8px; font-size: 20px; }
-.zaiko-status { font-size: 12px; }
 .zaiko-history { spacing: 8px; padding-right: 4px; }
 .zaiko-message { spacing: 4px; padding: 12px; border-radius: 11px; }
 .zaiko-message-role { font-size: 12px; font-weight: 600; }
 .zaiko-message-content { font-size: 14px; font-weight: 400; }
 .zaiko-placeholder { padding: 12px 0; }
-.zaiko-composer { spacing: 8px; }
-.zaiko-entry {
-    border: 1px solid transparent;
-    box-shadow: none;
-    border-radius: 11px;
-    padding: 10px 12px;
-    font-size: 14px;
-    font-weight: 400;
-}
-.zaiko-entry:focus { box-shadow: none; }
-.zaiko-hint { font-size: 12px; }
 .zaiko-theme-panel { spacing: 16px; padding-right: 4px; }
-.zaiko-section-title { font-size: 16px; font-weight: 600; }
 .zaiko-theme-detail { font-size: 12px; }
 .zaiko-theme-grid { spacing: 8px; }
 .zaiko-theme-row { spacing: 8px; }
@@ -54,3 +39,44 @@
 .zaiko-scroll StScrollBar { width: 6px; }
 .zaiko-scroll StScrollBar StBin#trough,
 .zaiko-scroll StScrollBar StButton#vhandle { border-radius: 3px; }
+.zaiko-input-overlay {
+    font-family: sans-serif;
+    font-size: 13px;
+    font-weight: 400;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    padding: 3px 5px;
+    spacing: 4px;
+    box-shadow: none;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+}
+.zaiko-overlay-entry, .zaiko-overlay-entry:focus {
+    border: none;
+    box-shadow: none;
+    border-radius: 6px;
+    padding: 5px 7px;
+    font-size: 13px;
+    font-weight: 400;
+}
+.zaiko-overlay-send {
+    border: 1px solid transparent;
+    border-radius: 7px;
+    padding: 5px;
+    box-shadow: none;
+}
+.zaiko-answer {
+    color: #FFFFFF;
+    background-color: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    margin: 0;
+    box-shadow: none;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+    font-family: sans-serif;
+    font-size: 14px;
+    font-weight: 400;
+}
+.zaiko-context { font-size: 14px; font-weight: 400; }
+.zaiko-context .popup-menu-content { border-radius: 14px; padding: 6px; box-shadow: none; }
+.zaiko-context .popup-menu-item { border-radius: 11px; padding: 10px 12px; }

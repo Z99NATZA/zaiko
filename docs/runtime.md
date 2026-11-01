@@ -36,7 +36,6 @@ Desktop
 ==========
 
 The GNOME 50 extension renders a 200 x 260 character on the primary monitor.
-The 360 x 440 chat panel adapts to the available work area.
 The companion follows workspaces and hides in Overview, fullscreen, and lock.
 It reserves no desktop space and does not grab the keyboard globally.
 
@@ -45,21 +44,41 @@ The extension can be disabled without stopping the core. zaiko stop ends both
 the core session and its visible companion; enabling the extension reconnects
 to an existing core.
 
-App tools
+Conversation
 ----------
 
-Click the character to show or hide chat; drag her to move.
-Cancel stops an in-progress request. Hiding chat preserves the conversation;
-Quit or zaiko stop ends it.
+Left click the character to show and focus compact input at her bottom; repeat
+clicks keep it open. Click elsewhere or press Escape to hide input, keeping its
+draft. The input is a slim translucent strip tinted by the selected theme, with
+an outlined send icon. Drag the character to move her. Enter or its embedded
+send icon submits a message and hides input once the core accepts it. Submission
+failure keeps input open and restores the draft. Click Aiko to reopen input;
+while a request is active the icon becomes Cancel. The latest answer appears as plain
+text above her head in the form [Aiko] message, with no bubble background or
+padding. It grows to its content and is limited to five wrapped lines including
+the prefix; longer answers are shortened only in this preview. Each displayed
+message disappears after 12 seconds, including waiting/error text. Repainting,
+changing theme, or reopening input does not restart that countdown. The full
+conversation stays in Log.
+
+Right click the character and choose Log to read the complete retained session
+conversation in a read-only transcript. The old comparison panel and its
+composer are removed. Log appears only when requested. Theme and Quit are also
+available from the character menu. Escape closes the focused input or support
+panel. Hiding input keeps the latest answer visible; Quit or zaiko stop ends
+the session.
 
 Appearance
 ----------
 
-The Theme button opens appearance settings; Back or Escape returns to chat.
+Choose Theme in the character menu to open appearance settings. The selected
+appearance applies to the compact input, answer text, support panel, and
+character menu.
 Zaiko uses zhyprbola's eight palettes: Purple (default), White Mist, White Sky,
-Forest Calm, One Half Gray, Red, Sakura, and Silver Dawn. Its flat card surface,
-26 px outer corners, 11 px controls, 8/16 px gaps, desktop font family, 14 px
-body, 12 px details, and semibold headings follow zhyprbola's cards and Settings.
+Forest Calm, One Half Gray, Red, Sakura, and Silver Dawn. The support panel's
+22 px outer corners, 11 px controls, 8/16 px gaps, desktop font family, 14 px
+body, 12 px details, and semibold headings follow zhyprbola's Settings. The slim
+input uses a 38 px height, 9 px corners, 13 px text, and a 16 px outlined icon.
 
 Sync with zhyprbola is off by default. Turn it on to follow the theme saved in
 ~/.config/zhyprbola/theme, including changes while Zaiko is running. The file
@@ -72,6 +91,9 @@ Appearance is saved separately in ~/.config/zaiko/ui.json, with theme and
 syncZhyprbola fields. Changes apply immediately and survive reinstalls and
 restarts. Missing or corrupt settings fall back to Purple with sync off.
 XDG_CONFIG_HOME overrides the config root for both applications.
+
+App tools
+----------
 
 Only terminal (zter) and vscode are supported. Existing windows are focused
 without minimizing them; otherwise the app's desktop launcher is activated.
@@ -111,7 +133,8 @@ History is not persisted after stop/restart.
 ```bash
 # ---------- bash ---------- #
 
-# Install the extension first, then build and run the development core.
+# Install the extension first, then start the development core without opening
+# input. Click the character when ready to type.
 make run
 
 # Rust tests, desktop protocol tests, and isolated installer/D-Bus smoke.
@@ -119,6 +142,10 @@ make test
 
 # Formatting, Rust lint, and JavaScript syntax.
 make check
+
+# Isolated GNOME compositor: character input/answer/Log, native event checks,
+# theme sync, failure paths, and lifecycle. Saves screenshots and a shell log.
+make test-desktop
 ```
 
 ## Details
@@ -137,11 +164,24 @@ chat, native virtual-pointer click/drag, Thai text retention, focus release,
 disable/re-enable cleanup, and real zter/VS Code launch and repeated activation.
 Live OpenAI conversation and tool follow-up passed using gpt-6.1-sol with a
 simulated desktop tool target. Live DeepSeek and a physical Thai IME were not
-tested. The installed extension still needs first discovery on the user's login.
+tested. Updated extension code loads after logging out of GNOME and back in.
 
 Appearance was also checked in a separate GNOME 50 compositor: all eight
 rendered palettes, theme controls, sync and restore, and disable/re-enable
 cleanup. This uses a test conversation and no live provider calls.
+
+make test-desktop runs a private GNOME compositor and D-Bus session with temporary
+HOME/XDG directories, no core or API credentials, and deterministic Submit/Cancel
+responses. It exercises native pointer/keyboard input, read-only Log, repeated
+character clicks and outside-click dismissal, five actual Pango rows including
+the Aiko prefix, font scaling and disconnect
+draft restoration, all palettes/live sync, a narrow synthetic work area, focus/menu
+release, and disable/re-enable cleanup. Artifacts remain in the printed temporary
+directory. A physical Thai IME and live providers are not exercised by this UI
+test. The isolated run emitted Clutter input-focus warnings without extension
+exceptions or observed failed interactions; their cause was not established.
+Physical Thai IME, hardware scaling, and real lock/fullscreen transitions still
+need hands-on verification.
 
 Paths
 ==========

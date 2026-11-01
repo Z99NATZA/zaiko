@@ -27,8 +27,9 @@ zaiko stop
 
 Installed config: `~/.config/zaiko/.env`.
 
-Use **Theme** in chat to choose a zhyprbola palette or enable **Sync with
-zhyprbola**. Appearance is saved separately and updates immediately.
+Click Aiko to type; click elsewhere to hide input. Enter or the send icon sends
+and hides input. Replies appear as `[Aiko] message` for 12 seconds. Right click for **Log**,
+**Theme**, or **Quit**, including optional **Sync with zhyprbola**.
 
 [Requirements and configuration](docs/runtime.md)
 

@@ -114,6 +114,8 @@ def session_checks(layout):
             cwd=working, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
         )
         eventually(lambda: has_owner("org.zaiko.Desktop"), "test desktop service readiness")
+        run([launcher, "--no-present"], cwd=working)
+        check(not log_path.exists(), "--no-present unexpectedly requested desktop presentation")
         call("OpenApp", "qa-first", "terminal")
         eventually(lambda: len(fixture_requests(log_path)) == 1, "first tool dispatch")
         call("OpenApp", "qa-overlap", "vscode", success=False)

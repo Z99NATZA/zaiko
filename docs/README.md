@@ -6,8 +6,10 @@
 Desktop companion
 ==========
 
-A small 2D AI character for Linux, with a chat panel that can be shown or hidden.
-The character stays visible when chat is hidden.
+A small 2D AI character for Linux, with compact input at her bottom, answers
+above her head, and a full conversation Log available through right click.
+Click the character to type and click elsewhere to hide input. Replies are
+plain text; the old comparison panel is removed.
 
 Use Rust as the core. Start with GNOME on Wayland.
 The first tools open zter and VS Code from chat.
@@ -26,7 +28,7 @@ The target desktop runs GNOME Shell 50.1 on Wayland.
 | [Setup and run](../README.md) | Main entry point for local configuration and application commands |
 | [Runtime and development](runtime.md) | Lifecycle, configuration, paths, limits, and verification commands |
 | [IPC contract](ipc.md) | Rust/GNOME session D-Bus methods, signals, and ownership |
-| [Scope](scope.md) | Confirmed requirements, proposals, open decisions, milestones, team, and acceptance criteria |
+| [Scope](scope.md) | Current character UI plan, implementation/review ownership, and acceptance evidence |
 | [Docs format guide](docs-format-guide.md) | Layout examples for project documentation |
 
 ## Notes
@@ -76,12 +78,10 @@ See the main README for the setup command, which preserves an existing .env.
 Provider/model selection uses environment configuration at startup.
 The installed runtime reads the user-local configuration copied at first install.
 
-Initial planning
+Current UI iteration
 ----------
 
-The initial authorization covered the project directory, documentation, planning,
-and an agent team. Application development follows the milestones in scope.md.
-
-Three agents reviewed requirements, architecture, and the work plan.
-The root agent integrates their findings and owns the documentation.
+The 2026-11-02 UI scope replaces the original MVP plan. The lead integrates,
+a desktop agent implements, and a different agent independently reviews.
+See scope.md for the active requirements and verification status.
 ```

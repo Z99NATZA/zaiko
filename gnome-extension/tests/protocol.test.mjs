@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {APP_IDS, chatPosition, clampPosition, expressionFor, isBusy, parseEvent, parseSnapshot} from '../protocol.js';
+import {APP_IDS, panelPosition, clampPosition, expressionFor, isBusy, parseEvent, parseSnapshot} from '../protocol.js';
 import {EXPRESSIONS, imageGeometry} from '../assets/manifest.js';
 
 test('snapshot preserves Thai conversation and ignores unrelated fields', () => {
@@ -22,10 +22,10 @@ test('app aliases match the desktop contract and reject inherited properties', (
     assert.equal(APP_IDS.terminal[0], 'io.github.z99natza.zter.desktop');
 });
 
-test('character and chat stay inside a work area with an offset', () => {
+test('character and on-demand panel stay inside a work area with an offset', () => {
     const area = {x: 1920, y: 36, width: 1280, height: 1044};
     assert.deepEqual(clampPosition(9999, -999, 200, 260, area), {x: 2992, y: 44});
-    const position = chatPosition({x: 1940, y: 800, width: 200, height: 260}, {width: 360, height: 440}, area);
+    const position = panelPosition({x: 1940, y: 800, width: 200, height: 260}, {width: 360, height: 440}, area);
     assert.ok(position.x >= area.x && position.x + 360 <= area.x + area.width);
     assert.ok(position.y >= area.y && position.y + 440 <= area.y + area.height);
 });

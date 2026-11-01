@@ -73,9 +73,25 @@ export function clampPosition(x, y, width, height, area, margin = 8) {
     };
 }
 
-export function chatPosition(character, chat, area) {
-    const left = character.x - chat.width - 12;
-    const x = left >= area.x + 8 ? left : character.x + character.width + 12;
-    return clampPosition(x, character.y + character.height - chat.height,
-        chat.width, chat.height, area);
+export function panelPosition(character, panel, area) {
+    const gap = 12;
+    const y = character.y + character.height - panel.height;
+    const left = clampPosition(character.x - panel.width - gap, y, panel.width, panel.height, area);
+    const right = clampPosition(character.x + character.width + gap, y, panel.width, panel.height, area);
+    const leftSpace = character.x - (left.x + panel.width);
+    const rightSpace = right.x - (character.x + character.width);
+    return leftSpace >= rightSpace ? left : right;
+}
+
+export function compactPosition(character, answer, input, area) {
+    return {
+        input: clampPosition(character.x + (character.width - input.width) / 2,
+            character.y + character.height - input.height, input.width, input.height, area),
+        answer: clampPosition(character.x + (character.width - answer.width) / 2,
+            character.y - answer.height - 8, answer.width, answer.height, area),
+    };
+}
+
+export function latestAssistant(messages) {
+    return messages.findLast(message => message.role === 'assistant')?.content ?? '';
 }

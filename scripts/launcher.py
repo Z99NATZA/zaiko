@@ -70,7 +70,7 @@ def stop():
     print("Zaiko stopped.")
 
 
-def start():
+def start(*, present=True):
     binary, config = locations()
     if not binary.is_file():
         raise RuntimeError("Core is not built. Run 'make install' or 'make run' from the project.")
@@ -109,15 +109,17 @@ def start():
                 "Enable Zaiko in Extensions; after a first install, log out and back in "
                 "if GNOME has not discovered it, then run 'zaiko' again."
             )
-        core_call("Show")
+        if present:
+            core_call("Show")
         print("Zaiko is running.")
 
 
 def main():
     args = sys.argv[1:]
     if args in (["--help"], ["-h"]):
-        print("usage: zaiko [status|stop|restart|--foreground|--version]\n"
-              "Start or show the desktop companion. Configuration is read at startup.")
+        print("usage: zaiko [status|stop|restart|--no-present|--foreground|--version]\n"
+              "Start or show the desktop companion. Configuration is read at startup.\n"
+              "--no-present starts without opening input.")
         return 0
     if args in (["--version"], ["-V"]):
         print(f"zaiko {VERSION}")
@@ -125,6 +127,9 @@ def main():
     if args == ["--foreground"]:
         binary, config = locations()
         os.execv(str(binary), [str(binary), "--config", str(config)])
+    if args == ["--no-present"]:
+        start(present=False)
+        return 0
     if args == ["status"]:
         if not has_owner(CORE):
             print("Zaiko is stopped.")

@@ -44,32 +44,45 @@ function alpha(hex, opacity) {
 
 export function themeStylesheet() {
     return THEMES.map(theme => {
-        const root = `.zaiko-chat.zaiko-theme-${theme.id}`;
+        const root = `.zaiko-panel.zaiko-theme-${theme.id}`;
+        const input = `.zaiko-input-overlay.zaiko-theme-${theme.id}`;
+        const answer = `.zaiko-answer.zaiko-theme-${theme.id}`;
+        const context = `.zaiko-context.zaiko-theme-${theme.id}`;
         return `
 ${root} { color: ${theme.text}; background-color: #FAFCFD; }
-${root} .zaiko-title, ${root} .zaiko-section-title,
-${root} .zaiko-message-content, ${root} .zaiko-theme-name { color: ${theme.text}; }
-${root} .zaiko-status, ${root} .zaiko-hint,
+${root} .zaiko-title, ${root} .zaiko-message-content,
+${root} .zaiko-theme-name { color: ${theme.text}; }
 ${root} .zaiko-placeholder, ${root} .zaiko-theme-detail { color: ${alpha(theme.text, 0.68)}; }
 ${root} .zaiko-error { color: #B83252; }
 ${root} .zaiko-button { color: ${theme.text}; background-color: ${theme.control}; }
 ${root} .zaiko-button:hover, ${root} .zaiko-button:focus { background-color: ${theme.hover}; }
 ${root} .zaiko-button:checked { background-color: ${theme.selected}; }
 ${root} .zaiko-button:insensitive { color: ${alpha(theme.text, 0.45)}; background-color: ${alpha(theme.control, 0.65)}; }
-${root} .zaiko-primary, ${root} .zaiko-sync:checked { color: #FFFFFF; background-color: ${theme.accent}; }
-${root} .zaiko-primary:hover, ${root} .zaiko-primary:focus,
+${root} .zaiko-sync:checked { color: #FFFFFF; background-color: ${theme.accent}; }
 ${root} .zaiko-sync:checked:hover, ${root} .zaiko-sync:checked:focus { background-color: ${alpha(theme.accent, 0.85)}; }
-${root} .zaiko-primary:insensitive { color: ${alpha(theme.text, 0.45)}; background-color: ${theme.track}; }
 ${root} .zaiko-message { background-color: ${theme.control}; }
 ${root} .zaiko-message-user { background-color: ${theme.selected}; }
 ${root} .zaiko-message-role, ${root} .zaiko-theme-check { color: ${theme.accent}; }
-${root} .zaiko-entry { color: ${theme.text}; background-color: ${theme.control}; border-color: transparent;
-    selection-background-color: ${theme.selected}; selected-color: ${theme.text}; caret-color: ${theme.accent}; }
-${root} .zaiko-entry:focus { border-color: ${theme.accent}; }
-${root} .zaiko-entry StLabel { color: ${alpha(theme.text, 0.68)}; }
 ${root} .zaiko-scroll StScrollBar StBin#trough { background-color: ${alpha(theme.track, 0.5)}; }
 ${root} .zaiko-scroll StScrollBar StButton#vhandle { background-color: ${theme.track}; }
-.zaiko-chat .zaiko-swatch-${theme.id} { background-color: ${theme.accent}; }
+.zaiko-panel .zaiko-swatch-${theme.id} { background-color: ${theme.accent}; }
+${input} { color: #FFFFFF; background-color: ${alpha(theme.accent, 0.18)}; border-color: ${alpha(theme.selected, 0.45)}; }
+${input} .zaiko-overlay-entry, ${input} .zaiko-overlay-entry:focus {
+    color: #FFFFFF; background-color: transparent; border-color: transparent;
+    caret-color: #FFFFFF; selection-background-color: ${alpha(theme.accent, 0.65)}; selected-color: #FFFFFF; }
+${input} .zaiko-overlay-entry StLabel { color: ${alpha('#FFFFFF', 0.65)}; }
+${input} .zaiko-overlay-send { color: ${alpha('#FFFFFF', 0.85)}; background-color: transparent; border-color: ${alpha(theme.selected, 0.3)}; }
+${input} .zaiko-overlay-send:hover, ${input} .zaiko-overlay-send:focus {
+    color: #FFFFFF; background-color: ${alpha(theme.accent, 0.28)}; border-color: ${alpha(theme.selected, 0.75)}; }
+${input} .zaiko-overlay-send:insensitive {
+    color: ${alpha('#FFFFFF', 0.3)}; background-color: transparent; border-color: ${alpha(theme.selected, 0.15)}; }
+${answer} { color: #FFFFFF; }
+${answer}.zaiko-answer-error { color: #FFB6C7; }
+${context} { color: ${theme.text}; -arrow-background-color: #FAFCFD; -arrow-border-color: ${theme.track}; }
+${context} .popup-menu-content { background-color: #FAFCFD; }
+${context} .popup-menu-item { color: ${theme.text}; }
+${context} .popup-menu-item:active, ${context} .popup-menu-item:hover,
+${context} .popup-menu-item:focus { color: ${theme.text}; background-color: ${theme.hover}; }
 `;
     }).join('\n');
 }

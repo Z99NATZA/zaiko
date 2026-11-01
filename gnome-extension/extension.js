@@ -8,14 +8,16 @@ import St from 'gi://St';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as ShellEntry from 'resource:///org/gnome/shell/ui/shellEntry.js';
+import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 import {
     APP_IDS, CORE_BUS, CORE_PATH, DESKTOP_BUS, DESKTOP_PATH, DESKTOP_XML,
-    chatPosition, clampPosition, expressionFor, isBusy, parseEvent, parseSnapshot,
+    panelPosition, clampPosition, compactPosition, expressionFor, isBusy, latestAssistant, parseEvent, parseSnapshot,
 } from './protocol.js';
 import {EXPRESSIONS, imageGeometry} from './assets/manifest.js';
 import {THEMES, themeStylesheet} from './themes.js';
 import {ThemeSettings} from './themeSettings.js';
+import {answerPreview} from './answerPreview.js';
 
 const CHARACTER_WIDTH = 200;
 const CHARACTER_HEIGHT = 260;
@@ -27,8 +29,14 @@ export default class ZaikoExtension extends Extension {
         this._epoch = 0;
         this._coreOwner = null;
         this._snapshot = {...EMPTY_SNAPSHOT};
-        this._chatOpen = false;
-        this._themePanelOpen = false;
+        this._panelOpen = false;
+        this._inputOpen = false;
+        this._answerHasText = false;
+        this._answerDisplayKey = null;
+        this._answerExpired = false;
+        this._answerHideSource = 0;
+        this._panelMode = 'log';
+        this._focusDismissSource = 0;
         this._sending = false;
         this._cancelling = false;
         this._snapshotRunning = false;
@@ -47,6 +55,8 @@ export default class ZaikoExtension extends Extension {
             this._buildActors();
             this._interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
             this._connect(this._interfaceSettings, 'changed::font-name', () => this._applyFont());
+            this._connect(this._interfaceSettings, 'changed::text-scaling-factor', () => this._layout());
+            this._connect(St.ThemeContext.get_for_stage(global.stage), 'notify::scale-factor', () => this._layout());
             this._applyFont();
             this._themeSettings = new ThemeSettings(settings => this._applyAppearance(settings));
             this._themeSettings.start();
@@ -62,6 +72,8 @@ export default class ZaikoExtension extends Extension {
                 this._updateVisibility();
             });
             this._connect(Main.sessionMode, 'updated', () => this._updateVisibility());
+            this._connect(global.stage, 'captured-event', (_stage, event) => this._dismissInputOutside(event));
+            this._connect(global.stage, 'notify::key-focus', () => this._queueFocusDismiss());
             this._layout();
 
             this._desktopObject = Gio.DBusExportedObject.wrapJSObject(DESKTOP_XML, {
@@ -105,7 +117,9 @@ export default class ZaikoExtension extends Extension {
         // Qt.application.font.family in zhyprbola follows the desktop font.
         const font = Pango.FontDescription.from_string(this._interfaceSettings.get_string('font-name'));
         const family = (font.get_family() || 'sans-serif').replaceAll('\\', '\\\\').replaceAll('"', '\\"');
-        this._chat.set_style(`font-family: "${family}";`);
+        for (const actor of [this._panel, this._inputOverlay, this._answerLabel, this._characterMenu.actor])
+            actor.set_style(`font-family: "${family}";`);
+        this._renderCompact();
     }
 
     _buildActors() {
@@ -115,18 +129,22 @@ export default class ZaikoExtension extends Extension {
             height: CHARACTER_HEIGHT,
             reactive: true,
             clip_to_allocation: true,
-            accessible_name: 'Zaiko — click to chat, drag to move',
+            accessible_name: 'Zaiko — left-click to type, right-click for Log, drag to move',
             visible: false,
         });
         this._image = new St.Widget({reactive: false});
         this._character.add_child(this._image);
         this._setExpression('neutral');
         // GNOME 50 gesture arbitration cancels the click when the pan recognizes.
-        // This avoids a stage-wide event handler or a modal keyboard grab.
+        // Keep click/drag arbitration local; outside dismissal only observes presses.
         const click = new Clutter.ClickGesture();
         click.set_required_button(Clutter.BUTTON_PRIMARY);
-        click.connect('recognize', () => this._toggleChat());
+        click.connect('recognize', () => this._showInput());
         this._character.add_action(click);
+        const secondaryClick = new Clutter.ClickGesture();
+        secondaryClick.set_required_button(Clutter.BUTTON_SECONDARY);
+        secondaryClick.connect('recognize', () => this._openCharacterMenu());
+        this._character.add_action(secondaryClick);
         const pan = new Clutter.PanGesture({
             required_button: Clutter.BUTTON_PRIMARY,
             min_n_points: 1,
@@ -134,6 +152,7 @@ export default class ZaikoExtension extends Extension {
             begin_threshold: 8,
         });
         pan.connect('recognize', () => {
+            this._characterMenu.close();
             this._dragOrigin = {x: this._character.x, y: this._character.y};
         });
         pan.connect('pan-update', gesture => {
@@ -147,64 +166,93 @@ export default class ZaikoExtension extends Extension {
         pan.connect('cancel', () => { this._dragOrigin = null; });
         this._character.add_action(pan);
 
-        this._chat = new St.BoxLayout({
-            vertical: true, style_class: 'zaiko-chat', width: 360, height: 440,
-            reactive: true, visible: false,
-        });
-        const header = new St.BoxLayout({style_class: 'zaiko-header'});
-        header.add_child(new St.Label({
-            text: 'Zaiko', style_class: 'zaiko-title', x_expand: true,
-            y_align: Clutter.ActorAlign.CENTER,
-        }));
-        this._quit = this._button('Quit', () => this._quitCore(), 'zaiko-quiet');
-        this._themeButton = this._button('Theme', () => this._toggleThemePanel(), 'zaiko-quiet', 'Theme settings');
-        header.add_child(this._themeButton);
-        header.add_child(this._quit);
-        header.add_child(this._button('×', () => this._hideChat(), 'zaiko-close', 'Hide chat'));
-        this._chat.add_child(header);
-        this._status = new St.Label({text: 'Ready', style_class: 'zaiko-status'});
-        this._status.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
-        this._status.clutter_text.line_wrap = true;
-        this._chat.add_child(this._status);
-        this._scroll = new St.ScrollView({
-            style_class: 'zaiko-scroll', x_expand: true, y_expand: true, overlay_scrollbars: true,
-        });
-        this._scroll.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC);
-        this._history = new St.BoxLayout({vertical: true, style_class: 'zaiko-history', x_expand: true});
-        this._scroll.set_child(this._history);
-        this._chat.add_child(this._scroll);
-        this._buildThemePanel();
-        const composer = new St.BoxLayout({style_class: 'zaiko-composer'});
-        this._composer = composer;
-        this._entry = new St.Entry({
-            style_class: 'zaiko-entry', hint_text: 'Message Zaiko…',
-            can_focus: true, x_expand: true,
-        });
-        ShellEntry.addContextMenu(this._entry);
-        this._entry.clutter_text.connect('activate', () => {
-            if (!this._busy())
-                this._submit();
-        });
-        this._chat.connect('key-press-event', (_actor, event) => {
-            if (event.get_key_symbol() !== Clutter.KEY_Escape)
-                return Clutter.EVENT_PROPAGATE;
-            if (this._themePanelOpen)
-                this._toggleThemePanel();
-            else
-                this._hideChat();
-            return Clutter.EVENT_STOP;
-        });
-        composer.add_child(this._entry);
-        this._send = this._button('Send', () => this._busy() ? this._cancel() : this._submit(), 'zaiko-primary');
-        composer.add_child(this._send);
-        this._chat.add_child(composer);
-        this._hint = this._wrappedLabel('Click Aiko to chat · drag to move', 'zaiko-hint');
-        this._chat.add_child(this._hint);
-        // Visibility is owned here, rather than trackFullscreen, which would
-        // otherwise re-show a hidden actor when the core is absent.
-        for (const actor of [this._character, this._chat])
+        this._buildPanel();
+        this._buildCompactActors();
+        // Visibility is owned here rather than trackFullscreen.
+        for (const actor of [this._character, this._panel, this._answerLabel, this._inputOverlay])
             Main.layoutManager.addChrome(actor, {affectsStruts: false, trackFullscreen: false});
         this._renderSnapshot();
+    }
+
+    _buildPanel() {
+        this._panel = new St.BoxLayout({
+            vertical: true, style_class: 'zaiko-panel', width: 360, height: 400,
+            reactive: true, can_focus: true, visible: false,
+        });
+        const header = new St.BoxLayout({style_class: 'zaiko-header'});
+        this._panelTitle = new St.Label({
+            text: 'Log', style_class: 'zaiko-title', x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        header.add_child(this._panelTitle);
+        header.add_child(this._button('×', () => this._hidePanel(), 'zaiko-close', 'Close panel'));
+        this._panel.add_child(header);
+        this._logScroll = new St.ScrollView({
+            style_class: 'zaiko-scroll', x_expand: true, y_expand: true, overlay_scrollbars: true,
+        });
+        this._logScroll.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC);
+        this._logHistory = new St.BoxLayout({vertical: true, style_class: 'zaiko-history', x_expand: true});
+        this._logScroll.set_child(this._logHistory);
+        this._panel.add_child(this._logScroll);
+        this._buildThemePanel();
+        this._panel.connect('key-press-event', (_actor, event) => {
+            if (event.get_key_symbol() !== Clutter.KEY_Escape)
+                return Clutter.EVENT_PROPAGATE;
+            this._hidePanel();
+            return Clutter.EVENT_STOP;
+        });
+    }
+
+    _buildCompactActors() {
+        this._inputOverlay = new St.BoxLayout({
+            style_class: 'zaiko-input-overlay',
+            width: 280, height: 38, reactive: true, visible: false,
+        });
+        this._overlayEntry = new St.Entry({
+            style_class: 'zaiko-overlay-entry', hint_text: 'Message…',
+            can_focus: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER,
+        });
+        ShellEntry.addContextMenu(this._overlayEntry);
+        this._overlayEntry.clutter_text.connect('activate', () => this._submit(this._overlayEntry));
+        this._inputOverlay.connect('key-press-event', (_actor, event) => {
+            if (event.get_key_symbol() !== Clutter.KEY_Escape)
+                return Clutter.EVENT_PROPAGATE;
+            this._hideInput(true);
+            return Clutter.EVENT_STOP;
+        });
+        this._inputOverlay.add_child(this._overlayEntry);
+        this._overlaySend = new St.Button({
+            style_class: 'zaiko-overlay-send', can_focus: true,
+            accessible_name: 'Send message', y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._overlaySendIcon = new St.Icon({icon_name: 'mail-send-symbolic', icon_size: 16});
+        this._overlaySend.set_child(this._overlaySendIcon);
+        this._overlaySend.connect('clicked', () => this._busy() ? this._cancel() : this._submit(this._overlayEntry));
+        this._inputOverlay.add_child(this._overlaySend);
+
+        // The answer is a top-level label, with no card or container behind it.
+        this._answerLabel = this._wrappedLabel('', 'zaiko-answer');
+        this._answerLabel.width = 320;
+        this._answerLabel.reactive = true;
+        this._answerLabel.visible = false;
+        this._answerLabel.clip_to_allocation = true;
+        this._answerLabel.connect('key-press-event', (_actor, event) => {
+            if (event.get_key_symbol() !== Clutter.KEY_Escape)
+                return Clutter.EVENT_PROPAGATE;
+            this._releaseFocus(true, [this._answerLabel]);
+            return Clutter.EVENT_STOP;
+        });
+
+        this._characterMenu = new PopupMenu.PopupMenu(this._character, 0.5, St.Side.TOP);
+        this._characterMenu.actor.add_style_class_name('zaiko-context');
+        this._characterMenu.addAction('Log', () => this._showLog());
+        this._characterMenu.addAction('Theme', () => this._showAppearance());
+        this._characterMenu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this._characterMenu.addAction('Quit', () => this._quitCore());
+        Main.uiGroup.add_child(this._characterMenu.actor);
+        this._characterMenu.actor.hide();
+        this._characterMenuManager = new PopupMenu.PopupMenuManager(this._character);
+        this._characterMenuManager.addMenu(this._characterMenu);
     }
 
     _buildThemePanel() {
@@ -214,7 +262,6 @@ export default class ZaikoExtension extends Extension {
         });
         this._themeScroll.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC);
         const panel = new St.BoxLayout({vertical: true, style_class: 'zaiko-theme-panel'});
-        panel.add_child(new St.Label({text: 'Appearance', style_class: 'zaiko-section-title'}));
         this._syncTheme = this._button('Sync with zhyprbola · Off',
             () => this._themeSettings.setSync(!this._themeSettings.settings.syncZhyprbola),
             'zaiko-sync', 'Sync theme with zhyprbola');
@@ -252,25 +299,16 @@ export default class ZaikoExtension extends Extension {
         }
         panel.add_child(grid);
         this._themeScroll.set_child(panel);
-        this._chat.add_child(this._themeScroll);
-    }
-
-    _toggleThemePanel() {
-        this._themePanelOpen = !this._themePanelOpen;
-        this._scroll.visible = !this._themePanelOpen;
-        this._composer.visible = !this._themePanelOpen;
-        this._status.visible = !this._themePanelOpen;
-        this._hint.visible = !this._themePanelOpen;
-        this._themeScroll.visible = this._themePanelOpen;
-        this._themeButton.label = this._themePanelOpen ? 'Back' : 'Theme';
-        if (this._themePanelOpen)
-            this._syncTheme.grab_key_focus();
-        else
-            this._entry.grab_key_focus();
+        this._panel.add_child(this._themeScroll);
     }
 
     _applyAppearance({settings, appearance, error}) {
-        this._chat.set_style_class_name(`zaiko-chat zaiko-theme-${appearance.theme.id}`);
+        this._panel.set_style_class_name(`zaiko-panel zaiko-theme-${appearance.theme.id}`);
+        this._answerLabel.set_style_class_name(`zaiko-answer zaiko-theme-${appearance.theme.id}`);
+        this._inputOverlay.set_style_class_name(`zaiko-input-overlay zaiko-theme-${appearance.theme.id}`);
+        for (const theme of THEMES)
+            this._characterMenu.actor.remove_style_class_name(`zaiko-theme-${theme.id}`);
+        this._characterMenu.actor.add_style_class_name(`zaiko-theme-${appearance.theme.id}`);
         this._syncTheme.label = `Sync with zhyprbola · ${settings.syncZhyprbola ? 'On' : 'Off'}`;
         this._syncTheme.checked = settings.syncZhyprbola;
         this._syncTheme.accessible_name = `Sync theme with zhyprbola: ${settings.syncZhyprbola ? 'on' : 'off'}`;
@@ -287,6 +325,7 @@ export default class ZaikoExtension extends Extension {
             button.can_focus = button.reactive;
             button.opacity = settings.syncZhyprbola ? 150 : 255;
         }
+        this._renderCompact();
     }
 
     _button(label, callback, extraClass = '', accessibleName = label) {
@@ -319,25 +358,41 @@ export default class ZaikoExtension extends Extension {
         const area = this._workArea();
         if (!area)
             return;
-        const position = clampPosition(x, y, CHARACTER_WIDTH, CHARACTER_HEIGHT, area);
+        // Keep answers above the head while dragging, including near the top.
+        // Tiny work areas can exhaust this reserve; compactPosition still clamps.
+        const reserve = this._answerHasText
+            ? Math.min(this._answerLabel.height + 8, Math.max(0, area.height - CHARACTER_HEIGHT - 16)) : 0;
+        const bounds = {x: area.x, y: area.y + reserve,
+            width: area.width, height: area.height - reserve};
+        const position = clampPosition(x, y, CHARACTER_WIDTH, CHARACTER_HEIGHT, bounds);
         this._character.set_position(position.x, position.y);
-        this._positionChat(area);
+        this._positionSurfaces(area);
     }
 
-    _positionChat(area) {
-        const position = chatPosition({
+    _positionSurfaces(area) {
+        const position = panelPosition({
             x: this._character.x, y: this._character.y,
             width: CHARACTER_WIDTH, height: CHARACTER_HEIGHT,
-        }, {width: this._chat.width, height: this._chat.height}, area);
-        this._chat.set_position(position.x, position.y);
+        }, {width: this._panel.width, height: this._panel.height}, area);
+        this._panel.set_position(position.x, position.y);
+        const compact = compactPosition({
+            x: this._character.x, y: this._character.y,
+            width: CHARACTER_WIDTH, height: CHARACTER_HEIGHT,
+        }, {width: this._answerLabel.width, height: this._answerLabel.height},
+        {width: this._inputOverlay.width, height: this._inputOverlay.height}, area);
+        this._inputOverlay.set_position(compact.input.x, compact.input.y);
+        this._answerLabel.set_position(compact.answer.x, compact.answer.y);
     }
 
     _layout() {
         const area = this._workArea();
         if (!area)
             return;
-        this._chat.set_size(Math.min(360, Math.max(240, area.width - 16)),
-            Math.min(440, Math.max(240, area.height - 16)));
+        this._panel.set_size(Math.min(360, Math.max(1, area.width - 16)),
+            Math.min(400, Math.max(1, area.height - 16)));
+        this._inputOverlay.width = Math.min(280, Math.max(1, area.width - 16));
+        this._answerLabel.width = Math.min(320, Math.max(1, area.width - 16));
+        this._renderCompact();
         if (!this._positioned) {
             this._positionCharacter(area.x + area.width - CHARACTER_WIDTH - 24,
                 area.y + area.height - CHARACTER_HEIGHT - 16);
@@ -354,47 +409,121 @@ export default class ZaikoExtension extends Extension {
         const monitor = Main.layoutManager.primaryMonitor;
         const show = Boolean(this._coreOwner && monitor && !monitor.inFullscreen &&
             !this._overviewShowing && !Main.sessionMode.isLocked);
-        if (!show)
+        if (!show) {
             this._releaseFocus(false);
+            this._characterMenu?.close();
+        }
         this._character.visible = show;
-        this._chat.visible = show && this._chatOpen;
+        this._panel.visible = show && this._panelOpen;
+        this._inputOverlay.visible = show && this._inputOpen;
+        this._answerLabel.visible = show && this._answerHasText;
     }
 
-    _toggleChat() {
-        if (this._chatOpen)
-            this._hideChat();
-        else
-            this._present();
+    _showInput() {
+        if (!this._enabled)
+            return;
+        this._rememberFocus();
+        this._inputOpen = true;
+        this._updateVisibility();
+        if (this._inputOverlay.visible)
+            this._overlayEntry.grab_key_focus();
     }
 
     _present() {
-        if (!this._enabled)
-            return;
-        const focus = global.stage.get_key_focus();
-        if (!focus || !this._chat.contains(focus))
-            this._focusBeforeChat = global.display.focus_window;
-        this._chatOpen = true;
-        this._updateVisibility();
-        if (this._chat.visible)
-            (this._themePanelOpen ? this._syncTheme : this._entry).grab_key_focus();
+        this._showInput();
     }
 
-    _releaseFocus(restore) {
+    _showLog() {
+        this._showPanel('log');
+    }
+
+    _showAppearance() {
+        this._showPanel('appearance');
+    }
+
+    _showPanel(mode) {
+        this._rememberFocus();
+        this._characterMenu.close();
+        this._hideInput(false);
+        this._panelMode = mode;
+        this._panelTitle.text = mode === 'appearance' ? 'Appearance' : 'Log';
+        this._logScroll.visible = mode === 'log';
+        this._themeScroll.visible = mode === 'appearance';
+        this._panelOpen = true;
+        this._updateVisibility();
+        if (this._panel.visible)
+            (mode === 'appearance' ? this._syncTheme : this._panel).grab_key_focus();
+    }
+
+    _openCharacterMenu() {
+        if (!this._character.visible)
+            return;
+        this._rememberFocus();
+        this._characterMenu.toggle();
+    }
+
+    _ownsFocus(focus, actors = [this._panel, this._inputOverlay, this._answerLabel]) {
+        return Boolean(focus && actors.some(actor => actor?.contains(focus)));
+    }
+
+    _rememberFocus() {
         const focus = global.stage.get_key_focus();
-        const ownedFocus = focus && (this._chat?.contains(focus) ||
-            this._entry?.menu?.actor.contains(focus));
-        this._entry?.menu?.close();
+        const roots = [this._panel, this._inputOverlay, this._answerLabel, this._characterMenu?.actor,
+            this._overlayEntry?.menu?.actor];
+        if (!this._ownsFocus(focus, roots))
+            this._focusBeforeUI = global.display.focus_window;
+    }
+
+    _releaseFocus(restore, actors = [this._panel, this._inputOverlay, this._answerLabel, this._characterMenu?.actor]) {
+        const focus = global.stage.get_key_focus();
+        const roots = [...actors];
+        if (actors.includes(this._inputOverlay)) {
+            roots.push(this._overlayEntry?.menu?.actor);
+            this._overlayEntry?.menu?.close();
+        }
+        if (actors.includes(this._characterMenu?.actor))
+            this._characterMenu?.close();
+        const ownedFocus = this._ownsFocus(focus, roots);
         if (!ownedFocus)
             return;
         global.stage.set_key_focus(null);
-        if (restore && this._focusBeforeChat?.get_compositor_private())
-            Main.activateWindow(this._focusBeforeChat);
+        if (restore && this._focusBeforeUI?.get_compositor_private())
+            Main.activateWindow(this._focusBeforeUI);
     }
 
-    _hideChat() {
-        this._releaseFocus(true);
-        this._chatOpen = false;
-        this._chat.hide();
+    _hidePanel() {
+        this._panelOpen = false;
+        this._releaseFocus(true, [this._panel]);
+        this._panel.hide();
+    }
+
+    _hideInput(restore = false) {
+        this._inputOpen = false;
+        this._releaseFocus(restore, [this._inputOverlay]);
+        this._inputOverlay.hide();
+    }
+
+    _dismissInputOutside(event) {
+        if (!this._inputOpen || ![Clutter.EventType.BUTTON_PRESS, Clutter.EventType.TOUCH_BEGIN].includes(event.type()))
+            return Clutter.EVENT_PROPAGATE;
+        const source = global.stage.get_event_actor(event);
+        if (!this._ownsFocus(source, [this._inputOverlay, this._character, this._overlayEntry?.menu?.actor]))
+            this._hideInput(false);
+        // Observe only: the same press still reaches its original desktop target.
+        return Clutter.EVENT_PROPAGATE;
+    }
+
+    _queueFocusDismiss() {
+        if (this._focusDismissSource || !this._inputOpen)
+            return;
+        this._focusDismissSource = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            this._focusDismissSource = 0;
+            const allowed = [this._inputOverlay, this._character, this._overlayEntry?.menu?.actor,
+                this._characterMenu?.actor];
+            if (this._enabled && this._inputOpen && !this._ownsFocus(global.stage.get_key_focus(), allowed))
+                this._hideInput(false);
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _coreAppeared(owner) {
@@ -428,6 +557,7 @@ export default class ZaikoExtension extends Extension {
 
     _clearCore() {
         this._epoch++;
+        this._clearAnswerTimeout();
         this._sessionCancellable?.cancel();
         this._sessionCancellable = null;
         if (this._eventSubscription)
@@ -439,13 +569,16 @@ export default class ZaikoExtension extends Extension {
         this._sending = false;
         this._cancelling = false;
         this._pendingRequestId = null;
+        this._snapshot = {...EMPTY_SNAPSHOT};
+        this._historySignature = null;
     }
 
     _coreVanished() {
         if (!this._enabled)
             return;
         this._clearCore();
-        this._chatOpen = false;
+        this._panelOpen = false;
+        this._inputOpen = false;
         this._updateVisibility();
         this._renderSnapshot();
     }
@@ -506,28 +639,18 @@ export default class ZaikoExtension extends Extension {
     }
 
     _renderSnapshot() {
-        if (!this._chat)
+        if (!this._panel)
             return;
-        const busy = this._busy();
-        const error = this._uiError || this._snapshotError || this._snapshot.error;
-        const status = {idle: 'Ready', thinking: 'Thinking…', working: 'Opening app…', error: 'Something went wrong'};
-        this._status.text = error || (this._sending ? 'Sending…' : status[this._snapshot.state]);
-        this._status.set_style_class_name(`zaiko-status${error ? ' zaiko-error' : ''}`);
-        this._send.label = this._cancelling ? 'Stopping…' : busy ? 'Cancel' : 'Send';
-        this._send.reactive = Boolean(this._coreOwner && !this._cancelling);
-        this._send.can_focus = this._send.reactive;
-        this._entry.clutter_text.editable = Boolean(this._coreOwner && !busy);
-        this._quit.reactive = Boolean(this._coreOwner);
-        this._quit.can_focus = this._quit.reactive;
         this._setExpression(expressionFor(this._snapshot));
+        this._renderCompact();
         const signature = JSON.stringify(this._snapshot.messages);
         if (signature === this._historySignature)
             return;
         this._historySignature = signature;
-        this._history.destroy_all_children();
+        this._logHistory.destroy_all_children();
         if (!this._snapshot.messages.length) {
-            const placeholder = this._wrappedLabel('Say hello, or ask me to open zter or VS Code.', 'zaiko-placeholder');
-            this._history.add_child(placeholder);
+            const placeholder = this._wrappedLabel('No conversation yet.', 'zaiko-placeholder');
+            this._logHistory.add_child(placeholder);
         }
         for (const message of this._snapshot.messages) {
             const box = new St.BoxLayout({
@@ -535,18 +658,18 @@ export default class ZaikoExtension extends Extension {
                 style_class: `zaiko-message${message.role === 'user' ? ' zaiko-message-user' : ''}`,
             });
             box.add_child(new St.Label({
-                text: message.role === 'user' ? 'You' : message.role === 'tool' ? 'Action' : 'Zaiko',
+                text: message.role === 'user' ? 'You' : message.role === 'tool' ? 'Action' : 'Aiko',
                 style_class: 'zaiko-message-role',
             }));
             box.add_child(this._wrappedLabel(message.content, 'zaiko-message-content'));
-            this._history.add_child(box);
+            this._logHistory.add_child(box);
         }
         if (this._scrollSource)
             GLib.Source.remove(this._scrollSource);
         this._scrollSource = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
             this._scrollSource = 0;
             if (this._enabled) {
-                const adjustment = this._scroll.get_vadjustment();
+                const adjustment = this._logScroll.get_vadjustment();
                 adjustment.value = Math.max(adjustment.lower, adjustment.upper - adjustment.page_size);
             }
             return GLib.SOURCE_REMOVE;
@@ -562,8 +685,69 @@ export default class ZaikoExtension extends Extension {
         return label;
     }
 
-    async _submit() {
-        const text = this._entry.get_text().trim();
+    _clearAnswerTimeout() {
+        if (this._answerHideSource)
+            GLib.Source.remove(this._answerHideSource);
+        this._answerHideSource = 0;
+        this._answerDisplayKey = null;
+        this._answerExpired = false;
+        this._answerHasText = false;
+    }
+
+    _renderCompact() {
+        if (!this._answerLabel)
+            return;
+        const busy = this._busy();
+        const error = this._uiError || this._snapshotError || this._snapshot.error ||
+            (this._snapshot.state === 'error' ? 'Something went wrong.' : null);
+        const text = error || (this._sending ? 'Sending…'
+            : this._snapshot.state === 'thinking' ? 'Thinking…'
+                : this._snapshot.state === 'working' ? 'Opening app…'
+                    : latestAssistant(this._snapshot.messages));
+        const contentWidth = Math.max(1, this._answerLabel.width);
+        const layout = this._answerLabel.clutter_text.get_layout().copy();
+        layout.set_font_description(this._answerLabel.get_theme_node().get_font());
+        layout.set_single_paragraph_mode(false);
+        const display = text ? `[Aiko] ${text}` : '';
+        // Repaints, theme changes and reopening input must not prolong a message.
+        // The count also distinguishes a new reply with exactly the same text.
+        const key = JSON.stringify([display,
+            this._snapshot.messages.filter(message => message.role === 'assistant').length]);
+        if (key !== this._answerDisplayKey) {
+            this._clearAnswerTimeout();
+            this._answerDisplayKey = key;
+            if (display && this._coreOwner) {
+                this._answerHideSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 12000, () => {
+                    this._answerHideSource = 0;
+                    this._answerExpired = true;
+                    this._answerHasText = false;
+                    this._releaseFocus(false, [this._answerLabel]);
+                    this._updateVisibility();
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
+        }
+        this._answerPreview = answerPreview(layout, display, contentWidth);
+        this._answerLabel.text = this._answerPreview.text;
+        this._answerLabel.accessible_name = display;
+        this._answerLabel.set_size(contentWidth, this._answerPreview.height);
+        this._answerHasText = Boolean(text) && !this._answerExpired;
+        if (error)
+            this._answerLabel.add_style_class_name('zaiko-answer-error');
+        else
+            this._answerLabel.remove_style_class_name('zaiko-answer-error');
+        this._overlaySendIcon.icon_name = busy ? 'process-stop-symbolic' : 'mail-send-symbolic';
+        this._overlaySend.accessible_name = this._cancelling ? 'Stopping request' : busy ? 'Cancel request' : 'Send message';
+        this._overlaySend.reactive = Boolean(this._coreOwner && !this._cancelling);
+        this._overlaySend.can_focus = this._overlaySend.reactive;
+        this._overlayEntry.clutter_text.editable = Boolean(this._coreOwner && !busy);
+        if (this._positioned)
+            this._positionCharacter(this._character.x, this._character.y);
+        this._updateVisibility();
+    }
+
+    async _submit(entry = this._overlayEntry) {
+        const text = entry.get_text().trim();
         if (!text || this._busy() || !this._coreOwner)
             return;
         const epoch = this._epoch;
@@ -571,16 +755,20 @@ export default class ZaikoExtension extends Extension {
         this._pendingRequestId = requestId;
         this._sending = true;
         this._uiError = null;
-        this._entry.set_text('');
+        entry.set_text('');
         this._renderSnapshot();
         try {
             await this._callCore('Submit', new GLib.Variant('(ss)', [requestId, text]));
+            if (this._enabled && epoch === this._epoch)
+                this._hideInput(true);
         } catch (_error) {
-            if (this._enabled && epoch === this._epoch) {
+            // A lost core may cancel the RPC after incrementing the epoch.
+            // Preserve its draft only in the surviving, still-empty source;
+            // never write into an actor replaced by disable/re-enable.
+            if (this._enabled && entry === this._overlayEntry && !entry.get_text())
+                entry.set_text(text);
+            if (this._enabled && epoch === this._epoch)
                 this._uiError = 'Message could not be sent. Please try again.';
-                if (!this._entry.get_text())
-                    this._entry.set_text(text);
-            }
         } finally {
             if (this._enabled && epoch === this._epoch) {
                 this._sending = false;
@@ -658,6 +846,9 @@ export default class ZaikoExtension extends Extension {
         this._themeSettings?.destroy();
         this._themeSettings = null;
         this._releaseFocus(false);
+        this._characterMenu?.destroy();
+        this._characterMenu = null;
+        this._characterMenuManager = null;
         this._clearCore();
         if (this._coreWatch)
             Gio.bus_unwatch_name(this._coreWatch);
@@ -674,26 +865,35 @@ export default class ZaikoExtension extends Extension {
         if (this._scrollSource)
             GLib.Source.remove(this._scrollSource);
         this._scrollSource = 0;
-        for (const actor of [this._chat, this._character]) {
+        if (this._focusDismissSource)
+            GLib.Source.remove(this._focusDismissSource);
+        this._focusDismissSource = 0;
+        for (const actor of [this._panel, this._character, this._inputOverlay, this._answerLabel]) {
             if (!actor)
                 continue;
             Main.layoutManager.removeChrome(actor);
             actor.destroy();
         }
-        this._chat = null;
+        this._panel = null;
+        this._panelTitle = null;
+        this._logScroll = null;
+        this._logHistory = null;
         this._character = null;
         this._image = null;
         this._expression = null;
         this._positioned = false;
         this._dragOrigin = null;
-        this._focusBeforeChat = null;
+        this._focusBeforeUI = null;
         this._themeButtons = [];
         this._themeScroll = null;
-        this._themeButton = null;
         this._syncTheme = null;
         this._themeDetail = null;
-        this._composer = null;
-        this._hint = null;
+        this._inputOverlay = null;
+        this._overlayEntry = null;
+        this._overlaySend = null;
+        this._overlaySendIcon = null;
+        this._answerLabel = null;
+        this._answerPreview = null;
         if (this._paletteFile) {
             this._paletteTheme?.unload_stylesheet(this._paletteFile);
             this._paletteFile.delete(null);
