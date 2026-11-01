@@ -52,6 +52,27 @@ Click the character to show or hide chat; drag her to move.
 Cancel stops an in-progress request. Hiding chat preserves the conversation;
 Quit or zaiko stop ends it.
 
+Appearance
+----------
+
+The Theme button opens appearance settings; Back or Escape returns to chat.
+Zaiko uses zhyprbola's eight palettes: Purple (default), White Mist, White Sky,
+Forest Calm, One Half Gray, Red, Sakura, and Silver Dawn. Its flat card surface,
+26 px outer corners, 11 px controls, 8/16 px gaps, desktop font family, 14 px
+body, 12 px details, and semibold headings follow zhyprbola's cards and Settings.
+
+Sync with zhyprbola is off by default. Turn it on to follow the theme saved in
+~/.config/zhyprbola/theme, including changes while Zaiko is running. The file
+is read-only to Zaiko; zhyprbola does not need to be running. While syncing,
+manual theme buttons are disabled. Turning sync off restores your last manual
+choice. A missing or unknown source uses that manual choice and waits for a
+supported theme to appear. The legacy rose-galaxy name maps to Sakura.
+
+Appearance is saved separately in ~/.config/zaiko/ui.json, with theme and
+syncZhyprbola fields. Changes apply immediately and survive reinstalls and
+restarts. Missing or corrupt settings fall back to Purple with sync off.
+XDG_CONFIG_HOME overrides the config root for both applications.
+
 Only terminal (zter) and vscode are supported. Existing windows are focused
 without minimizing them; otherwise the app's desktop launcher is activated.
 Success reports a launch/activation request, not verified window visibility.
@@ -107,7 +128,8 @@ Verification boundary
 ==========
 
 make test covers mock provider flows, request validation/cancellation, protocol
-helpers, and an isolated installer/session-bus harness. make check covers lint
+helpers, live Gio theme monitoring/persistence in temporary directories, and an
+isolated installer/session-bus harness. make check covers lint
 and syntax. These commands do not call a live provider or start GNOME Shell.
 
 Additional checks ran in a separate GNOME 50.1 compositor: rendered character and
@@ -117,6 +139,10 @@ Live OpenAI conversation and tool follow-up passed using gpt-6.1-sol with a
 simulated desktop tool target. Live DeepSeek and a physical Thai IME were not
 tested. The installed extension still needs first discovery on the user's login.
 
+Appearance was also checked in a separate GNOME 50 compositor: all eight
+rendered palettes, theme controls, sync and restore, and disable/re-enable
+cleanup. This uses a test conversation and no live provider calls.
+
 Paths
 ==========
 
@@ -124,6 +150,7 @@ Launcher: ~/.local/bin/zaiko
 Core and launcher support: ~/.local/share/zaiko/
 Extension: ~/.local/share/gnome-shell/extensions/zaiko@znnn.local/
 Configuration: ~/.config/zaiko/.env
+Appearance: ~/.config/zaiko/ui.json
 Log: ~/.local/state/zaiko/core.log
 
 The default installed runtime is independent of the source checkout.

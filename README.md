@@ -27,6 +27,9 @@ zaiko stop
 
 Installed config: `~/.config/zaiko/.env`.
 
+Use **Theme** in chat to choose a zhyprbola palette or enable **Sync with
+zhyprbola**. Appearance is saved separately and updates immediately.
+
 [Requirements and configuration](docs/runtime.md)
 
 [Documentation](docs/README.md)

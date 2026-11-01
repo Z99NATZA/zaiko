@@ -14,6 +14,8 @@ import {
     chatPosition, clampPosition, expressionFor, isBusy, parseEvent, parseSnapshot,
 } from './protocol.js';
 import {EXPRESSIONS, imageGeometry} from './assets/manifest.js';
+import {THEMES, themeStylesheet} from './themes.js';
+import {ThemeSettings} from './themeSettings.js';
 
 const CHARACTER_WIDTH = 200;
 const CHARACTER_HEIGHT = 260;
@@ -26,6 +28,7 @@ export default class ZaikoExtension extends Extension {
         this._coreOwner = null;
         this._snapshot = {...EMPTY_SNAPSHOT};
         this._chatOpen = false;
+        this._themePanelOpen = false;
         this._sending = false;
         this._cancelling = false;
         this._snapshotRunning = false;
@@ -40,7 +43,13 @@ export default class ZaikoExtension extends Extension {
         this._overviewShowing = Main.overview.visible;
 
         try {
+            this._loadThemeStylesheet();
             this._buildActors();
+            this._interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
+            this._connect(this._interfaceSettings, 'changed::font-name', () => this._applyFont());
+            this._applyFont();
+            this._themeSettings = new ThemeSettings(settings => this._applyAppearance(settings));
+            this._themeSettings.start();
             this._connect(Main.layoutManager, 'monitors-changed', () => this._layout());
             this._connect(global.display, 'workareas-changed', () => this._layout());
             this._connect(global.display, 'in-fullscreen-changed', () => this._updateVisibility());
@@ -81,6 +90,22 @@ export default class ZaikoExtension extends Extension {
     _connect(object, signal, callback) {
         const id = object.connect(signal, callback);
         this._signals.push([object, id]);
+    }
+
+    _loadThemeStylesheet() {
+        this._paletteDirectory = GLib.dir_make_tmp('zaiko-themes-XXXXXX');
+        this._paletteFile = Gio.File.new_for_path(
+            GLib.build_filenamev([this._paletteDirectory, 'palettes.css']));
+        GLib.file_set_contents(this._paletteFile.get_path(), themeStylesheet());
+        this._paletteTheme = St.ThemeContext.get_for_stage(global.stage).get_theme();
+        this._paletteTheme.load_stylesheet(this._paletteFile);
+    }
+
+    _applyFont() {
+        // Qt.application.font.family in zhyprbola follows the desktop font.
+        const font = Pango.FontDescription.from_string(this._interfaceSettings.get_string('font-name'));
+        const family = (font.get_family() || 'sans-serif').replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+        this._chat.set_style(`font-family: "${family}";`);
     }
 
     _buildActors() {
@@ -132,21 +157,25 @@ export default class ZaikoExtension extends Extension {
             y_align: Clutter.ActorAlign.CENTER,
         }));
         this._quit = this._button('Quit', () => this._quitCore(), 'zaiko-quiet');
+        this._themeButton = this._button('Theme', () => this._toggleThemePanel(), 'zaiko-quiet', 'Theme settings');
+        header.add_child(this._themeButton);
         header.add_child(this._quit);
-        header.add_child(this._button('×', () => this._hideChat(), 'zaiko-quiet', 'Hide chat'));
+        header.add_child(this._button('×', () => this._hideChat(), 'zaiko-close', 'Hide chat'));
         this._chat.add_child(header);
         this._status = new St.Label({text: 'Ready', style_class: 'zaiko-status'});
         this._status.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         this._status.clutter_text.line_wrap = true;
         this._chat.add_child(this._status);
         this._scroll = new St.ScrollView({
-            x_expand: true, y_expand: true, overlay_scrollbars: true,
+            style_class: 'zaiko-scroll', x_expand: true, y_expand: true, overlay_scrollbars: true,
         });
         this._scroll.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC);
         this._history = new St.BoxLayout({vertical: true, style_class: 'zaiko-history', x_expand: true});
         this._scroll.set_child(this._history);
         this._chat.add_child(this._scroll);
+        this._buildThemePanel();
         const composer = new St.BoxLayout({style_class: 'zaiko-composer'});
+        this._composer = composer;
         this._entry = new St.Entry({
             style_class: 'zaiko-entry', hint_text: 'Message Zaiko…',
             can_focus: true, x_expand: true,
@@ -156,24 +185,108 @@ export default class ZaikoExtension extends Extension {
             if (!this._busy())
                 this._submit();
         });
-        this._entry.clutter_text.connect('key-press-event', (_actor, event) => {
+        this._chat.connect('key-press-event', (_actor, event) => {
             if (event.get_key_symbol() !== Clutter.KEY_Escape)
                 return Clutter.EVENT_PROPAGATE;
-            this._hideChat();
+            if (this._themePanelOpen)
+                this._toggleThemePanel();
+            else
+                this._hideChat();
             return Clutter.EVENT_STOP;
         });
         composer.add_child(this._entry);
         this._send = this._button('Send', () => this._busy() ? this._cancel() : this._submit(), 'zaiko-primary');
         composer.add_child(this._send);
         this._chat.add_child(composer);
-        this._chat.add_child(new St.Label({
-            text: 'Click Aiko to hide chat · drag her to move', style_class: 'zaiko-hint',
-        }));
+        this._hint = this._wrappedLabel('Click Aiko to chat · drag to move', 'zaiko-hint');
+        this._chat.add_child(this._hint);
         // Visibility is owned here, rather than trackFullscreen, which would
         // otherwise re-show a hidden actor when the core is absent.
         for (const actor of [this._character, this._chat])
             Main.layoutManager.addChrome(actor, {affectsStruts: false, trackFullscreen: false});
         this._renderSnapshot();
+    }
+
+    _buildThemePanel() {
+        this._themeScroll = new St.ScrollView({
+            style_class: 'zaiko-scroll', x_expand: true, y_expand: true,
+            overlay_scrollbars: true, visible: false,
+        });
+        this._themeScroll.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC);
+        const panel = new St.BoxLayout({vertical: true, style_class: 'zaiko-theme-panel'});
+        panel.add_child(new St.Label({text: 'Appearance', style_class: 'zaiko-section-title'}));
+        this._syncTheme = this._button('Sync with zhyprbola · Off',
+            () => this._themeSettings.setSync(!this._themeSettings.settings.syncZhyprbola),
+            'zaiko-sync', 'Sync theme with zhyprbola');
+        panel.add_child(this._syncTheme);
+        this._themeDetail = this._wrappedLabel('', 'zaiko-theme-detail');
+        panel.add_child(this._themeDetail);
+        const grid = new St.BoxLayout({vertical: true, style_class: 'zaiko-theme-grid'});
+        this._themeButtons = [];
+        for (let i = 0; i < THEMES.length; i += 2) {
+            const row = new St.BoxLayout({style_class: 'zaiko-theme-row', x_expand: true});
+            row.layout_manager.homogeneous = true;
+            for (const theme of THEMES.slice(i, i + 2)) {
+                const button = this._button('', () => this._themeSettings.setTheme(theme.id),
+                    'zaiko-theme-option', theme.label);
+                button.x_expand = true;
+                const content = new St.BoxLayout({style_class: 'zaiko-theme-option-content'});
+                content.add_child(new St.Widget({
+                    style_class: `zaiko-theme-swatch zaiko-swatch-${theme.id}`,
+                    y_align: Clutter.ActorAlign.CENTER,
+                }));
+                content.add_child(new St.Label({
+                    text: theme.label, style_class: 'zaiko-theme-name',
+                    x_expand: true, y_align: Clutter.ActorAlign.CENTER,
+                }));
+                const check = new St.Label({
+                    text: '✓', style_class: 'zaiko-theme-check',
+                    y_align: Clutter.ActorAlign.CENTER, opacity: 0,
+                });
+                content.add_child(check);
+                button.set_child(content);
+                row.add_child(button);
+                this._themeButtons.push({id: theme.id, button, check});
+            }
+            grid.add_child(row);
+        }
+        panel.add_child(grid);
+        this._themeScroll.set_child(panel);
+        this._chat.add_child(this._themeScroll);
+    }
+
+    _toggleThemePanel() {
+        this._themePanelOpen = !this._themePanelOpen;
+        this._scroll.visible = !this._themePanelOpen;
+        this._composer.visible = !this._themePanelOpen;
+        this._status.visible = !this._themePanelOpen;
+        this._hint.visible = !this._themePanelOpen;
+        this._themeScroll.visible = this._themePanelOpen;
+        this._themeButton.label = this._themePanelOpen ? 'Back' : 'Theme';
+        if (this._themePanelOpen)
+            this._syncTheme.grab_key_focus();
+        else
+            this._entry.grab_key_focus();
+    }
+
+    _applyAppearance({settings, appearance, error}) {
+        this._chat.set_style_class_name(`zaiko-chat zaiko-theme-${appearance.theme.id}`);
+        this._syncTheme.label = `Sync with zhyprbola · ${settings.syncZhyprbola ? 'On' : 'Off'}`;
+        this._syncTheme.checked = settings.syncZhyprbola;
+        this._syncTheme.accessible_name = `Sync theme with zhyprbola: ${settings.syncZhyprbola ? 'on' : 'off'}`;
+        this._themeDetail.text = error || (appearance.synced
+            ? `Following zhyprbola · ${appearance.theme.label}`
+            : settings.syncZhyprbola
+                ? `Waiting for zhyprbola · using ${appearance.theme.label}`
+                : 'Choose a theme or enable sync.');
+        this._themeDetail.set_style_class_name(`zaiko-theme-detail${error ? ' zaiko-error' : ''}`);
+        for (const {id, button, check} of this._themeButtons) {
+            button.checked = appearance.theme.id === id;
+            check.opacity = button.checked ? 255 : 0;
+            button.reactive = !settings.syncZhyprbola;
+            button.can_focus = button.reactive;
+            button.opacity = settings.syncZhyprbola ? 150 : 255;
+        }
     }
 
     _button(label, callback, extraClass = '', accessibleName = label) {
@@ -263,7 +376,7 @@ export default class ZaikoExtension extends Extension {
         this._chatOpen = true;
         this._updateVisibility();
         if (this._chat.visible)
-            this._entry.grab_key_focus();
+            (this._themePanelOpen ? this._syncTheme : this._entry).grab_key_focus();
     }
 
     _releaseFocus(restore) {
@@ -542,6 +655,8 @@ export default class ZaikoExtension extends Extension {
 
     disable() {
         this._enabled = false;
+        this._themeSettings?.destroy();
+        this._themeSettings = null;
         this._releaseFocus(false);
         this._clearCore();
         if (this._coreWatch)
@@ -555,6 +670,7 @@ export default class ZaikoExtension extends Extension {
         for (const [object, id] of this._signals ?? [])
             object.disconnect(id);
         this._signals = [];
+        this._interfaceSettings = null;
         if (this._scrollSource)
             GLib.Source.remove(this._scrollSource);
         this._scrollSource = 0;
@@ -571,5 +687,21 @@ export default class ZaikoExtension extends Extension {
         this._positioned = false;
         this._dragOrigin = null;
         this._focusBeforeChat = null;
+        this._themeButtons = [];
+        this._themeScroll = null;
+        this._themeButton = null;
+        this._syncTheme = null;
+        this._themeDetail = null;
+        this._composer = null;
+        this._hint = null;
+        if (this._paletteFile) {
+            this._paletteTheme?.unload_stylesheet(this._paletteFile);
+            this._paletteFile.delete(null);
+        }
+        this._paletteFile = null;
+        this._paletteTheme = null;
+        if (this._paletteDirectory)
+            GLib.rmdir(this._paletteDirectory);
+        this._paletteDirectory = null;
     }
 }

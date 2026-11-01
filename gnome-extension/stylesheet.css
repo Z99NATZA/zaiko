@@ -1,46 +1,56 @@
+/* Geometry/type mirror zhyprbola's cards and SettingsPanel.qml. Colors are
+ * scoped to Zaiko by themes.js, including hover, focus and disabled states. */
 .zaiko-character { background-color: transparent; }
 .zaiko-chat {
-    color: #edf0ff;
-    background-color: rgba(19, 23, 40, 0.97);
-    border: 1px solid #39466f;
-    border-radius: 18px;
-    padding: 14px;
-    spacing: 10px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
-    font-size: 13px;
+    border: none;
+    border-radius: 26px;
+    padding: 20px 24px;
+    spacing: 16px;
+    box-shadow: none;
+    font-family: sans-serif;
+    font-size: 14px;
+    font-weight: 400;
 }
 .zaiko-header { spacing: 8px; }
-.zaiko-title { font-size: 17px; font-weight: bold; color: #cbd4ff; }
+.zaiko-title { font-size: 19px; font-weight: 600; }
 .zaiko-button {
-    background-color: #28324f;
-    border-radius: 9px;
-    padding: 7px 11px;
-    color: #edf0ff;
+    border: none;
+    box-shadow: none;
+    border-radius: 11px;
+    padding: 10px 12px;
+    font-size: 14px;
+    font-weight: 400;
 }
-.zaiko-button:hover, .zaiko-button:focus { background-color: #3c4c79; }
-.zaiko-button:insensitive { color: #7b86a5; background-color: #20283e; }
-.zaiko-primary { background-color: #3454b9; }
-.zaiko-primary:hover, .zaiko-primary:focus { background-color: #4568d5; }
-.zaiko-quiet { padding: 5px 8px; font-size: 11px; }
-.zaiko-status { color: #a9b8e7; font-size: 11px; }
-.zaiko-error { color: #ffb6c7; }
-.zaiko-history { spacing: 9px; padding-right: 5px; }
-.zaiko-message { spacing: 4px; padding: 10px; border-radius: 10px; background-color: #202840; }
-.zaiko-message-user { background-color: #293969; }
-.zaiko-message-role { color: #afbfef; font-size: 10px; font-weight: bold; }
-.zaiko-message-content { color: #f0f1fa; }
-.zaiko-placeholder { color: #9daaca; padding: 14px 5px; }
+.zaiko-quiet { padding: 5px 8px; font-size: 12px; }
+.zaiko-close { padding: 2px 8px; font-size: 20px; }
+.zaiko-status { font-size: 12px; }
+.zaiko-history { spacing: 8px; padding-right: 4px; }
+.zaiko-message { spacing: 4px; padding: 12px; border-radius: 11px; }
+.zaiko-message-role { font-size: 12px; font-weight: 600; }
+.zaiko-message-content { font-size: 14px; font-weight: 400; }
+.zaiko-placeholder { padding: 12px 0; }
 .zaiko-composer { spacing: 8px; }
 .zaiko-entry {
-    background-color: #11172a;
-    color: #f0f1fa;
-    border: 1px solid #3c496d;
-    border-radius: 10px;
-    padding: 10px;
-    selection-background-color: #4262bc;
-    selected-color: #ffffff;
-    caret-color: #d7dfff;
+    border: 1px solid transparent;
+    box-shadow: none;
+    border-radius: 11px;
+    padding: 10px 12px;
+    font-size: 14px;
+    font-weight: 400;
 }
-.zaiko-entry:focus { border-color: #7998ff; }
-.zaiko-entry StLabel { color: #8996b8; }
-.zaiko-hint { color: #8e9abd; font-size: 10px; }
+.zaiko-entry:focus { box-shadow: none; }
+.zaiko-hint { font-size: 12px; }
+.zaiko-theme-panel { spacing: 16px; padding-right: 4px; }
+.zaiko-section-title { font-size: 16px; font-weight: 600; }
+.zaiko-theme-detail { font-size: 12px; }
+.zaiko-theme-grid { spacing: 8px; }
+.zaiko-theme-row { spacing: 8px; }
+.zaiko-theme-option { padding: 9px 12px; }
+.zaiko-theme-option-content { spacing: 10px; }
+.zaiko-theme-swatch { width: 22px; height: 22px; border-radius: 7px; }
+.zaiko-theme-name { font-size: 14px; font-weight: 400; }
+.zaiko-theme-check { font-size: 14px; font-weight: 700; }
+.zaiko-sync { padding: 10px 12px; }
+.zaiko-scroll StScrollBar { width: 6px; }
+.zaiko-scroll StScrollBar StBin#trough,
+.zaiko-scroll StScrollBar StButton#vhandle { border-radius: 3px; }
