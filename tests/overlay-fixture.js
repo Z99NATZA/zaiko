@@ -85,6 +85,7 @@ export default class OverlayQA extends ZaikoExtension {
             Gio.bus_unwatch_name(this._coreWatch);
         this._coreWatch = 0;
         this._coreOwner = 'qa-only-no-provider';
+        qaAssert(!this._themeSettings && !this._showAppearance && !this._paletteDirectory, 'Theme settings, chooser and generated palette loader are removed');
         this._refreshSnapshot = () => {};
         const calls = [];
         this._callCore = async (method, parameters) => {
@@ -184,8 +185,9 @@ export default class OverlayQA extends ZaikoExtension {
         await qaPause(6000);
         this._renderSnapshot();
         this._showInput();
-        this._themeSettings.setTheme('forest');
-        qaAssert(this._answerHideSource === answerTimer, 'Unchanged message is not prolonged by repaint/input/theme changes');
+        GLib.file_set_contents(`${GLib.get_user_config_dir()}/zaiko/ui.json`, '{"theme":"forest","syncZhyprbola":true}');
+        GLib.file_set_contents(`${GLib.get_user_config_dir()}/zhyprbola/theme`, 'forest');
+        qaAssert(this._answerHideSource === answerTimer, 'Unchanged message is not prolonged by repaint/input/ignored legacy preference changes');
         this._answerLabel.clutter_text.grab_key_focus();
         await qaPause(6200);
         qaAssert(!this._answerLabel.visible && this._answerHideSource === 0, 'Message expires after twelve seconds');
@@ -276,19 +278,23 @@ export default class OverlayQA extends ZaikoExtension {
 
         await this._click(this._character, Clutter.BUTTON_SECONDARY);
         qaAssert(this._characterMenu.isOpen, 'Native right click opens menu');
+        qaAssert(!this._answerLabel.visible, 'Floating text does not show through the translucent menu');
         await qaPause(100);
         await this._shot('character-context-menu');
         const items = this._characterMenu._getMenuItems();
-        qaAssert(items.length === 3 && items.map(item => item.label?.text).join(',') === 'Log,Theme,Quit', 'Character menu has only three actions without a separator');
+        qaAssert(items.length === 2 && items.map(item => item.label?.text).join(',') === 'Log,Quit', 'Character menu has Log and Quit only, without a chooser or separator');
         qaAssert(this._characterMenu.box.get_theme_node().get_border_radius(St.Corner.TOPLEFT) === 8 &&
-            qaColor(this._characterMenu.box.get_theme_node().get_background_color(), this._activeTheme.control), 'Character menu keeps the requested compact themed style');
+            qaColor(this._characterMenu.box.get_theme_node().get_background_color(), '#141820'), 'Character menu keeps the fixed compact glass style');
         const logItem = items.find(item => item.label?.text === 'Log');
-        qaAssert(items.some(item => item.label?.text === 'Theme') && items.some(item => item.label?.text === 'Quit'), 'Theme and Quit remain reachable');
+        qaAssert(!items.some(item => item.label?.text === 'Theme') && items.some(item => item.label?.text === 'Quit'), 'Quit is reachable and theme selection is gone');
+        await this._key(Clutter.KEY_Escape);
+        qaAssert(this._answerLabel.visible, 'Closing menu restores unexpired floating text');
+        await this._click(this._character, Clutter.BUTTON_SECONDARY);
         await this._click(logItem.actor);
-        qaAssert(this._panel.visible && this._panelMode === 'log' && !this._characterMenu.isOpen, 'Log opens only on request');
+        qaAssert(this._panel.visible && !this._characterMenu.isOpen, 'Log opens only on request');
         qaAssert(this._logComposer.visible && !this._inputOverlay.visible, 'Log owns the active composer');
         qaAssert(!this._answerLabel.visible, 'Floating message does not overlap Log');
-        qaAssert(!this._panelHeader.visible && this._panelTitle.text === '', 'Conversation has no title/header row');
+        qaAssert(!this._panelHeader && !this._panelTitle, 'Conversation has no title/header row');
         qaAssert(this._panelClose.visible && !this._panel.contains(this._panelClose), 'Close floats independently of the content layout');
         qaAssert(this._panelClose.width === this._panelClose.height &&
             this._panelClose.get_theme_node().get_border_radius(St.Corner.TOPLEFT) >= this._panelClose.width / 2,
@@ -299,7 +305,7 @@ export default class OverlayQA extends ZaikoExtension {
         for (const row of rows) {
             qaAssert(row.get_theme_node().get_background_color().alpha === 0 && row.get_theme_node().get_padding(St.Side.LEFT) === 0, 'Transcript has no bubble background or padding');
             qaAssert(row.clutter_text.get_line_alignment() === Pango.Alignment.LEFT, 'All text is left aligned');
-            qaAssert(qaColor(row.get_theme_node().get_foreground_color(), this._activeTheme.text), 'Message bodies share the selected theme color');
+            qaAssert(qaColor(row.get_theme_node().get_foreground_color(), '#F2F5FC'), 'Message bodies share one fixed light color');
         }
         const meColor = qaTextColorAt(rows[0], 1);
         const aikoColor = qaTextColorAt(rows[1], 1);
@@ -359,11 +365,12 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(this._overlayEntry.get_text() === 'compact draft retained', 'Log failure leaves compact draft unchanged');
         this._uiError = null;
         this._renderSnapshot();
-        this._logEntry.set_text('theme keeps this draft');
-        this._themeSettings.setTheme('red');
+        this._logEntry.set_text('style keeps this draft');
+        this._interfaceSettings.set_string('font-name', 'Serif 11');
         await qaPause(100);
-        qaAssert(qaTextColorAt(this._logHistory.get_child_at_index(1), 1) !== aikoColor, 'Theme recolors prefixes without changing history');
-        qaAssert(this._logEntry.get_text() === 'theme keeps this draft' && qaContainsText(this._logHistory, literal), 'Theme preserves Log draft and literal message');
+        qaAssert(qaTextColorAt(this._logHistory.get_child_at_index(1), 1) === aikoColor, 'Fixed prefix color survives desktop font changes');
+        qaAssert(this._logEntry.get_text() === 'style keeps this draft' && qaContainsText(this._logHistory, literal), 'Font updates preserve draft and literal message');
+        this._interfaceSettings.set_string('font-name', 'Sans 11');
         const originalMessages = this._snapshot.messages;
         this._snapshot.messages = Array.from({length: 30}, (_, index) => ({
             role: index % 2 ? 'assistant' : 'user',
@@ -389,8 +396,8 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(thumb && thumb.width <= 6 && thumb.get_theme_node().get_border_width(St.Side.LEFT) === 0,
             `Scrollbar thumb should be slim: ${JSON.stringify({thumb: thumb?.toString(), width: thumb?.width,
                 border: thumb?.get_theme_node().get_border_width(St.Side.LEFT), bars: barDetails})}`);
-        qaAssert(qaColor(thumb.get_theme_node().get_background_color(), this._activeTheme.accent),
-            'Scrollbar thumb follows the selected theme accent');
+        qaAssert(qaColor(thumb.get_theme_node().get_background_color(), '#F2F5FC'),
+            'Scrollbar thumb uses the same fixed light style');
         outside.hide();
         await this._shot('chat-scroll');
         this._snapshot.messages = originalMessages;
@@ -404,25 +411,16 @@ export default class OverlayQA extends ZaikoExtension {
         await this._click(this._character);
         qaAssert(this._inputOverlay.visible && this._overlayEntry.get_text() === 'compact draft retained', 'Closing Log re-enables compact input with its draft');
         this._showLog();
-        qaAssert(this._logEntry.get_text() === 'theme keeps this draft' && !this._inputOverlay.visible, 'Reopened Log restores its distinct draft');
+        qaAssert(this._logEntry.get_text() === 'style keeps this draft' && !this._inputOverlay.visible, 'Reopened Log restores its distinct draft');
         // Move the pointer off the send icon so hover color does not affect palette checks.
         this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), 100, 80);
         this._showInput();
-        for (const theme of THEMES) {
-            this._themeSettings.setTheme(theme.id);
-            await qaPause(70);
-            const surface = this._inputOverlay.get_theme_node().get_background_color();
-            qaAssert(qaColor(surface, theme.accent) && surface.alpha > 0 && surface.alpha < 128,
-                `Translucent input follows palette ${theme.id}`);
-            qaAssert(this._overlaySend.get_theme_node().get_background_color().alpha === 0, 'Send has no solid fill');
-            qaAssert(this._answerLabel.get_theme_node().get_background_color().alpha === 0, 'All themes keep reply transparent');
-            qaAssert(qaColor(this._panel.get_theme_node().get_background_color(), theme.control), `Conversation surface follows ${theme.id}`);
-            qaAssert(qaColor(this._panelClose.get_theme_node().get_background_color(), theme.control), 'Floating close follows the same theme');
-            qaAssert(qaColor(this._characterMenu.box.get_theme_node().get_background_color(), theme.control), 'Character right-click menu follows theme changes');
-            for (const row of this._logHistory.get_children())
-                qaAssert(qaColor(row.get_theme_node().get_foreground_color(), theme.text), 'Transcript follows theme body color');
-        }
-
+        const surface = this._inputOverlay.get_theme_node().get_background_color();
+        qaAssert(qaColor(surface, '#141820') && surface.alpha > 0 && surface.alpha < 128, 'Compact input uses the fixed translucent surface');
+        qaAssert(this._overlaySend.get_theme_node().get_background_color().alpha === 0, 'Send keeps its outlined style');
+        qaAssert(this._answerLabel.get_theme_node().get_background_color().alpha === 0, 'Reply remains transparent');
+        const panelSurface = this._panel.get_theme_node().get_background_color();
+        qaAssert(qaColor(panelSurface, '#141820') && panelSurface.alpha > 0 && panelSurface.alpha < 128, 'Conversation uses the same translucent style as input');
         this._snapshot.state = 'thinking';
         this._snapshot.request_id = 'qa-thinking-clock';
         this._renderSnapshot();
@@ -442,17 +440,11 @@ export default class OverlayQA extends ZaikoExtension {
         this._snapshot.request_id = null;
         this._renderSnapshot();
         qaAssert(this._thinkingSource === 0 && this._thinkingStartedUs === 0, 'Thinking clock stops when request finishes');
-        this._showAppearance();
+        this._showLog();
         this._panelClose.grab_key_focus();
         await this._key(Clutter.KEY_Escape);
         qaAssert(!this._panel.visible && !this._panelClose.visible, 'Floating close also supports Escape');
         this._hidePanel();
-        const ext = `${GLib.get_user_config_dir()}/zhyprbola`;
-        GLib.mkdir_with_parents(ext, 0o700);
-        GLib.file_set_contents(`${ext}/theme`, 'forest');
-        this._themeSettings.setSync(true);
-        await qaPause(150);
-        qaAssert(qaColor(this._inputOverlay.get_theme_node().get_background_color(), '#477F6D'), 'Live sync applies');
         this._hideInput();
         const startX = this._character.x;
         const startY = this._character.y;
@@ -521,12 +513,10 @@ export default class OverlayQA extends ZaikoExtension {
         let destroyedActors = 0;
         for (const actor of actors)
             actor.connect('destroy', () => { destroyedActors++; });
-        const paletteDirectory = this._paletteDirectory;
         this.disable();
         qaAssert(destroyedActors === actors.length, 'Disable destroys actors/menu');
         qaAssert(stageSignals.every(id => !GObject.signal_handler_is_connected(global.stage, id)), 'Disable disconnects outside-click handler');
         qaAssert(this._answerHideSource === 0, 'Disable cancels answer expiry timer');
-        qaAssert(!GLib.file_test(paletteDirectory, GLib.FileTest.EXISTS), 'Disable removes palettes');
         await this._click(outside);
         qaAssert(outsideClicks === 2, 'Outside target works after disable');
         ZaikoExtension.prototype.enable.call(this);
@@ -535,6 +525,6 @@ export default class OverlayQA extends ZaikoExtension {
         outside.destroy();
         this._pointer = null;
         this._keyboard = null;
-        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, Enter/icon/cancel/failure/drafts, theme updates, 12-second messages and lifecycle'});
+        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, Enter/icon/cancel/failure/drafts, fixed glass style/no theme chooser, 12-second messages and lifecycle'});
     }
 }

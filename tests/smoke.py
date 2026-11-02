@@ -228,9 +228,23 @@ def main():
         check(variable_names(installed_config) == variable_names(source / ".env.example"),
               "Generated isolated config/example variable names differ")
         check(installed_config.stat().st_mode & 0o077 == 0, "Installed config permits group/other access")
+        extension = Path(env["XDG_DATA_HOME"]) / "gnome-shell/extensions/zaiko@znnn.local"
+        retired = ("themes.js", "themeSettings.js", "tests/themes.test.mjs", "tests/theme-settings.mjs")
+        for name in retired:
+            obsolete = extension / name
+            obsolete.parent.mkdir(parents=True, exist_ok=True)
+            obsolete.write_text("// QA retired module\n")
+        marker = extension / "user-preserved.txt"
+        marker.write_text("QA unrelated file")
+        legacy_ui = Path(env["XDG_CONFIG_HOME"]) / "zaiko/ui.json"
+        legacy_ui.write_text('{"theme":"red","syncZhyprbola":true}')
         config_source.write_text("OPENAI_API_KEY=qa-replacement-must-not-win\n")
         run(install, env=env, cwd=base)
         check(installed_config.read_bytes() == fixture_bytes, "Reinstall overwrote existing config")
+        check(all(not (extension / name).exists() for name in retired), "Reinstall retained retired theme modules")
+        check(marker.read_text() == "QA unrelated file", "Cleanup removed unrelated files")
+        check(legacy_ui.read_text() == '{"theme":"red","syncZhyprbola":true}',
+              "Reinstall changed preserved legacy preferences")
         launcher = Path(env["ZAIKO_BIN_DIR"]) / "zaiko"
         check(launcher.is_file() and os.access(launcher, os.X_OK), "Launcher not installed executable")
         check((data / "zaiko-core").is_file(), "Core binary not installed")

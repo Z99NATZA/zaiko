@@ -49,7 +49,7 @@ Conversation
 
 Left click the character to show and focus compact input at her bottom; repeat
 clicks keep it open. Click elsewhere or press Escape to hide input, keeping its
-draft. The input is a slim translucent strip tinted by the selected theme, with
+draft. The input is a slim translucent strip with a thin light outline and
 an outlined send icon. Drag the character to move her. Enter or its embedded
 send icon submits a message and hides input once the core accepts it. Submission
 failure keeps input open and restores the draft. Click Aiko to reopen input;
@@ -58,7 +58,7 @@ text above her head in the form [Aiko] message, with no bubble background or
 padding. It grows to its content and is limited to five wrapped lines including
 the prefix; longer answers are shortened only in this preview. Each displayed
 completed message or error disappears after 12 seconds. Repainting,
-changing theme, or reopening input does not restart that countdown. The full
+changing the desktop font, or reopening input does not restart that countdown. The full
 conversation stays in Log.
 
 Thinking displays elapsed time, for example [Aiko] Thinking... (3s),
@@ -82,42 +82,30 @@ request guard prevents overlapping sends from either input.
 The floating answer is hidden while Log is open to avoid overlapping text. Its
 12-second timer continues, and closing Log shows it only if it has not expired.
 
-The old comparison panel is removed. Log appears only when requested. Theme and Quit are also
-available from the character menu. Escape closes the focused input or support
+The old comparison panel is removed. Log appears only when requested. Quit is
+also available from the character menu. Escape closes the focused input or support
 panel. Hiding input keeps the latest answer visible; Quit or zaiko stop ends
 the session.
 The conversation has no title/header row. A circular close control floats at
 its corner without taking transcript space; it supports click and Escape.
-The character's right-click menu has three compact themed rows: Log, Theme,
-and Quit, with no separator. Input Copy/Paste menus use their original GNOME
+The character's right-click menu has two compact rows: Log and Quit, with no
+separator. Floating answer text is hidden while this translucent menu is open,
+so it cannot overlap the menu labels. Input Copy/Paste menus use their original GNOME
 appearance and actions, without additional shortcut labels.
 
-Appearance
+Fixed appearance
 ----------
 
-Choose Theme in the character menu to open appearance settings. The selected
-appearance applies to the compact input, answer text, support panel, and
-character menu.
-The existing palettes remain selectable: Purple (default), White Mist, White
-Sky, Forest Calm, One Half Gray, Red, Sakura, and Silver Dawn. The conversation
-uses the selected palette for its surface, composer, text, floating close, and
-slim rounded scrollbar. It keeps Zaiko's own 12 px outer corners, 16 px padding,
-flat text rows, and integrated composer. Theme-compatible prefix colors change without
-altering the common body color or drafts. The layout no longer follows
-zhyprbola component geometry. The slim
-input uses a 38 px height, 9 px corners, 13 px text, and a 16 px outlined icon.
+Zaiko uses one static translucent style matching the compact input: thin light
+outlines, light text, rounded controls, and a slim scrollbar. The conversation
+has a 12 px outer radius and 16 px padding. Both composers use 38 px height,
+9 px corners, 13 px text, and a 16 px outlined send/cancel icon. Log prefixes
+use fixed blue/lavender colors while message bodies share one light color.
 
-Sync with zhyprbola is off by default. Turn it on to follow the theme saved in
-~/.config/zhyprbola/theme, including changes while Zaiko is running. The file
-is read-only to Zaiko; zhyprbola does not need to be running. While syncing,
-manual theme buttons are disabled. Turning sync off restores your last manual
-choice. A missing or unknown source uses that manual choice and waits for a
-supported theme to appear. The legacy rose-galaxy name maps to Sakura.
-
-Appearance is saved separately in ~/.config/zaiko/ui.json, with theme and
-syncZhyprbola fields. Changes apply immediately and survive reinstalls and
-restarts. Missing or corrupt settings fall back to Purple with sync off.
-XDG_CONFIG_HOME overrides the config root for both applications.
+Theme selection and sync are removed and deferred to a future task. There is
+no appearance page, palette registry, generated palette stylesheet, or preference
+watcher. An old ~/.config/zaiko/ui.json is ignored and preserved; Zaiko does not
+read zhyprbola configuration. Desktop font-family/scaling settings still apply.
 
 App tools
 ----------
@@ -171,7 +159,7 @@ make test
 make check
 
 # Isolated GNOME compositor: character input/answer/Log, native event checks,
-# theme sync, failure paths, and lifecycle. Saves screenshots and a shell log.
+# fixed glass styling, failure paths, and lifecycle. Saves screenshots and a shell log.
 make test-desktop
 ```
 
@@ -182,8 +170,8 @@ Verification boundary
 ==========
 
 make test covers mock provider flows, request validation/cancellation, protocol
-helpers, live Gio theme monitoring/persistence in temporary directories, and an
-isolated installer/session-bus harness. make check covers lint
+helpers, literal transcript presentation, and an isolated installer/session-bus
+harness, including retired-module cleanup and configuration preservation. make check covers lint
 and syntax. These commands do not call a live provider or start GNOME Shell.
 
 Additional checks ran in a separate GNOME 50.1 compositor: rendered character and
@@ -193,16 +181,13 @@ Live OpenAI conversation and tool follow-up passed using gpt-6.1-sol with a
 simulated desktop tool target. Live DeepSeek and a physical Thai IME were not
 tested. Updated extension code loads after logging out of GNOME and back in.
 
-Appearance was also checked in a separate GNOME 50 compositor: all eight
-rendered palettes, theme controls, sync and restore, and disable/re-enable
-cleanup. This uses a test conversation and no live provider calls.
-
 make test-desktop runs a private GNOME compositor and D-Bus session with temporary
 HOME/XDG directories, no core or API credentials, and deterministic Submit/Cancel
 responses. It exercises native pointer/keyboard input, Log conversation, repeated
 character clicks and outside-click dismissal, five actual Pango rows including
 the Aiko prefix, font scaling and disconnect
-draft restoration, all palettes/live sync, a narrow synthetic work area, focus/menu
+draft restoration, ignored legacy appearance settings, a narrow synthetic work
+area, focus/menu
 release, and disable/re-enable cleanup. Artifacts remain in the printed temporary
 directory. A physical Thai IME and live providers are not exercised by this UI
 test. The isolated run emitted Clutter input-focus warnings without extension
@@ -217,7 +202,6 @@ Launcher: ~/.local/bin/zaiko
 Core and launcher support: ~/.local/share/zaiko/
 Extension: ~/.local/share/gnome-shell/extensions/zaiko@znnn.local/
 Configuration: ~/.config/zaiko/.env
-Appearance: ~/.config/zaiko/ui.json
 Log: ~/.local/state/zaiko/core.log
 
 The default installed runtime is independent of the source checkout.
@@ -230,7 +214,9 @@ Installer testing
 ----------
 
 scripts/install.py supports --binary PATH, --config-source PATH, and --no-enable.
-The integration harness uses temporary HOME/XDG paths, synthetic keys, a private
+Reinstallation removes only retired theme modules/tests from the installed
+extension and preserves API configuration, ignored old ui.json, and unrelated
+files. The integration harness uses temporary HOME/XDG paths, synthetic keys, a private
 session bus, and a fake desktop service. It never calls a provider or opens apps.
 These checks do not by themselves verify pointer gestures or a real Thai IME.
 ```

@@ -91,6 +91,9 @@ def main():
     for item in (PROJECT / "gnome-extension").rglob("*"):
         if item.is_file():
             atomic_copy(item, extension / item.relative_to(PROJECT / "gnome-extension"))
+    # Remove only retired Zaiko-owned code; user configuration is preserved.
+    for obsolete in ("themes.js", "themeSettings.js", "tests/themes.test.mjs", "tests/theme-settings.mjs"):
+        (extension / obsolete).unlink(missing_ok=True)
     config_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:
         fd = os.open(config_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

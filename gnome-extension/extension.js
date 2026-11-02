@@ -16,8 +16,6 @@ import {
     transcriptLine, formatElapsed,
 } from './protocol.js';
 import {EXPRESSIONS, imageGeometry} from './assets/manifest.js';
-import {THEMES, logPrefixColor, themeStylesheet} from './themes.js';
-import {ThemeSettings} from './themeSettings.js';
 import {answerPreview} from './answerPreview.js';
 
 const CHARACTER_WIDTH = 200;
@@ -39,15 +37,12 @@ export default class ZaikoExtension extends Extension {
         this._thinkingStartedUs = 0;
         this._thinkingRequestId = null;
         this._thinkingSource = 0;
-        this._panelMode = 'log';
-        this._activeTheme = THEMES[0];
         this._focusDismissSource = 0;
         this._sending = false;
         this._cancelling = false;
         this._snapshotRunning = false;
         this._snapshotDirty = false;
         this._signals = [];
-        this._scrollParts = [];
         this._eventSubscription = 0;
         this._scrollSource = 0;
         this._uiError = null;
@@ -57,15 +52,12 @@ export default class ZaikoExtension extends Extension {
         this._overviewShowing = Main.overview.visible;
 
         try {
-            this._loadThemeStylesheet();
             this._buildActors();
             this._interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
             this._connect(this._interfaceSettings, 'changed::font-name', () => this._applyFont());
             this._connect(this._interfaceSettings, 'changed::text-scaling-factor', () => this._layout());
             this._connect(St.ThemeContext.get_for_stage(global.stage), 'notify::scale-factor', () => this._layout());
             this._applyFont();
-            this._themeSettings = new ThemeSettings(settings => this._applyAppearance(settings));
-            this._themeSettings.start();
             this._connect(Main.layoutManager, 'monitors-changed', () => this._layout());
             this._connect(global.display, 'workareas-changed', () => this._layout());
             this._connect(global.display, 'in-fullscreen-changed', () => this._updateVisibility());
@@ -110,17 +102,7 @@ export default class ZaikoExtension extends Extension {
         this._signals.push([object, id]);
     }
 
-    _loadThemeStylesheet() {
-        this._paletteDirectory = GLib.dir_make_tmp('zaiko-themes-XXXXXX');
-        this._paletteFile = Gio.File.new_for_path(
-            GLib.build_filenamev([this._paletteDirectory, 'palettes.css']));
-        GLib.file_set_contents(this._paletteFile.get_path(), themeStylesheet());
-        this._paletteTheme = St.ThemeContext.get_for_stage(global.stage).get_theme();
-        this._paletteTheme.load_stylesheet(this._paletteFile);
-    }
-
     _applyFont() {
-        // Qt.application.font.family in zhyprbola follows the desktop font.
         const font = Pango.FontDescription.from_string(this._interfaceSettings.get_string('font-name'));
         const family = (font.get_family() || 'sans-serif').replaceAll('\\', '\\\\').replaceAll('"', '\\"');
         for (const actor of [this._panel, this._inputOverlay, this._answerLabel, this._characterMenu.actor])
@@ -185,14 +167,6 @@ export default class ZaikoExtension extends Extension {
             vertical: true, style_class: 'zaiko-panel zaiko-log', width: 360, height: 400,
             reactive: true, can_focus: true, visible: false,
         });
-        const header = new St.BoxLayout({style_class: 'zaiko-header', visible: false});
-        this._panelHeader = header;
-        this._panelTitle = new St.Label({
-            text: '', style_class: 'zaiko-title', x_expand: true,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        header.add_child(this._panelTitle);
-        this._panel.add_child(header);
         this._panelClose = new St.Button({
             style_class: 'zaiko-panel-close', width: 28, height: 28,
             can_focus: true, accessible_name: 'Close conversation', visible: false,
@@ -213,7 +187,6 @@ export default class ZaikoExtension extends Extension {
         this._logHistory = new St.BoxLayout({vertical: true, style_class: 'zaiko-history', x_expand: true});
         this._logScroll.set_child(this._logHistory);
         this._panel.add_child(this._logScroll);
-        this._buildThemePanel();
         this._logStatus = this._wrappedLabel('', 'zaiko-log-status');
         this._logStatus.visible = false;
         this._panel.add_child(this._logStatus);
@@ -228,7 +201,7 @@ export default class ZaikoExtension extends Extension {
 
     _buildLogComposer() {
         this._logComposer = new St.BoxLayout({
-            style_class: 'zaiko-log-composer', x_expand: true, height: 42,
+            style_class: 'zaiko-log-composer', x_expand: true, height: 38,
         });
         this._logEntry = new St.Entry({
             style_class: 'zaiko-log-entry', hint_text: 'Message Aiko…',
@@ -291,97 +264,15 @@ export default class ZaikoExtension extends Extension {
         this._characterMenu = new PopupMenu.PopupMenu(this._character, 0.5, St.Side.TOP);
         this._characterMenu.actor.add_style_class_name('zaiko-context');
         this._characterMenu.addAction('Log', () => this._showLog());
-        this._characterMenu.addAction('Theme', () => this._showAppearance());
         this._characterMenu.addAction('Quit', () => this._quitCore());
         Main.uiGroup.add_child(this._characterMenu.actor);
         this._characterMenu.actor.hide();
         this._characterMenuManager = new PopupMenu.PopupMenuManager(this._character);
         this._characterMenuManager.addMenu(this._characterMenu);
-    }
-
-    _buildThemePanel() {
-        this._themeScroll = new St.ScrollView({
-            style_class: 'zaiko-scroll', x_expand: true, y_expand: true,
-            overlay_scrollbars: true, visible: false,
+        this._characterMenu.connect('open-state-changed', () => {
+            if (this._enabled)
+                this._updateVisibility();
         });
-        this._themeScroll.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC);
-        this._registerScrollbarParts(this._themeScroll);
-        const panel = new St.BoxLayout({vertical: true, style_class: 'zaiko-theme-panel'});
-        this._syncTheme = this._button('Sync with zhyprbola · Off',
-            () => this._themeSettings.setSync(!this._themeSettings.settings.syncZhyprbola),
-            'zaiko-sync', 'Sync theme with zhyprbola');
-        panel.add_child(this._syncTheme);
-        this._themeDetail = this._wrappedLabel('', 'zaiko-theme-detail');
-        panel.add_child(this._themeDetail);
-        const grid = new St.BoxLayout({vertical: true, style_class: 'zaiko-theme-grid'});
-        this._themeButtons = [];
-        for (let i = 0; i < THEMES.length; i += 2) {
-            const row = new St.BoxLayout({style_class: 'zaiko-theme-row', x_expand: true});
-            row.layout_manager.homogeneous = true;
-            for (const theme of THEMES.slice(i, i + 2)) {
-                const button = this._button('', () => this._themeSettings.setTheme(theme.id),
-                    'zaiko-theme-option', theme.label);
-                button.x_expand = true;
-                const content = new St.BoxLayout({style_class: 'zaiko-theme-option-content'});
-                content.add_child(new St.Widget({
-                    style_class: `zaiko-theme-swatch zaiko-swatch-${theme.id}`,
-                    y_align: Clutter.ActorAlign.CENTER,
-                }));
-                content.add_child(new St.Label({
-                    text: theme.label, style_class: 'zaiko-theme-name',
-                    x_expand: true, y_align: Clutter.ActorAlign.CENTER,
-                }));
-                const check = new St.Label({
-                    text: '✓', style_class: 'zaiko-theme-check',
-                    y_align: Clutter.ActorAlign.CENTER, opacity: 0,
-                });
-                content.add_child(check);
-                button.set_child(content);
-                row.add_child(button);
-                this._themeButtons.push({id: theme.id, button, check});
-            }
-            grid.add_child(row);
-        }
-        panel.add_child(grid);
-        this._themeScroll.set_child(panel);
-        this._panel.add_child(this._themeScroll);
-    }
-
-    _applyAppearance({settings, appearance, error}) {
-        this._activeTheme = appearance.theme;
-        this._applyPanelStyle();
-        this._answerLabel.set_style_class_name(`zaiko-answer zaiko-theme-${appearance.theme.id}`);
-        this._inputOverlay.set_style_class_name(`zaiko-input-overlay zaiko-theme-${appearance.theme.id}`);
-        for (const part of this._scrollParts) {
-            for (const theme of THEMES)
-                part.remove_style_class_name(`zaiko-theme-${theme.id}`);
-            part.add_style_class_name(`zaiko-theme-${appearance.theme.id}`);
-        }
-        for (const theme of THEMES)
-            this._characterMenu.actor.remove_style_class_name(`zaiko-theme-${theme.id}`);
-        this._characterMenu.actor.add_style_class_name(`zaiko-theme-${appearance.theme.id}`);
-        this._syncTheme.label = `Sync with zhyprbola · ${settings.syncZhyprbola ? 'On' : 'Off'}`;
-        this._syncTheme.checked = settings.syncZhyprbola;
-        this._syncTheme.accessible_name = `Sync theme with zhyprbola: ${settings.syncZhyprbola ? 'on' : 'off'}`;
-        this._themeDetail.text = error || (appearance.synced
-            ? `Following zhyprbola · ${appearance.theme.label}`
-            : settings.syncZhyprbola
-                ? `Waiting for zhyprbola · using ${appearance.theme.label}`
-                : 'Choose a theme or enable sync.');
-        this._themeDetail.set_style_class_name(`zaiko-theme-detail${error ? ' zaiko-error' : ''}`);
-        for (const {id, button, check} of this._themeButtons) {
-            button.checked = appearance.theme.id === id;
-            check.opacity = button.checked ? 255 : 0;
-            button.reactive = !settings.syncZhyprbola;
-            button.can_focus = button.reactive;
-            button.opacity = settings.syncZhyprbola ? 150 : 255;
-        }
-        this._renderSnapshot();
-    }
-
-    _applyPanelStyle() {
-        this._panel.set_style_class_name(`zaiko-panel zaiko-${this._panelMode} zaiko-theme-${this._activeTheme.id}`);
-        this._panelClose.set_style_class_name(`zaiko-panel-close zaiko-theme-${this._activeTheme.id}`);
     }
 
     _registerScrollbarParts(view) {
@@ -395,18 +286,8 @@ export default class ZaikoExtension extends Extension {
                     part.add_style_class_name('zaiko-scroll-track');
                 else
                     continue;
-                this._scrollParts.push(part);
             }
         }
-    }
-
-    _button(label, callback, extraClass = '', accessibleName = label) {
-        const button = new St.Button({
-            label, style_class: `zaiko-button ${extraClass}`,
-            can_focus: true, accessible_name: accessibleName,
-        });
-        button.connect('clicked', callback);
-        return button;
     }
 
     _setExpression(name) {
@@ -492,7 +373,7 @@ export default class ZaikoExtension extends Extension {
         this._panel.visible = show && this._panelOpen;
         this._panelClose.visible = this._panel.visible;
         this._inputOverlay.visible = show && this._inputOpen && !this._logIsOpen();
-        this._answerLabel.visible = show && this._answerHasText && !this._logIsOpen();
+        this._answerLabel.visible = show && this._answerHasText && !this._logIsOpen() && !this._characterMenu?.isOpen;
     }
 
     _showInput() {
@@ -516,36 +397,19 @@ export default class ZaikoExtension extends Extension {
     }
 
     _showLog() {
-        this._showPanel('log');
-    }
-
-    _showAppearance() {
-        this._showPanel('appearance');
-    }
-
-    _logIsOpen() {
-        return this._panelOpen && this._panelMode === 'log';
-    }
-
-    _showPanel(mode) {
         this._rememberFocus();
         this._characterMenu.close();
         this._logEntry.menu?.close();
         this._hideInput(false);
-        this._panelMode = mode;
-        this._applyPanelStyle();
-        this._panelTitle.text = mode === 'appearance' ? 'Appearance' : '';
-        this._panelHeader.visible = mode === 'appearance';
-        this._panel.accessible_name = mode === 'appearance' ? 'Appearance' : 'Conversation';
-        this._panelClose.accessible_name = mode === 'appearance' ? 'Close appearance' : 'Close conversation';
-        this._logScroll.visible = mode === 'log';
-        this._themeScroll.visible = mode === 'appearance';
-        this._logComposer.visible = mode === 'log';
         this._panelOpen = true;
         this._renderLogState();
         this._updateVisibility();
         if (this._panel.visible)
-            (mode === 'appearance' ? this._syncTheme : this._logEntry).grab_key_focus();
+            this._logEntry.grab_key_focus();
+    }
+
+    _logIsOpen() {
+        return this._panelOpen;
     }
 
     _openCharacterMenu() {
@@ -744,7 +608,7 @@ export default class ZaikoExtension extends Extension {
         this._syncThinkingClock();
         this._renderCompact();
         this._renderLogState();
-        const signature = JSON.stringify([this._activeTheme.id, this._snapshot.messages]);
+        const signature = JSON.stringify(this._snapshot.messages);
         if (signature === this._historySignature)
             return;
         this._historySignature = signature;
@@ -754,10 +618,9 @@ export default class ZaikoExtension extends Extension {
             this._logHistory.add_child(placeholder);
         }
         for (const message of this._snapshot.messages) {
-            const {prefix, text} = transcriptLine(message);
+            const {prefix, text, color} = transcriptLine(message);
             const label = this._wrappedLabel(text, 'zaiko-log-message');
             label.clutter_text.set_line_alignment(Pango.Alignment.LEFT);
-            const color = logPrefixColor(this._activeTheme, message.role);
             if (color) {
                 const applyPrefix = () => {
                     const channels = [1, 3, 5].map(offset => Number.parseInt(color.slice(offset, offset + 2), 16) * 257);
@@ -794,7 +657,7 @@ export default class ZaikoExtension extends Extension {
             (this._snapshot.state === 'error' ? 'Something went wrong.' : null);
         const status = error || this._requestStatus();
         this._logStatus.text = status ? `[Aiko] ${status}` : '';
-        this._logStatus.visible = this._panelMode === 'log' && Boolean(this._logStatus.text);
+        this._logStatus.visible = Boolean(this._logStatus.text);
         this._logStatus.set_style_class_name(`zaiko-log-status${error ? ' zaiko-log-error' : ''}`);
         this._logSendIcon.icon_name = busy ? 'process-stop-symbolic' : 'mail-send-symbolic';
         this._logSend.accessible_name = this._cancelling ? 'Stopping request' : busy ? 'Cancel request' : 'Send message in Log';
@@ -880,7 +743,7 @@ export default class ZaikoExtension extends Extension {
         layout.set_font_description(this._answerLabel.get_theme_node().get_font());
         layout.set_single_paragraph_mode(false);
         const display = text ? `[Aiko] ${text}` : '';
-        // Repaints, theme changes and reopening input must not prolong a message.
+        // Repaints, font changes and reopening input must not prolong a message.
         // The count also distinguishes a new reply with exactly the same text.
         const key = JSON.stringify([busy ? (error || (this._sending ? 'sending' : this._snapshot.state)) : display,
             this._snapshot.messages.filter(message => message.role === 'assistant').length]);
@@ -1022,8 +885,6 @@ export default class ZaikoExtension extends Extension {
 
     disable() {
         this._enabled = false;
-        this._themeSettings?.destroy();
-        this._themeSettings = null;
         this._releaseFocus(false);
         this._characterMenu?.destroy();
         this._characterMenu = null;
@@ -1040,7 +901,6 @@ export default class ZaikoExtension extends Extension {
         for (const [object, id] of this._signals ?? [])
             object.disconnect(id);
         this._signals = [];
-        this._scrollParts = [];
         this._interfaceSettings = null;
         if (this._scrollSource)
             GLib.Source.remove(this._scrollSource);
@@ -1055,8 +915,6 @@ export default class ZaikoExtension extends Extension {
             actor.destroy();
         }
         this._panel = null;
-        this._panelTitle = null;
-        this._panelHeader = null;
         this._panelClose = null;
         this._logScroll = null;
         this._logHistory = null;
@@ -1071,24 +929,11 @@ export default class ZaikoExtension extends Extension {
         this._positioned = false;
         this._dragOrigin = null;
         this._focusBeforeUI = null;
-        this._themeButtons = [];
-        this._themeScroll = null;
-        this._syncTheme = null;
-        this._themeDetail = null;
         this._inputOverlay = null;
         this._overlayEntry = null;
         this._overlaySend = null;
         this._overlaySendIcon = null;
         this._answerLabel = null;
         this._answerPreview = null;
-        if (this._paletteFile) {
-            this._paletteTheme?.unload_stylesheet(this._paletteFile);
-            this._paletteFile.delete(null);
-        }
-        this._paletteFile = null;
-        this._paletteTheme = null;
-        if (this._paletteDirectory)
-            GLib.rmdir(this._paletteDirectory);
-        this._paletteDirectory = null;
     }
 }

@@ -24,6 +24,11 @@ def main():
     print(f'Desktop QA artifacts: {root}', flush=True)
     for name in ('home', 'data', 'config', 'cache', 'state', 'runtime'):
         (root / name).mkdir(mode=0o700)
+    # Old preferences must have no effect on the fixed-style extension.
+    (root / 'config/zaiko').mkdir()
+    (root / 'config/zaiko/ui.json').write_text('{"theme":"red","syncZhyprbola":true}')
+    (root / 'config/zhyprbola').mkdir()
+    (root / 'config/zhyprbola/theme').write_text('white-sky')
     extension = root / 'data/gnome-shell/extensions/zaiko@znnn.local'
     shutil.copytree(PROJECT / 'gnome-extension', extension)
     script = (extension / 'extension.js').read_text().replace(

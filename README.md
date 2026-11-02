@@ -9,10 +9,9 @@
 [ -e .env ] || cp .env.example .env
 
 # Set your API key in .env before installing.
+# Installed config: `~/.config/zaiko/.env`
 make install
 ```
-
-After the first installation, log out and back in if GNOME does not show Zaiko.
 
 ## Run
 
@@ -24,15 +23,6 @@ zaiko status
 zaiko restart
 zaiko stop
 ```
-
-Installed config: `~/.config/zaiko/.env`.
-
-Click Aiko to type; click elsewhere to hide input. Enter or the send icon sends
-and hides input. Replies appear as `[Aiko] message` for 12 seconds. Right click for **Log**,
-**Theme**, or **Quit**, including optional **Sync with zhyprbola**.
-
-Log shows flat `[Me]` / `[Aiko]` text with colored prefixes and a built-in input.
-While Log is open, character clicks focus its input instead of the compact one.
 
 [Requirements and configuration](docs/runtime.md)
 
