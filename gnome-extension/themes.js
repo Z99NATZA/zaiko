@@ -104,11 +104,12 @@ ${input} .zaiko-overlay-send:insensitive {
     color: ${alpha('#FFFFFF', 0.3)}; background-color: transparent; border-color: ${alpha(theme.selected, 0.15)}; }
 ${answer} { color: #FFFFFF; }
 ${answer}.zaiko-answer-error { color: #FFB6C7; }
-${context} { color: ${theme.text}; -arrow-background-color: #FAFCFD; -arrow-border-color: ${theme.track}; }
-${context} .popup-menu-content { background-color: #FAFCFD; }
+${context} { color: ${theme.text}; -arrow-background-color: ${theme.control}; -arrow-border-color: ${theme.track}; }
+${context} .popup-menu-content { background-color: ${theme.control}; border-color: ${theme.track}; }
 ${context} .popup-menu-item { color: ${theme.text}; }
 ${context} .popup-menu-item:active, ${context} .popup-menu-item:hover,
 ${context} .popup-menu-item:focus { color: ${theme.text}; background-color: ${theme.hover}; }
+${context} .popup-menu-item:insensitive { color: ${alpha(theme.text, 0.38)}; background-color: transparent; }
 `;
     }).join('\n');
 }

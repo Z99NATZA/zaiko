@@ -18,6 +18,7 @@ contains only the latest authorized UI requirements and their acceptance plan.
 | Header | No visible Log title or header row in the conversation view |
 | Close control | A circular floating button at the panel corner, outside content layout; support click and Escape |
 | Scroll | Slim, rounded themed track/thumb with breathing room beside text |
+| Character menu | Compact 8 px rounded frame with selected-palette colors; Log, Theme, Quit only, without a separator; input Copy/Paste menus remain native without added hints |
 | Log composer | Include input and an embedded send/cancel icon in Log; Enter sends |
 | After a Log send | Clear the submitted Log draft and keep Log open for continued conversation |
 | Input exclusivity | While Log is open, character clicks and Present focus Log input; never open the normal character input |
@@ -113,5 +114,9 @@ and a new reviewer is checking the integrated result separately.
 - `/root/log_review` independently approved this follow-up after reviewing the
   code, final native result, and screenshots. `make install` passed and installed
   files match this verified source.
+- Context-menu styling applies only to Log / Theme / Quit on the character.
+  The earlier added edit-menu labels are removed; Copy/Paste menus are native.
+  Quit has no separator. Native menu/action/palette checks and `make check`
+  passed for the corrected scope.
 
 [Runtime and development](runtime.md) · [Documentation](README.md)

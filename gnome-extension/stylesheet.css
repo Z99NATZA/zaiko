@@ -122,6 +122,26 @@
     font-size: 14px;
     font-weight: 400;
 }
-.zaiko-context { font-size: 14px; font-weight: 400; }
-.zaiko-context .popup-menu-content { border-radius: 14px; padding: 6px; box-shadow: none; }
-.zaiko-context .popup-menu-item { border-radius: 11px; padding: 10px 12px; }
+.zaiko-context {
+    min-width: 190px;
+    font-size: 13px;
+    font-weight: 400;
+    -arrow-base: 0;
+    -arrow-rise: 0;
+    -arrow-border-width: 0;
+    -arrow-border-radius: 8px;
+    -boxpointer-gap: 4px;
+}
+.zaiko-context .popup-menu-content {
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+}
+.zaiko-context .popup-menu-item {
+    border: none;
+    border-radius: 4px;
+    padding: 5px 10px;
+    margin: 0;
+    spacing: 20px;
+}

@@ -88,6 +88,9 @@ panel. Hiding input keeps the latest answer visible; Quit or zaiko stop ends
 the session.
 The conversation has no title/header row. A circular close control floats at
 its corner without taking transcript space; it supports click and Escape.
+The character's right-click menu has three compact themed rows: Log, Theme,
+and Quit, with no separator. Input Copy/Paste menus use their original GNOME
+appearance and actions, without additional shortcut labels.
 
 Appearance
 ----------

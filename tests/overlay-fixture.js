@@ -115,10 +115,26 @@ export default class OverlayQA extends ZaikoExtension {
         this._overlayEntry.set_text('draft kept outside');
         await this._click(this._overlayEntry);
         qaAssert(this._inputOverlay.visible, 'Entry click does not dismiss input');
+        const clipboard = St.Clipboard.get_default();
+        clipboard.set_text(St.ClipboardType.CLIPBOARD, 'QA clipboard text');
         await this._click(this._overlayEntry, Clutter.BUTTON_SECONDARY);
         qaAssert(this._overlayEntry.menu.isOpen && this._inputOverlay.visible, 'Entry context menu does not dismiss input');
-        await this._key(Clutter.KEY_Escape);
-        qaAssert(this._inputOverlay.visible, 'Closing entry menu keeps input visible');
+        const entryMenu = this._overlayEntry.menu;
+        qaAssert(!entryMenu.actor.has_style_class_name('zaiko-context') &&
+            !qaContainsText(entryMenu.box, 'Ctrl+C') && !qaContainsText(entryMenu.box, 'Ctrl+V'), 'Native edit menu has no custom styling or added shortcut labels');
+        const editItems = entryMenu._getMenuItems();
+        qaAssert(!editItems[0].reactive && editItems[1].reactive, 'Native Copy/Paste sensitivity is preserved');
+        await this._shot('entry-context-menu');
+        await this._click(editItems[1].actor);
+        qaAssert(this._overlayEntry.get_text().includes('QA clipboard text') && this._inputOverlay.visible, 'Native Paste inserts clipboard text without hiding input');
+        this._overlayEntry.set_text('draft kept outside');
+        this._overlayEntry.clutter_text.set_selection(0, -1);
+        await this._click(this._overlayEntry, Clutter.BUTTON_SECONDARY);
+        qaAssert(editItems[0].reactive, 'Copy becomes enabled for a selection');
+        await this._click(editItems[0].actor);
+        const copied = await new Promise(resolve => clipboard.get_text(St.ClipboardType.CLIPBOARD, (_clipboard, text) => resolve(text)));
+        qaAssert(copied === 'draft kept outside' && this._inputOverlay.visible, 'Native Copy remains functional');
+        this._overlayEntry.set_text('draft kept outside');
 
         // An unrelated target receives the same outside click exactly once.
         const outside = new St.Button({
@@ -260,7 +276,12 @@ export default class OverlayQA extends ZaikoExtension {
 
         await this._click(this._character, Clutter.BUTTON_SECONDARY);
         qaAssert(this._characterMenu.isOpen, 'Native right click opens menu');
+        await qaPause(100);
+        await this._shot('character-context-menu');
         const items = this._characterMenu._getMenuItems();
+        qaAssert(items.length === 3 && items.map(item => item.label?.text).join(',') === 'Log,Theme,Quit', 'Character menu has only three actions without a separator');
+        qaAssert(this._characterMenu.box.get_theme_node().get_border_radius(St.Corner.TOPLEFT) === 8 &&
+            qaColor(this._characterMenu.box.get_theme_node().get_background_color(), this._activeTheme.control), 'Character menu keeps the requested compact themed style');
         const logItem = items.find(item => item.label?.text === 'Log');
         qaAssert(items.some(item => item.label?.text === 'Theme') && items.some(item => item.label?.text === 'Quit'), 'Theme and Quit remain reachable');
         await this._click(logItem.actor);
@@ -293,6 +314,8 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(!this._inputOverlay.visible && this._logEntry.contains(global.stage.get_key_focus()), 'Present cannot open compact input while Log is open');
         await this._click(this._logEntry, Clutter.BUTTON_SECONDARY);
         qaAssert(this._logEntry.menu.isOpen && this._panel.visible, 'Log text-edit menu remains usable');
+        qaAssert(!this._logEntry.menu.actor.has_style_class_name('zaiko-context') &&
+            !qaContainsText(this._logEntry.menu.box, 'Ctrl+C') && !qaContainsText(this._logEntry.menu.box, 'Ctrl+V'), 'Log edit menu remains native without added shortcut labels');
         await this._key(Clutter.KEY_Escape);
 
         this._callCore = async (method, parameters) => {
@@ -395,6 +418,7 @@ export default class OverlayQA extends ZaikoExtension {
             qaAssert(this._answerLabel.get_theme_node().get_background_color().alpha === 0, 'All themes keep reply transparent');
             qaAssert(qaColor(this._panel.get_theme_node().get_background_color(), theme.control), `Conversation surface follows ${theme.id}`);
             qaAssert(qaColor(this._panelClose.get_theme_node().get_background_color(), theme.control), 'Floating close follows the same theme');
+            qaAssert(qaColor(this._characterMenu.box.get_theme_node().get_background_color(), theme.control), 'Character right-click menu follows theme changes');
             for (const row of this._logHistory.get_children())
                 qaAssert(qaColor(row.get_theme_node().get_foreground_color(), theme.text), 'Transcript follows theme body color');
         }

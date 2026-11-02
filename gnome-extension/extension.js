@@ -292,7 +292,6 @@ export default class ZaikoExtension extends Extension {
         this._characterMenu.actor.add_style_class_name('zaiko-context');
         this._characterMenu.addAction('Log', () => this._showLog());
         this._characterMenu.addAction('Theme', () => this._showAppearance());
-        this._characterMenu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this._characterMenu.addAction('Quit', () => this._quitCore());
         Main.uiGroup.add_child(this._characterMenu.actor);
         this._characterMenu.actor.hide();
