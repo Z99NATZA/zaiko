@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {panelPosition, compactPosition, latestAssistant} from '../protocol.js';
+import {panelPosition, compactPosition, latestAssistant, formatElapsed} from '../protocol.js';
 
 test('on-demand panel stays near the character and fits the roomy side', () => {
     const panel = {width: 360, height: 400};
@@ -47,4 +47,11 @@ test('answer preview chooses the latest assistant rather than user or app output
         {role: 'user', content: 'next'},
     ];
     assert.equal(latestAssistant(messages), 'คำตอบล่าสุด');
+});
+
+test('elapsed thinking time omits leading zero units and keeps real boundaries', () => {
+    for (const [seconds, expected] of [[0, '0s'], [0.9, '0s'], [1, '1s'],
+        [59, '59s'], [60, '1m 0s'], [90, '1m 30s'], [3600, '1h 0m 0s'],
+        [7290, '2h 1m 30s']])
+        assert.equal(formatElapsed(seconds), expected);
 });

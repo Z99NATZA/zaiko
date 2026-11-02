@@ -1,4 +1,4 @@
-/* Shared geometry and typography follow zhyprbola's controls. */
+/* Zaiko's own transcript and compact conversation surfaces. */
 .zaiko-character { background-color: transparent; }
 .zaiko-panel {
     border: none;
@@ -20,11 +20,49 @@
     font-size: 14px;
     font-weight: 400;
 }
-.zaiko-close { padding: 2px 8px; font-size: 20px; }
-.zaiko-history { spacing: 8px; padding-right: 4px; }
-.zaiko-message { spacing: 4px; padding: 12px; border-radius: 11px; }
-.zaiko-message-role { font-size: 12px; font-weight: 600; }
-.zaiko-message-content { font-size: 14px; font-weight: 400; }
+.zaiko-panel-close {
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.18);
+}
+.zaiko-history { spacing: 8px; padding-right: 10px; }
+.zaiko-panel.zaiko-log {
+    border: 1px solid transparent;
+    border-radius: 12px;
+    padding: 16px;
+    spacing: 12px;
+}
+.zaiko-log-message {
+    background-color: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font-size: 14px;
+    font-weight: 400;
+}
+.zaiko-log .zaiko-placeholder, .zaiko-log-status { font-size: 12px; }
+.zaiko-log-composer {
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 4px;
+    spacing: 4px;
+}
+.zaiko-log-entry, .zaiko-log-entry:focus {
+    background-color: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 5px 7px;
+    box-shadow: none;
+    font-size: 13px;
+}
+.zaiko-log-send {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 5px;
+    box-shadow: none;
+}
 .zaiko-placeholder { padding: 12px 0; }
 .zaiko-theme-panel { spacing: 16px; padding-right: 4px; }
 .zaiko-theme-detail { font-size: 12px; }
@@ -36,9 +74,16 @@
 .zaiko-theme-name { font-size: 14px; font-weight: 400; }
 .zaiko-theme-check { font-size: 14px; font-weight: 700; }
 .zaiko-sync { padding: 10px 12px; }
-.zaiko-scroll StScrollBar { width: 6px; }
+.zaiko-scroll StScrollBar { width: 6px; min-width: 6px; min-height: 6px; padding: 0; }
 .zaiko-scroll StScrollBar StBin#trough,
-.zaiko-scroll StScrollBar StButton#vhandle { border-radius: 3px; }
+.zaiko-scroll-thumb.vhandle,
+.zaiko-scroll-thumb.hhandle {
+    border-radius: 3px;
+    border-width: 0;
+    padding: 0;
+    transition-duration: 150ms;
+}
+.zaiko-scroll-thumb.vhandle { min-height: 28px; }
 .zaiko-input-overlay {
     font-family: sans-serif;
     font-size: 13px;

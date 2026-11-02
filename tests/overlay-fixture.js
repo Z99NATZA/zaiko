@@ -21,6 +21,27 @@ function qaContainsText(actor, text) {
         actor.get_children().some(child => qaContainsText(child, text));
 }
 
+function qaFindActor(actor, predicate) {
+    if (predicate(actor))
+        return actor;
+    for (const child of actor.get_children()) {
+        const match = qaFindActor(child, predicate);
+        if (match)
+            return match;
+    }
+    return null;
+}
+
+function qaTextColorAt(label, byteIndex) {
+    const iterator = label.clutter_text.get_layout().get_attributes().get_iterator();
+    do {
+        const [start, end] = iterator.range();
+        if (byteIndex >= start && byteIndex < end)
+            return iterator.get(Pango.AttrType.FOREGROUND)?.as_color().color.to_string();
+    } while (iterator.next());
+    return null;
+}
+
 export default class OverlayQA extends ZaikoExtension {
     enable() {
         super.enable();
@@ -158,6 +179,7 @@ export default class OverlayQA extends ZaikoExtension {
         this._showLog();
         qaAssert(qaContainsText(this._logHistory, this._snapshot.messages[1].content), 'Expired answer remains in Log');
         this._hidePanel();
+        qaAssert(!this._answerLabel.visible, 'Closing Log does not resurrect an expired answer');
         this._snapshot.messages.push({...this._snapshot.messages[1]});
         this._renderSnapshot();
         qaAssert(this._answerLabel.visible && this._answerHideSource !== 0, 'A new identical reply gets its own display time');
@@ -228,6 +250,12 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(this._overlayEntry.get_text() === 'คืนข้อความ' && this._inputOverlay.visible,
             'Failed submit keeps input visible and restores source draft');
         this._uiError = null;
+        const literal = 'สวัสดี <tag> & "quotes"\nบรรทัดที่สอง';
+        this._snapshot.messages = [
+            {role: 'user', content: literal},
+            {role: 'assistant', content: 'คุยใน Log ได้เลยค่ะ <>& 😊'},
+            {role: 'tool', content: 'App activation requested.'},
+        ];
         this._renderSnapshot();
 
         await this._click(this._character, Clutter.BUTTON_SECONDARY);
@@ -237,9 +265,123 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(items.some(item => item.label?.text === 'Theme') && items.some(item => item.label?.text === 'Quit'), 'Theme and Quit remain reachable');
         await this._click(logItem.actor);
         qaAssert(this._panel.visible && this._panelMode === 'log' && !this._characterMenu.isOpen, 'Log opens only on request');
-        qaAssert(!this._panel.get_children().some(child => child instanceof St.Entry), 'Log has no legacy composer');
-        await this._shot('read-only-log');
-        this._showAppearance();
+        qaAssert(this._logComposer.visible && !this._inputOverlay.visible, 'Log owns the active composer');
+        qaAssert(!this._answerLabel.visible, 'Floating message does not overlap Log');
+        qaAssert(!this._panelHeader.visible && this._panelTitle.text === '', 'Conversation has no title/header row');
+        qaAssert(this._panelClose.visible && !this._panel.contains(this._panelClose), 'Close floats independently of the content layout');
+        qaAssert(this._panelClose.width === this._panelClose.height &&
+            this._panelClose.get_theme_node().get_border_radius(St.Corner.TOPLEFT) >= this._panelClose.width / 2,
+        'Close is circular rather than a rounded rectangle');
+        const rows = this._logHistory.get_children();
+        qaAssert(rows.length === 3 && rows.every(row => row instanceof St.Label), 'Transcript is flat text without message containers');
+        qaAssert(rows[0].text === `[Me] ${literal}` && rows[1].text === '[Aiko] คุยใน Log ได้เลยค่ะ <>& 😊', 'Role prefixes and literal contents render inline');
+        for (const row of rows) {
+            qaAssert(row.get_theme_node().get_background_color().alpha === 0 && row.get_theme_node().get_padding(St.Side.LEFT) === 0, 'Transcript has no bubble background or padding');
+            qaAssert(row.clutter_text.get_line_alignment() === Pango.Alignment.LEFT, 'All text is left aligned');
+            qaAssert(qaColor(row.get_theme_node().get_foreground_color(), this._activeTheme.text), 'Message bodies share the selected theme color');
+        }
+        const meColor = qaTextColorAt(rows[0], 1);
+        const aikoColor = qaTextColorAt(rows[1], 1);
+        const bodyColor = qaTextColorAt(rows[0], 5);
+        qaAssert(meColor && aikoColor && meColor !== aikoColor, 'Participants have distinct rendered prefix colors');
+        qaAssert(bodyColor === qaTextColorAt(rows[1], 7), 'Rendered message bodies share one color');
+        qaAssert(meColor !== bodyColor && aikoColor !== bodyColor, 'Only prefixes carry participant-specific colors');
+        this._overlayEntry.set_text('compact draft retained');
+        await this._click(this._character);
+        qaAssert(!this._inputOverlay.visible && this._logEntry.contains(global.stage.get_key_focus()), 'Character click routes to Log while open');
+        this._present();
+        qaAssert(!this._inputOverlay.visible && this._logEntry.contains(global.stage.get_key_focus()), 'Present cannot open compact input while Log is open');
+        await this._click(this._logEntry, Clutter.BUTTON_SECONDARY);
+        qaAssert(this._logEntry.menu.isOpen && this._panel.visible, 'Log text-edit menu remains usable');
+        await this._key(Clutter.KEY_Escape);
+
+        this._callCore = async (method, parameters) => {
+            calls.push({method, args: parameters?.deep_unpack()});
+            return [];
+        };
+        const submitCount = calls.filter(call => call.method === 'Submit').length;
+        this._logEntry.set_text('ส่งจาก Log ด้วย Enter');
+        this._logEntry.grab_key_focus();
+        await this._key(Clutter.KEY_Return);
+        qaAssert(calls.filter(call => call.method === 'Submit').length === submitCount + 1 && calls.at(-1).args[1] === 'ส่งจาก Log ด้วย Enter', 'Log Enter sends exactly once');
+        qaAssert(this._panel.visible && this._logEntry.get_text() === '' && !this._inputOverlay.visible, 'Log stays open after sending');
+        qaAssert(this._logEntry.contains(global.stage.get_key_focus()), 'Log input remains focused for continued conversation');
+        this._logEntry.set_text('ส่งจาก Log ด้วย icon');
+        await this._click(this._logSend);
+        qaAssert(calls.filter(call => call.method === 'Submit').length === submitCount + 2 && this._panel.visible, 'Log icon sends and preserves the conversation box');
+        qaAssert(this._overlayEntry.get_text() === 'compact draft retained', 'Log sends preserve compact draft');
+
+        let releaseLog;
+        this._callCore = async (method, parameters) => {
+            calls.push({method, args: parameters?.deep_unpack()});
+            if (method === 'Submit')
+                await new Promise(resolve => { releaseLog = resolve; });
+            return [];
+        };
+        this._logEntry.set_text('pending in Log');
+        const pendingLog = this._submit(this._logEntry);
+        await qaPause(40);
+        const busyCount = calls.length;
+        await this._submit(this._overlayEntry);
+        await this._submit(this._logEntry);
+        qaAssert(calls.length === busyCount && this._logStatus.visible, 'Both composers share the busy guard with in-Log status');
+        await this._click(this._logSend);
+        qaAssert(calls.at(-1).method === 'Cancel', 'Log busy button cancels');
+        releaseLog();
+        await pendingLog;
+        this._callCore = async () => { throw new Error('QA failed Log submission'); };
+        this._logEntry.set_text('restore Log draft');
+        await this._submit(this._logEntry);
+        qaAssert(this._logEntry.get_text() === 'restore Log draft' && this._panel.visible && this._logStatus.visible, 'Failed Log send restores only its draft and shows error');
+        qaAssert(this._overlayEntry.get_text() === 'compact draft retained', 'Log failure leaves compact draft unchanged');
+        this._uiError = null;
+        this._renderSnapshot();
+        this._logEntry.set_text('theme keeps this draft');
+        this._themeSettings.setTheme('red');
+        await qaPause(100);
+        qaAssert(qaTextColorAt(this._logHistory.get_child_at_index(1), 1) !== aikoColor, 'Theme recolors prefixes without changing history');
+        qaAssert(this._logEntry.get_text() === 'theme keeps this draft' && qaContainsText(this._logHistory, literal), 'Theme preserves Log draft and literal message');
+        const originalMessages = this._snapshot.messages;
+        this._snapshot.messages = Array.from({length: 30}, (_, index) => ({
+            role: index % 2 ? 'assistant' : 'user',
+            content: `ข้อความแชตลำดับ ${index + 1} · scroll preview`,
+        })).concat(originalMessages);
+        this._renderSnapshot();
+        await qaPause(160);
+        const scroll = this._logScroll.get_vadjustment();
+        qaAssert(scroll.upper > scroll.page_size, 'Long conversation remains scrollable without a header row');
+        const beforeScroll = scroll.value;
+        const [scrollX, scrollY] = this._logScroll.get_transformed_position();
+        this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), scrollX + 100, scrollY + 100);
+        await qaPause(40);
+        this._pointer.notify_discrete_scroll(GLib.get_monotonic_time(), Clutter.ScrollDirection.UP, Clutter.ScrollSource.WHEEL);
+        await qaPause(250);
+        qaAssert(scroll.value < beforeScroll, 'Native wheel scrolls the transcript');
+        const thumb = qaFindActor(this._logScroll,
+            actor => actor.get_style_class_name?.()?.split(' ').includes('vhandle'));
+        const barDetails = this._logScroll.get_children().filter(actor => actor instanceof St.ScrollBar)
+            .map(bar => ({actor: bar.toString(), width: bar.width,
+                children: bar.get_children().map(child => ({actor: child.toString(),
+                    width: child.width, name: child.get_name(), style: child.get_style_class_name?.()}))}));
+        qaAssert(thumb && thumb.width <= 6 && thumb.get_theme_node().get_border_width(St.Side.LEFT) === 0,
+            `Scrollbar thumb should be slim: ${JSON.stringify({thumb: thumb?.toString(), width: thumb?.width,
+                border: thumb?.get_theme_node().get_border_width(St.Side.LEFT), bars: barDetails})}`);
+        qaAssert(qaColor(thumb.get_theme_node().get_background_color(), this._activeTheme.accent),
+            'Scrollbar thumb follows the selected theme accent');
+        outside.hide();
+        await this._shot('chat-scroll');
+        this._snapshot.messages = originalMessages;
+        this._renderSnapshot();
+        await qaPause(100);
+        await this._shot('log-chat');
+        outside.show();
+        await this._click(this._panelClose);
+        qaAssert(!this._panel.visible && !this._panelClose.visible, 'Floating close dismisses panel and itself');
+        qaAssert(this._answerLabel.visible, 'Closing Log restores an answer still within its display time');
+        await this._click(this._character);
+        qaAssert(this._inputOverlay.visible && this._overlayEntry.get_text() === 'compact draft retained', 'Closing Log re-enables compact input with its draft');
+        this._showLog();
+        qaAssert(this._logEntry.get_text() === 'theme keeps this draft' && !this._inputOverlay.visible, 'Reopened Log restores its distinct draft');
         // Move the pointer off the send icon so hover color does not affect palette checks.
         this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), 100, 80);
         this._showInput();
@@ -251,7 +393,35 @@ export default class OverlayQA extends ZaikoExtension {
                 `Translucent input follows palette ${theme.id}`);
             qaAssert(this._overlaySend.get_theme_node().get_background_color().alpha === 0, 'Send has no solid fill');
             qaAssert(this._answerLabel.get_theme_node().get_background_color().alpha === 0, 'All themes keep reply transparent');
+            qaAssert(qaColor(this._panel.get_theme_node().get_background_color(), theme.control), `Conversation surface follows ${theme.id}`);
+            qaAssert(qaColor(this._panelClose.get_theme_node().get_background_color(), theme.control), 'Floating close follows the same theme');
+            for (const row of this._logHistory.get_children())
+                qaAssert(qaColor(row.get_theme_node().get_foreground_color(), theme.text), 'Transcript follows theme body color');
         }
+
+        this._snapshot.state = 'thinking';
+        this._snapshot.request_id = 'qa-thinking-clock';
+        this._renderSnapshot();
+        await qaPause(1150);
+        qaAssert(/^\[Aiko\] Thinking\.\.\. \([12]s\)$/.test(this._logStatus.text), 'Thinking clock advances from real elapsed seconds');
+        qaAssert(this._thinkingSource !== 0 && this._answerHideSource === 0, 'Active thinking keeps its ticker without message expiry');
+        const thinkingSource = this._thinkingSource;
+        this._thinkingStartedUs = GLib.get_monotonic_time() - 7290 * 1_000_000;
+        this._renderSnapshot();
+        qaAssert(this._logStatus.text === '[Aiko] Thinking... (2h 1m 30s)', 'Long elapsed time includes actual hour/minute/second units');
+        qaAssert(this._thinkingSource === thinkingSource, 'Snapshot repaint does not restart thinking clock');
+        this._hidePanel();
+        qaAssert(this._answerLabel.text === '[Aiko] Thinking... (2h 1m 30s)' && this._answerLabel.visible, 'Floating thinking uses the same elapsed time');
+        this._showLog();
+        await this._shot('thinking-clock');
+        this._snapshot.state = 'idle';
+        this._snapshot.request_id = null;
+        this._renderSnapshot();
+        qaAssert(this._thinkingSource === 0 && this._thinkingStartedUs === 0, 'Thinking clock stops when request finishes');
+        this._showAppearance();
+        this._panelClose.grab_key_focus();
+        await this._key(Clutter.KEY_Escape);
+        qaAssert(!this._panel.visible && !this._panelClose.visible, 'Floating close also supports Escape');
         this._hidePanel();
         const ext = `${GLib.get_user_config_dir()}/zhyprbola`;
         GLib.mkdir_with_parents(ext, 0o700);
@@ -281,7 +451,7 @@ export default class OverlayQA extends ZaikoExtension {
         this._layout();
         this._positionCharacter(450, 300);
         await qaPause(160);
-        for (const actor of [this._panel, this._character, this._inputOverlay, this._answerLabel]) {
+        for (const actor of [this._panel, this._panelClose, this._character, this._inputOverlay, this._answerLabel]) {
             qaAssert(actor.x >= 8 && actor.x + actor.width <= 672, 'Narrow horizontal bounds');
             qaAssert(actor.y >= 40 && actor.y + actor.height <= 504, 'Narrow vertical bounds');
         }
@@ -304,19 +474,26 @@ export default class OverlayQA extends ZaikoExtension {
         this._openCharacterMenu();
         let rejectSubmission;
         this._callCore = () => new Promise((_resolve, reject) => { rejectSubmission = reject; });
-        this._overlayEntry.set_text('คืนข้อความเมื่อ core หลุด');
-        const disconnectedSubmit = this._submit();
+        this._showLog();
+        this._logEntry.set_text('คืนข้อความเมื่อ core หลุด');
+        const disconnectedSubmit = this._submit(this._logEntry);
+        this._snapshot.state = 'thinking';
+        this._snapshot.request_id = 'qa-disconnect-thinking';
+        this._renderSnapshot();
+        this._openCharacterMenu();
         await qaPause(40);
         this._coreVanished();
         rejectSubmission(new Error('QA disconnected during Submit'));
         await disconnectedSubmit;
-        qaAssert(this._overlayEntry.get_text() === 'คืนข้อความเมื่อ core หลุด', 'Core disconnect restores originating draft');
+        qaAssert(this._logEntry.get_text() === 'คืนข้อความเมื่อ core หลุด', 'Core disconnect restores originating Log draft');
+        qaAssert(this._overlayEntry.get_text() === 'compact draft retained', 'Core disconnect preserves other composer draft');
+        qaAssert(this._thinkingSource === 0, 'Core loss cancels thinking ticker');
         qaAssert(!this._character.visible && !this._panel.visible && !this._inputOverlay.visible && !this._answerLabel.visible, 'Core loss hides all surfaces');
         qaAssert(!this._characterMenu.isOpen && !this._ownsFocus(global.stage.get_key_focus()), 'Core loss releases menu and focus');
 
         const stageSignals = this._signals.filter(([object]) => object === global.stage).map(([, id]) => id);
         qaAssert(stageSignals.length > 0, 'Outside-click handler registered');
-        const actors = [this._panel, this._character, this._inputOverlay, this._answerLabel, this._characterMenu.actor];
+        const actors = [this._panel, this._panelClose, this._character, this._inputOverlay, this._answerLabel, this._characterMenu.actor];
         let destroyedActors = 0;
         for (const actor of actors)
             actor.connect('destroy', () => { destroyedActors++; });
@@ -334,6 +511,6 @@ export default class OverlayQA extends ZaikoExtension {
         outside.destroy();
         this._pointer = null;
         this._keyboard = null;
-        this._qaResult({ok: true, checked: 'no legacy UI, idempotent input/outside-click propagation, context menus, plain Aiko text/five rows/font scale, Enter/send/cancel/draft, Log/Theme, palettes/sync and lifecycle'});
+        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, Enter/icon/cancel/failure/drafts, theme updates, 12-second messages and lifecycle'});
     }
 }

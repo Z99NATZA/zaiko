@@ -31,6 +31,9 @@ Click Aiko to type; click elsewhere to hide input. Enter or the send icon sends
 and hides input. Replies appear as `[Aiko] message` for 12 seconds. Right click for **Log**,
 **Theme**, or **Quit**, including optional **Sync with zhyprbola**.
 
+Log shows flat `[Me]` / `[Aiko]` text with colored prefixes and a built-in input.
+While Log is open, character clicks focus its input instead of the compact one.
+
 [Requirements and configuration](docs/runtime.md)
 
 [Documentation](docs/README.md)

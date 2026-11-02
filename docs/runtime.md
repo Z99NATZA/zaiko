@@ -57,16 +57,37 @@ while a request is active the icon becomes Cancel. The latest answer appears as 
 text above her head in the form [Aiko] message, with no bubble background or
 padding. It grows to its content and is limited to five wrapped lines including
 the prefix; longer answers are shortened only in this preview. Each displayed
-message disappears after 12 seconds, including waiting/error text. Repainting,
+completed message or error disappears after 12 seconds. Repainting,
 changing theme, or reopening input does not restart that countdown. The full
 conversation stays in Log.
 
-Right click the character and choose Log to read the complete retained session
-conversation in a read-only transcript. The old comparison panel and its
-composer are removed. Log appears only when requested. Theme and Quit are also
+Thinking displays elapsed time, for example [Aiko] Thinking... (3s),
+(1m 30s), or (2h 1m 30s). It updates once per second using measured elapsed
+time, omits leading zero units, and remains visible while the request is active.
+The clock starts when this extension observes thinking, continues across tool
+phases of the same request, and resets for a new request or when the core stops.
+
+Right click the character and choose Log to read and continue the retained
+session conversation. Its flat, left-aligned transcript displays [Me] message
+and [Aiko] message directly, without bubbles or separate role headings. Only
+the prefixes have participant-specific colors; all message bodies use the same
+color. Tool results use [Action]. Markup-like message content is literal text.
+
+The input at the bottom of Log supports Enter and its embedded send/cancel icon.
+Successful Log sends clear only its draft and keep Log open for continued chat.
+While Log is open, character clicks and Present focus Log input and cannot open
+the compact input. Closing Log re-enables compact input. The two drafts stay
+separate and submission failures restore only the originating draft. A shared
+request guard prevents overlapping sends from either input.
+The floating answer is hidden while Log is open to avoid overlapping text. Its
+12-second timer continues, and closing Log shows it only if it has not expired.
+
+The old comparison panel is removed. Log appears only when requested. Theme and Quit are also
 available from the character menu. Escape closes the focused input or support
 panel. Hiding input keeps the latest answer visible; Quit or zaiko stop ends
 the session.
+The conversation has no title/header row. A circular close control floats at
+its corner without taking transcript space; it supports click and Escape.
 
 Appearance
 ----------
@@ -74,10 +95,13 @@ Appearance
 Choose Theme in the character menu to open appearance settings. The selected
 appearance applies to the compact input, answer text, support panel, and
 character menu.
-Zaiko uses zhyprbola's eight palettes: Purple (default), White Mist, White Sky,
-Forest Calm, One Half Gray, Red, Sakura, and Silver Dawn. The support panel's
-22 px outer corners, 11 px controls, 8/16 px gaps, desktop font family, 14 px
-body, 12 px details, and semibold headings follow zhyprbola's Settings. The slim
+The existing palettes remain selectable: Purple (default), White Mist, White
+Sky, Forest Calm, One Half Gray, Red, Sakura, and Silver Dawn. The conversation
+uses the selected palette for its surface, composer, text, floating close, and
+slim rounded scrollbar. It keeps Zaiko's own 12 px outer corners, 16 px padding,
+flat text rows, and integrated composer. Theme-compatible prefix colors change without
+altering the common body color or drafts. The layout no longer follows
+zhyprbola component geometry. The slim
 input uses a 38 px height, 9 px corners, 13 px text, and a 16 px outlined icon.
 
 Sync with zhyprbola is off by default. Turn it on to follow the theme saved in
@@ -172,7 +196,7 @@ cleanup. This uses a test conversation and no live provider calls.
 
 make test-desktop runs a private GNOME compositor and D-Bus session with temporary
 HOME/XDG directories, no core or API credentials, and deterministic Submit/Cancel
-responses. It exercises native pointer/keyboard input, read-only Log, repeated
+responses. It exercises native pointer/keyboard input, Log conversation, repeated
 character clicks and outside-click dismissal, five actual Pango rows including
 the Aiko prefix, font scaling and disconnect
 draft restoration, all palettes/live sync, a narrow synthetic work area, focus/menu

@@ -42,16 +42,29 @@ function alpha(hex, opacity) {
     return `rgba(${channels.join(', ')}, ${opacity})`;
 }
 
+export function logPrefixColor(theme, role) {
+    if (!['user', 'assistant'].includes(role))
+        return null;
+    // Two readable shades of the selected accent on a light themed surface.
+    const factor = role === 'user' ? 0.82 : 0.58;
+    return `#${[1, 3, 5].map(offset => Math.round(
+        Number.parseInt(theme.accent.slice(offset, offset + 2), 16) * factor)
+        .toString(16).padStart(2, '0')).join('')}`;
+}
+
 export function themeStylesheet() {
     return THEMES.map(theme => {
-        const root = `.zaiko-panel.zaiko-theme-${theme.id}`;
+        const root = `.zaiko-panel.zaiko-appearance.zaiko-theme-${theme.id}`;
+        const log = `.zaiko-panel.zaiko-log.zaiko-theme-${theme.id}`;
         const input = `.zaiko-input-overlay.zaiko-theme-${theme.id}`;
         const answer = `.zaiko-answer.zaiko-theme-${theme.id}`;
         const context = `.zaiko-context.zaiko-theme-${theme.id}`;
+        const close = `.zaiko-panel-close.zaiko-theme-${theme.id}`;
+        const thumb = `.zaiko-scroll-thumb.zaiko-theme-${theme.id}`;
+        const track = `.zaiko-scroll-track.zaiko-theme-${theme.id}#trough`;
         return `
 ${root} { color: ${theme.text}; background-color: #FAFCFD; }
-${root} .zaiko-title, ${root} .zaiko-message-content,
-${root} .zaiko-theme-name { color: ${theme.text}; }
+${root} .zaiko-title, ${root} .zaiko-theme-name { color: ${theme.text}; }
 ${root} .zaiko-placeholder, ${root} .zaiko-theme-detail { color: ${alpha(theme.text, 0.68)}; }
 ${root} .zaiko-error { color: #B83252; }
 ${root} .zaiko-button { color: ${theme.text}; background-color: ${theme.control}; }
@@ -60,12 +73,25 @@ ${root} .zaiko-button:checked { background-color: ${theme.selected}; }
 ${root} .zaiko-button:insensitive { color: ${alpha(theme.text, 0.45)}; background-color: ${alpha(theme.control, 0.65)}; }
 ${root} .zaiko-sync:checked { color: #FFFFFF; background-color: ${theme.accent}; }
 ${root} .zaiko-sync:checked:hover, ${root} .zaiko-sync:checked:focus { background-color: ${alpha(theme.accent, 0.85)}; }
-${root} .zaiko-message { background-color: ${theme.control}; }
-${root} .zaiko-message-user { background-color: ${theme.selected}; }
-${root} .zaiko-message-role, ${root} .zaiko-theme-check { color: ${theme.accent}; }
+${root} .zaiko-theme-check { color: ${theme.accent}; }
 ${root} .zaiko-scroll StScrollBar StBin#trough { background-color: ${alpha(theme.track, 0.5)}; }
-${root} .zaiko-scroll StScrollBar StButton#vhandle { background-color: ${theme.track}; }
+${root} .zaiko-scroll StScrollBar .vhandle { background-color: ${theme.track}; }
 .zaiko-panel .zaiko-swatch-${theme.id} { background-color: ${theme.accent}; }
+${log} { color: ${theme.text}; background-color: ${alpha(theme.control, 0.97)}; border-color: ${theme.track}; }
+${log} .zaiko-log-message, ${log} .zaiko-log-entry { color: ${theme.text}; }
+${log} .zaiko-log-status, ${log} .zaiko-placeholder, ${log} .zaiko-log-entry StLabel { color: ${alpha(theme.text, 0.65)}; }
+${log} .zaiko-log-error { color: #B83252; }
+${log} .zaiko-log-composer { background-color: ${theme.hover}; border-color: ${theme.track}; }
+${log} .zaiko-log-entry { caret-color: ${theme.accent};
+    selection-background-color: ${theme.selected}; selected-color: ${theme.text}; }
+${log} .zaiko-log-send { color: ${theme.accent}; border-color: ${alpha(theme.accent, 0.3)}; }
+${log} .zaiko-log-send:hover, ${log} .zaiko-log-send:focus { background-color: ${theme.selected}; border-color: ${theme.accent}; }
+${log} .zaiko-log-send:insensitive { color: ${alpha(theme.text, 0.4)}; border-color: ${theme.track}; }
+${track} { background-color: ${alpha(theme.track, 0.25)}; border-radius: 3px; }
+${thumb} { background-color: ${alpha(theme.accent, 0.4)}; }
+${thumb}:hover, ${thumb}:active { background-color: ${alpha(theme.accent, 0.75)}; }
+${close} { color: ${theme.text}; background-color: ${theme.control}; border-color: ${theme.track}; }
+${close}:hover, ${close}:focus { background-color: ${theme.selected}; border-color: ${theme.accent}; }
 ${input} { color: #FFFFFF; background-color: ${alpha(theme.accent, 0.18)}; border-color: ${alpha(theme.selected, 0.45)}; }
 ${input} .zaiko-overlay-entry, ${input} .zaiko-overlay-entry:focus {
     color: #FFFFFF; background-color: transparent; border-color: transparent;

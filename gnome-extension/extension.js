@@ -13,9 +13,10 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {
     APP_IDS, CORE_BUS, CORE_PATH, DESKTOP_BUS, DESKTOP_PATH, DESKTOP_XML,
     panelPosition, clampPosition, compactPosition, expressionFor, isBusy, latestAssistant, parseEvent, parseSnapshot,
+    transcriptLine, formatElapsed,
 } from './protocol.js';
 import {EXPRESSIONS, imageGeometry} from './assets/manifest.js';
-import {THEMES, themeStylesheet} from './themes.js';
+import {THEMES, logPrefixColor, themeStylesheet} from './themes.js';
 import {ThemeSettings} from './themeSettings.js';
 import {answerPreview} from './answerPreview.js';
 
@@ -35,13 +36,18 @@ export default class ZaikoExtension extends Extension {
         this._answerDisplayKey = null;
         this._answerExpired = false;
         this._answerHideSource = 0;
+        this._thinkingStartedUs = 0;
+        this._thinkingRequestId = null;
+        this._thinkingSource = 0;
         this._panelMode = 'log';
+        this._activeTheme = THEMES[0];
         this._focusDismissSource = 0;
         this._sending = false;
         this._cancelling = false;
         this._snapshotRunning = false;
         this._snapshotDirty = false;
         this._signals = [];
+        this._scrollParts = [];
         this._eventSubscription = 0;
         this._scrollSource = 0;
         this._uiError = null;
@@ -169,38 +175,77 @@ export default class ZaikoExtension extends Extension {
         this._buildPanel();
         this._buildCompactActors();
         // Visibility is owned here rather than trackFullscreen.
-        for (const actor of [this._character, this._panel, this._answerLabel, this._inputOverlay])
+        for (const actor of [this._character, this._panel, this._answerLabel, this._inputOverlay, this._panelClose])
             Main.layoutManager.addChrome(actor, {affectsStruts: false, trackFullscreen: false});
         this._renderSnapshot();
     }
 
     _buildPanel() {
         this._panel = new St.BoxLayout({
-            vertical: true, style_class: 'zaiko-panel', width: 360, height: 400,
+            vertical: true, style_class: 'zaiko-panel zaiko-log', width: 360, height: 400,
             reactive: true, can_focus: true, visible: false,
         });
-        const header = new St.BoxLayout({style_class: 'zaiko-header'});
+        const header = new St.BoxLayout({style_class: 'zaiko-header', visible: false});
+        this._panelHeader = header;
         this._panelTitle = new St.Label({
-            text: 'Log', style_class: 'zaiko-title', x_expand: true,
+            text: '', style_class: 'zaiko-title', x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
         });
         header.add_child(this._panelTitle);
-        header.add_child(this._button('×', () => this._hidePanel(), 'zaiko-close', 'Close panel'));
         this._panel.add_child(header);
+        this._panelClose = new St.Button({
+            style_class: 'zaiko-panel-close', width: 28, height: 28,
+            can_focus: true, accessible_name: 'Close conversation', visible: false,
+        });
+        this._panelClose.set_child(new St.Icon({icon_name: 'window-close-symbolic', icon_size: 14}));
+        this._panelClose.connect('clicked', () => this._hidePanel());
+        this._panelClose.connect('key-press-event', (_actor, event) => {
+            if (event.get_key_symbol() !== Clutter.KEY_Escape)
+                return Clutter.EVENT_PROPAGATE;
+            this._hidePanel();
+            return Clutter.EVENT_STOP;
+        });
         this._logScroll = new St.ScrollView({
             style_class: 'zaiko-scroll', x_expand: true, y_expand: true, overlay_scrollbars: true,
         });
         this._logScroll.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC);
+        this._registerScrollbarParts(this._logScroll);
         this._logHistory = new St.BoxLayout({vertical: true, style_class: 'zaiko-history', x_expand: true});
         this._logScroll.set_child(this._logHistory);
         this._panel.add_child(this._logScroll);
         this._buildThemePanel();
+        this._logStatus = this._wrappedLabel('', 'zaiko-log-status');
+        this._logStatus.visible = false;
+        this._panel.add_child(this._logStatus);
+        this._buildLogComposer();
         this._panel.connect('key-press-event', (_actor, event) => {
             if (event.get_key_symbol() !== Clutter.KEY_Escape)
                 return Clutter.EVENT_PROPAGATE;
             this._hidePanel();
             return Clutter.EVENT_STOP;
         });
+    }
+
+    _buildLogComposer() {
+        this._logComposer = new St.BoxLayout({
+            style_class: 'zaiko-log-composer', x_expand: true, height: 42,
+        });
+        this._logEntry = new St.Entry({
+            style_class: 'zaiko-log-entry', hint_text: 'Message Aiko…',
+            can_focus: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER,
+        });
+        ShellEntry.addContextMenu(this._logEntry);
+        this._logEntry.clutter_text.connect('activate', () => this._submit(this._logEntry));
+        this._logComposer.add_child(this._logEntry);
+        this._logSend = new St.Button({
+            style_class: 'zaiko-log-send', can_focus: true,
+            accessible_name: 'Send message in Log', y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._logSendIcon = new St.Icon({icon_name: 'mail-send-symbolic', icon_size: 16});
+        this._logSend.set_child(this._logSendIcon);
+        this._logSend.connect('clicked', () => this._busy() ? this._cancel() : this._submit(this._logEntry));
+        this._logComposer.add_child(this._logSend);
+        this._panel.add_child(this._logComposer);
     }
 
     _buildCompactActors() {
@@ -261,6 +306,7 @@ export default class ZaikoExtension extends Extension {
             overlay_scrollbars: true, visible: false,
         });
         this._themeScroll.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC);
+        this._registerScrollbarParts(this._themeScroll);
         const panel = new St.BoxLayout({vertical: true, style_class: 'zaiko-theme-panel'});
         this._syncTheme = this._button('Sync with zhyprbola · Off',
             () => this._themeSettings.setSync(!this._themeSettings.settings.syncZhyprbola),
@@ -303,9 +349,15 @@ export default class ZaikoExtension extends Extension {
     }
 
     _applyAppearance({settings, appearance, error}) {
-        this._panel.set_style_class_name(`zaiko-panel zaiko-theme-${appearance.theme.id}`);
+        this._activeTheme = appearance.theme;
+        this._applyPanelStyle();
         this._answerLabel.set_style_class_name(`zaiko-answer zaiko-theme-${appearance.theme.id}`);
         this._inputOverlay.set_style_class_name(`zaiko-input-overlay zaiko-theme-${appearance.theme.id}`);
+        for (const part of this._scrollParts) {
+            for (const theme of THEMES)
+                part.remove_style_class_name(`zaiko-theme-${theme.id}`);
+            part.add_style_class_name(`zaiko-theme-${appearance.theme.id}`);
+        }
         for (const theme of THEMES)
             this._characterMenu.actor.remove_style_class_name(`zaiko-theme-${theme.id}`);
         this._characterMenu.actor.add_style_class_name(`zaiko-theme-${appearance.theme.id}`);
@@ -325,7 +377,28 @@ export default class ZaikoExtension extends Extension {
             button.can_focus = button.reactive;
             button.opacity = settings.syncZhyprbola ? 150 : 255;
         }
-        this._renderCompact();
+        this._renderSnapshot();
+    }
+
+    _applyPanelStyle() {
+        this._panel.set_style_class_name(`zaiko-panel zaiko-${this._panelMode} zaiko-theme-${this._activeTheme.id}`);
+        this._panelClose.set_style_class_name(`zaiko-panel-close zaiko-theme-${this._activeTheme.id}`);
+    }
+
+    _registerScrollbarParts(view) {
+        // Style our native parts directly rather than relying on theme ancestry.
+        for (const bar of view.get_children().filter(child => child instanceof St.ScrollBar)) {
+            for (const part of bar.get_children()) {
+                const classes = part.get_style_class_name()?.split(' ') ?? [];
+                if (classes.includes('vhandle') || classes.includes('hhandle'))
+                    part.add_style_class_name('zaiko-scroll-thumb');
+                else if (part.get_name() === 'trough')
+                    part.add_style_class_name('zaiko-scroll-track');
+                else
+                    continue;
+                this._scrollParts.push(part);
+            }
+        }
     }
 
     _button(label, callback, extraClass = '', accessibleName = label) {
@@ -375,6 +448,9 @@ export default class ZaikoExtension extends Extension {
             width: CHARACTER_WIDTH, height: CHARACTER_HEIGHT,
         }, {width: this._panel.width, height: this._panel.height}, area);
         this._panel.set_position(position.x, position.y);
+        const closePosition = clampPosition(position.x + this._panel.width - 14,
+            position.y - 14, 28, 28, area);
+        this._panelClose.set_position(closePosition.x, closePosition.y);
         const compact = compactPosition({
             x: this._character.x, y: this._character.y,
             width: CHARACTER_WIDTH, height: CHARACTER_HEIGHT,
@@ -415,14 +491,21 @@ export default class ZaikoExtension extends Extension {
         }
         this._character.visible = show;
         this._panel.visible = show && this._panelOpen;
-        this._inputOverlay.visible = show && this._inputOpen;
-        this._answerLabel.visible = show && this._answerHasText;
+        this._panelClose.visible = this._panel.visible;
+        this._inputOverlay.visible = show && this._inputOpen && !this._logIsOpen();
+        this._answerLabel.visible = show && this._answerHasText && !this._logIsOpen();
     }
 
     _showInput() {
         if (!this._enabled)
             return;
         this._rememberFocus();
+        if (this._logIsOpen()) {
+            this._hideInput(false);
+            if (this._panel.visible)
+                this._logEntry.grab_key_focus();
+            return;
+        }
         this._inputOpen = true;
         this._updateVisibility();
         if (this._inputOverlay.visible)
@@ -441,18 +524,29 @@ export default class ZaikoExtension extends Extension {
         this._showPanel('appearance');
     }
 
+    _logIsOpen() {
+        return this._panelOpen && this._panelMode === 'log';
+    }
+
     _showPanel(mode) {
         this._rememberFocus();
         this._characterMenu.close();
+        this._logEntry.menu?.close();
         this._hideInput(false);
         this._panelMode = mode;
-        this._panelTitle.text = mode === 'appearance' ? 'Appearance' : 'Log';
+        this._applyPanelStyle();
+        this._panelTitle.text = mode === 'appearance' ? 'Appearance' : '';
+        this._panelHeader.visible = mode === 'appearance';
+        this._panel.accessible_name = mode === 'appearance' ? 'Appearance' : 'Conversation';
+        this._panelClose.accessible_name = mode === 'appearance' ? 'Close appearance' : 'Close conversation';
         this._logScroll.visible = mode === 'log';
         this._themeScroll.visible = mode === 'appearance';
+        this._logComposer.visible = mode === 'log';
         this._panelOpen = true;
+        this._renderLogState();
         this._updateVisibility();
         if (this._panel.visible)
-            (mode === 'appearance' ? this._syncTheme : this._panel).grab_key_focus();
+            (mode === 'appearance' ? this._syncTheme : this._logEntry).grab_key_focus();
     }
 
     _openCharacterMenu() {
@@ -462,14 +556,14 @@ export default class ZaikoExtension extends Extension {
         this._characterMenu.toggle();
     }
 
-    _ownsFocus(focus, actors = [this._panel, this._inputOverlay, this._answerLabel]) {
+    _ownsFocus(focus, actors = [this._panel, this._panelClose, this._inputOverlay, this._answerLabel]) {
         return Boolean(focus && actors.some(actor => actor?.contains(focus)));
     }
 
     _rememberFocus() {
         const focus = global.stage.get_key_focus();
-        const roots = [this._panel, this._inputOverlay, this._answerLabel, this._characterMenu?.actor,
-            this._overlayEntry?.menu?.actor];
+        const roots = [this._panel, this._panelClose, this._inputOverlay, this._answerLabel, this._characterMenu?.actor,
+            this._overlayEntry?.menu?.actor, this._logEntry?.menu?.actor];
         if (!this._ownsFocus(focus, roots))
             this._focusBeforeUI = global.display.focus_window;
     }
@@ -480,6 +574,11 @@ export default class ZaikoExtension extends Extension {
         if (actors.includes(this._inputOverlay)) {
             roots.push(this._overlayEntry?.menu?.actor);
             this._overlayEntry?.menu?.close();
+        }
+        if (actors.includes(this._panel)) {
+            roots.push(this._panelClose);
+            roots.push(this._logEntry?.menu?.actor);
+            this._logEntry?.menu?.close();
         }
         if (actors.includes(this._characterMenu?.actor))
             this._characterMenu?.close();
@@ -494,7 +593,7 @@ export default class ZaikoExtension extends Extension {
     _hidePanel() {
         this._panelOpen = false;
         this._releaseFocus(true, [this._panel]);
-        this._panel.hide();
+        this._updateVisibility();
     }
 
     _hideInput(restore = false) {
@@ -558,6 +657,7 @@ export default class ZaikoExtension extends Extension {
     _clearCore() {
         this._epoch++;
         this._clearAnswerTimeout();
+        this._clearThinkingClock();
         this._sessionCancellable?.cancel();
         this._sessionCancellable = null;
         if (this._eventSubscription)
@@ -642,8 +742,10 @@ export default class ZaikoExtension extends Extension {
         if (!this._panel)
             return;
         this._setExpression(expressionFor(this._snapshot));
+        this._syncThinkingClock();
         this._renderCompact();
-        const signature = JSON.stringify(this._snapshot.messages);
+        this._renderLogState();
+        const signature = JSON.stringify([this._activeTheme.id, this._snapshot.messages]);
         if (signature === this._historySignature)
             return;
         this._historySignature = signature;
@@ -653,16 +755,27 @@ export default class ZaikoExtension extends Extension {
             this._logHistory.add_child(placeholder);
         }
         for (const message of this._snapshot.messages) {
-            const box = new St.BoxLayout({
-                vertical: true, x_expand: true,
-                style_class: `zaiko-message${message.role === 'user' ? ' zaiko-message-user' : ''}`,
-            });
-            box.add_child(new St.Label({
-                text: message.role === 'user' ? 'You' : message.role === 'tool' ? 'Action' : 'Aiko',
-                style_class: 'zaiko-message-role',
-            }));
-            box.add_child(this._wrappedLabel(message.content, 'zaiko-message-content'));
-            this._logHistory.add_child(box);
+            const {prefix, text} = transcriptLine(message);
+            const label = this._wrappedLabel(text, 'zaiko-log-message');
+            label.clutter_text.set_line_alignment(Pango.Alignment.LEFT);
+            const color = logPrefixColor(this._activeTheme, message.role);
+            if (color) {
+                const applyPrefix = () => {
+                    const channels = [1, 3, 5].map(offset => Number.parseInt(color.slice(offset, offset + 2), 16) * 257);
+                    const attribute = Pango.attr_foreground_new(...channels);
+                    attribute.start_index = 0;
+                    attribute.end_index = prefix.length;
+                    const attributes = label.clutter_text.get_attributes()?.copy() ?? Pango.AttrList.new();
+                    attributes.change(attribute);
+                    label.clutter_text.set_attributes(attributes);
+                };
+                // St replaces foreground attributes when applying CSS. Run after
+                // its style handler, overriding only the ASCII prefix byte range.
+                // All message text remains literal; no markup is parsed.
+                label.connect_after('style-changed', applyPrefix);
+                applyPrefix();
+            }
+            this._logHistory.add_child(label);
         }
         if (this._scrollSource)
             GLib.Source.remove(this._scrollSource);
@@ -674,6 +787,21 @@ export default class ZaikoExtension extends Extension {
             }
             return GLib.SOURCE_REMOVE;
         });
+    }
+
+    _renderLogState() {
+        const busy = this._busy();
+        const error = this._uiError || this._snapshotError || this._snapshot.error ||
+            (this._snapshot.state === 'error' ? 'Something went wrong.' : null);
+        const status = error || this._requestStatus();
+        this._logStatus.text = status ? `[Aiko] ${status}` : '';
+        this._logStatus.visible = this._panelMode === 'log' && Boolean(this._logStatus.text);
+        this._logStatus.set_style_class_name(`zaiko-log-status${error ? ' zaiko-log-error' : ''}`);
+        this._logSendIcon.icon_name = busy ? 'process-stop-symbolic' : 'mail-send-symbolic';
+        this._logSend.accessible_name = this._cancelling ? 'Stopping request' : busy ? 'Cancel request' : 'Send message in Log';
+        this._logSend.reactive = Boolean(this._coreOwner && !this._cancelling);
+        this._logSend.can_focus = this._logSend.reactive;
+        this._logEntry.clutter_text.editable = Boolean(this._coreOwner && !busy);
     }
 
     _wrappedLabel(text, styleClass) {
@@ -694,16 +822,60 @@ export default class ZaikoExtension extends Extension {
         this._answerHasText = false;
     }
 
+    _clearThinkingClock() {
+        if (this._thinkingSource)
+            GLib.Source.remove(this._thinkingSource);
+        this._thinkingSource = 0;
+        this._thinkingStartedUs = 0;
+        this._thinkingRequestId = null;
+    }
+
+    _syncThinkingClock() {
+        const {state, request_id: requestId} = this._snapshot;
+        if (!['thinking', 'working'].includes(state)) {
+            this._clearThinkingClock();
+            return;
+        }
+        if (requestId && this._thinkingRequestId && requestId !== this._thinkingRequestId)
+            this._clearThinkingClock();
+        if (state === 'thinking' && !this._thinkingStartedUs)
+            this._thinkingStartedUs = GLib.get_monotonic_time();
+        if (requestId)
+            this._thinkingRequestId = requestId;
+        if (!this._thinkingStartedUs || this._thinkingSource)
+            return;
+        this._thinkingSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
+            if (!this._enabled || !['thinking', 'working'].includes(this._snapshot.state)) {
+                this._thinkingSource = 0;
+                this._thinkingStartedUs = 0;
+                return GLib.SOURCE_REMOVE;
+            }
+            if (this._snapshot.state === 'thinking') {
+                this._renderCompact();
+                this._renderLogState();
+            }
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    _requestStatus() {
+        if (this._sending)
+            return 'Sending…';
+        if (this._snapshot.state === 'thinking') {
+            const elapsed = this._thinkingStartedUs
+                ? (GLib.get_monotonic_time() - this._thinkingStartedUs) / 1_000_000 : 0;
+            return `Thinking... (${formatElapsed(elapsed)})`;
+        }
+        return this._snapshot.state === 'working' ? 'Opening app…' : '';
+    }
+
     _renderCompact() {
         if (!this._answerLabel)
             return;
         const busy = this._busy();
         const error = this._uiError || this._snapshotError || this._snapshot.error ||
             (this._snapshot.state === 'error' ? 'Something went wrong.' : null);
-        const text = error || (this._sending ? 'Sending…'
-            : this._snapshot.state === 'thinking' ? 'Thinking…'
-                : this._snapshot.state === 'working' ? 'Opening app…'
-                    : latestAssistant(this._snapshot.messages));
+        const text = error || this._requestStatus() || latestAssistant(this._snapshot.messages);
         const contentWidth = Math.max(1, this._answerLabel.width);
         const layout = this._answerLabel.clutter_text.get_layout().copy();
         layout.set_font_description(this._answerLabel.get_theme_node().get_font());
@@ -711,12 +883,12 @@ export default class ZaikoExtension extends Extension {
         const display = text ? `[Aiko] ${text}` : '';
         // Repaints, theme changes and reopening input must not prolong a message.
         // The count also distinguishes a new reply with exactly the same text.
-        const key = JSON.stringify([display,
+        const key = JSON.stringify([busy ? (error || (this._sending ? 'sending' : this._snapshot.state)) : display,
             this._snapshot.messages.filter(message => message.role === 'assistant').length]);
         if (key !== this._answerDisplayKey) {
             this._clearAnswerTimeout();
             this._answerDisplayKey = key;
-            if (display && this._coreOwner) {
+            if (display && this._coreOwner && !busy) {
                 this._answerHideSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 12000, () => {
                     this._answerHideSource = 0;
                     this._answerExpired = true;
@@ -747,6 +919,9 @@ export default class ZaikoExtension extends Extension {
     }
 
     async _submit(entry = this._overlayEntry) {
+        if (![this._overlayEntry, this._logEntry].includes(entry) ||
+            (entry === this._overlayEntry && this._logIsOpen()))
+            return;
         const text = entry.get_text().trim();
         if (!text || this._busy() || !this._coreOwner)
             return;
@@ -759,13 +934,18 @@ export default class ZaikoExtension extends Extension {
         this._renderSnapshot();
         try {
             await this._callCore('Submit', new GLib.Variant('(ss)', [requestId, text]));
-            if (this._enabled && epoch === this._epoch)
-                this._hideInput(true);
+            if (this._enabled && epoch === this._epoch) {
+                if (entry === this._overlayEntry)
+                    this._hideInput(true);
+                else if (this._logIsOpen() && this._panel.visible &&
+                    this._ownsFocus(global.stage.get_key_focus(), [this._panel]))
+                    this._logEntry.grab_key_focus();
+            }
         } catch (_error) {
             // A lost core may cancel the RPC after incrementing the epoch.
             // Preserve its draft only in the surviving, still-empty source;
             // never write into an actor replaced by disable/re-enable.
-            if (this._enabled && entry === this._overlayEntry && !entry.get_text())
+            if (this._enabled && [this._overlayEntry, this._logEntry].includes(entry) && !entry.get_text())
                 entry.set_text(text);
             if (this._enabled && epoch === this._epoch)
                 this._uiError = 'Message could not be sent. Please try again.';
@@ -861,6 +1041,7 @@ export default class ZaikoExtension extends Extension {
         for (const [object, id] of this._signals ?? [])
             object.disconnect(id);
         this._signals = [];
+        this._scrollParts = [];
         this._interfaceSettings = null;
         if (this._scrollSource)
             GLib.Source.remove(this._scrollSource);
@@ -868,7 +1049,7 @@ export default class ZaikoExtension extends Extension {
         if (this._focusDismissSource)
             GLib.Source.remove(this._focusDismissSource);
         this._focusDismissSource = 0;
-        for (const actor of [this._panel, this._character, this._inputOverlay, this._answerLabel]) {
+        for (const actor of [this._panel, this._panelClose, this._character, this._inputOverlay, this._answerLabel]) {
             if (!actor)
                 continue;
             Main.layoutManager.removeChrome(actor);
@@ -876,8 +1057,15 @@ export default class ZaikoExtension extends Extension {
         }
         this._panel = null;
         this._panelTitle = null;
+        this._panelHeader = null;
+        this._panelClose = null;
         this._logScroll = null;
         this._logHistory = null;
+        this._logComposer = null;
+        this._logEntry = null;
+        this._logSend = null;
+        this._logSendIcon = null;
+        this._logStatus = null;
         this._character = null;
         this._image = null;
         this._expression = null;

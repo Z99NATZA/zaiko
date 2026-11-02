@@ -95,3 +95,21 @@ export function compactPosition(character, answer, input, area) {
 export function latestAssistant(messages) {
     return messages.findLast(message => message.role === 'assistant')?.content ?? '';
 }
+
+export function transcriptLine(message) {
+    const prefix = message.role === 'user' ? '[Me]' : message.role === 'assistant' ? '[Aiko]' : '[Action]';
+    return {prefix, text: `${prefix} ${message.content}`};
+}
+
+export function formatElapsed(seconds) {
+    const elapsed = Math.max(0, Math.floor(seconds));
+    const hours = Math.floor(elapsed / 3600);
+    const minutes = Math.floor(elapsed % 3600 / 60);
+    const parts = [];
+    if (hours)
+        parts.push(`${hours}h`);
+    if (hours || minutes)
+        parts.push(`${minutes}m`);
+    parts.push(`${elapsed % 60}s`);
+    return parts.join(' ');
+}

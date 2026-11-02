@@ -10,6 +10,9 @@ A small 2D AI character for Linux, with compact input at her bottom, answers
 above her head, and a full conversation Log available through right click.
 Click the character to type and click elsewhere to hide input. Replies are
 plain text; the old comparison panel is removed.
+Log has its own input and flat left-aligned messages. Participant prefixes use
+different colors while message bodies share one color. Log owns conversation
+input while it is open.
 
 Use Rust as the core. Start with GNOME on Wayland.
 The first tools open zter and VS Code from chat.
