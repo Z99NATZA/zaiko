@@ -264,6 +264,7 @@ export default class OverlayQA extends ZaikoExtension {
             {role: 'assistant', content: 'สวัสดีค่ะ ไอโกะอยู่นี่นะคะ 😊'},
         ];
         this._renderSnapshot();
+        const answerShownAt = GLib.get_monotonic_time();
         await qaPause(160);
         const shortHeight = this._answerLabel.height;
         qaAssert(this._answerLabel.visible && this._answerLabel.text === '[Aiko] สวัสดีค่ะ ไอโกะอยู่นี่นะคะ 😊', 'Plain answer contains Aiko prefix');
@@ -276,15 +277,22 @@ export default class OverlayQA extends ZaikoExtension {
         outside.show();
 
         const answerTimer = this._answerHideSource;
-        await qaPause(6000);
+        await qaPause(3500);
         this._renderSnapshot();
         this._showInput();
         GLib.file_set_contents(`${GLib.get_user_config_dir()}/zaiko/ui.json`, '{"theme":"forest","syncZhyprbola":true}');
         GLib.file_set_contents(`${GLib.get_user_config_dir()}/zhyprbola/theme`, 'forest');
         qaAssert(this._answerHideSource === answerTimer, 'Unchanged message is not prolonged by repaint/input/ignored legacy preference changes');
+        await this._click(this._character, Clutter.BUTTON_SECONDARY);
+        qaAssert(this._characterMenu.isOpen && this._answerLabel.visible && this._answerHideSource === answerTimer,
+            'Right click keeps the latest answer visible without restarting its countdown');
+        const retainedLogItem = this._characterMenu._getMenuItems().find(item => item.label?.text === 'Log');
+        await this._click(retainedLogItem.actor);
+        qaAssert(this._panel.visible && this._answerLabel.visible && this._answerHideSource === answerTimer,
+            'Choosing Log keeps the answer visible on its original countdown');
         this._answerLabel.clutter_text.grab_key_focus();
-        await qaPause(6200);
-        qaAssert(!this._answerLabel.visible && this._answerHideSource === 0, 'Message expires after twelve seconds');
+        await qaPause(Math.max(1, Math.ceil((answerShownAt + 8_200_000 - GLib.get_monotonic_time()) / 1000)));
+        qaAssert(this._panel.visible && !this._answerLabel.visible && this._answerHideSource === 0, 'Message expires after eight seconds even while Log is open');
         qaAssert(!this._ownsFocus(global.stage.get_key_focus(), [this._answerLabel]), 'Expiry releases selected text focus');
         this._renderSnapshot();
         qaAssert(!this._answerLabel.visible, 'Repaint does not resurrect expired text');
@@ -372,8 +380,12 @@ export default class OverlayQA extends ZaikoExtension {
 
         await this._click(this._character, Clutter.BUTTON_SECONDARY);
         qaAssert(this._characterMenu.isOpen, 'Native right click opens menu');
-        qaAssert(!this._answerLabel.visible, 'Floating text does not show through the translucent menu');
+        qaAssert(this._answerLabel.visible, 'Right-click menu keeps unexpired floating text visible');
         await qaPause(100);
+        const layers = Main.uiGroup.get_children();
+        qaAssert(layers.indexOf(this._answerLabel) < layers.indexOf(this._panel) &&
+            layers.indexOf(this._answerLabel) < layers.indexOf(this._characterMenu.actor),
+        'Floating reply is stacked below Log and the popup menu');
         await this._shot('character-context-menu');
         const items = this._characterMenu._getMenuItems();
         qaAssert(items.length === 2 && items.map(item => item.label?.text).join(',') === 'Log,Quit', 'Character menu has Log and Quit only, without a chooser or separator');
@@ -382,14 +394,14 @@ export default class OverlayQA extends ZaikoExtension {
         const logItem = items.find(item => item.label?.text === 'Log');
         qaAssert(!items.some(item => item.label?.text === 'Theme') && items.some(item => item.label?.text === 'Quit'), 'Quit is reachable and theme selection is gone');
         await this._key(Clutter.KEY_Escape);
-        qaAssert(this._answerLabel.visible, 'Closing menu restores unexpired floating text');
+        qaAssert(this._answerLabel.visible, 'Closing menu keeps unexpired floating text visible');
         await this._click(this._character, Clutter.BUTTON_SECONDARY);
         await this._click(logItem.actor);
         qaAssert(this._panel.visible && !this._characterMenu.isOpen, 'Log opens only on request');
         qaAssert(this._logComposer.visible && !this._inputOverlay.visible, 'Log owns the active composer');
         await this._checkCaret(this._logEntry, this._logSend);
         await this._checkPanelClose();
-        qaAssert(!this._answerLabel.visible, 'Floating message does not overlap Log');
+        qaAssert(this._answerLabel.visible, 'Opening Log keeps the unexpired floating message visible');
         qaAssert(!this._panelHeader && !this._panelTitle, 'Conversation has no title/header row');
         qaAssert(this._panelClose.visible && this._panel.contains(this._panelClose), 'Close is an overlay inside Log');
         qaAssert(this._panelClose.width === this._panelClose.height &&
@@ -503,7 +515,7 @@ export default class OverlayQA extends ZaikoExtension {
         outside.show();
         await this._click(this._panelClose);
         qaAssert(!this._panel.visible && !this._panelClose.visible, 'Inset close dismisses panel and itself');
-        qaAssert(this._answerLabel.visible, 'Closing Log restores an answer still within its display time');
+        qaAssert(this._answerLabel.visible, 'Closing Log keeps an answer still within its display time visible');
         await this._click(this._character);
         qaAssert(this._inputOverlay.visible && this._overlayEntry.get_text() === 'compact draft retained', 'Closing Log re-enables compact input with its draft');
         this._showLog();
@@ -639,6 +651,6 @@ export default class OverlayQA extends ZaikoExtension {
         outside.destroy();
         this._pointer = null;
         this._keyboard = null;
-        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, inset close overlay/no reserved row/hover/immediate hide, Enter/icon/cancel/failure/drafts, native caret blinking/focus/settings/timeout/cleanup, One Half Dark surfaces/no theme chooser, 12-second messages and lifecycle'});
+        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, inset close overlay/no reserved row/hover/immediate hide, Enter/icon/cancel/failure/drafts, native caret blinking/focus/settings/timeout/cleanup, One Half Dark surfaces/no theme chooser, replies remain visible through menu/Log until original 8-second expiry, lifecycle'});
     }
 }

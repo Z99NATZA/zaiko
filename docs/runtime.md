@@ -57,8 +57,9 @@ while a request is active the icon becomes Cancel. The latest answer appears as 
 text above her head in the form [Aiko] message, with no bubble background or
 padding. It grows to its content and is limited to five wrapped lines including
 the prefix; longer answers are shortened only in this preview. Each displayed
-completed message or error disappears after 12 seconds. Repainting,
-changing the desktop font, or reopening input does not restart that countdown. The full
+completed message or error disappears after 8 seconds. Repainting,
+changing the desktop font, reopening input, or using the character menu or Log
+does not hide the answer or restart that countdown. The full
 conversation stays in Log.
 
 Thinking displays elapsed time, for example [Aiko] Thinking... (3s),
@@ -79,8 +80,10 @@ While Log is open, character clicks and Present focus Log input and cannot open
 the compact input. Closing Log re-enables compact input. The two drafts stay
 separate and submission failures restore only the originating draft. A shared
 request guard prevents overlapping sends from either input.
-The floating answer is hidden while Log is open to avoid overlapping text. Its
-12-second timer continues, and closing Log shows it only if it has not expired.
+The floating answer stays visible while Log or the character menu is open,
+until its original 8-second countdown expires. Closing them does not restore
+an expired answer. It is stacked below Log and popup menus, which can cover it
+without changing its countdown.
 
 The old comparison panel is removed. Log appears only when requested. Quit is
 also available from the character menu. Escape closes the focused input or support
@@ -93,8 +96,7 @@ while the pointer is anywhere in Log, including its input and close button, and
 hides immediately on leaving. Click closes
 Log; Escape works even while the close button is hidden.
 The character's right-click menu has two compact rows: Log and Quit, with no
-separator. Floating answer text is hidden while this translucent menu is open,
-so it cannot overlap the menu labels. Input Copy/Paste menus use their original GNOME
+separator. It is stacked above the floating reply. Input Copy/Paste menus use their original GNOME
 appearance and actions, without additional shortcut labels.
 
 Fixed appearance

@@ -163,6 +163,8 @@ export default class ZaikoExtension extends Extension {
         // Visibility is owned here rather than trackFullscreen.
         for (const actor of [this._character, this._panel, this._answerLabel, this._inputOverlay])
             Main.layoutManager.addChrome(actor, {affectsStruts: false, trackFullscreen: false});
+        Main.uiGroup.set_child_below_sibling(this._answerLabel, this._panel);
+        Main.uiGroup.set_child_above_sibling(this._characterMenu.actor, this._panel);
         this._renderSnapshot();
     }
 
@@ -394,7 +396,7 @@ export default class ZaikoExtension extends Extension {
             this._panel.sync_hover();
         this._updatePanelClose();
         this._inputOverlay.visible = show && this._inputOpen && !this._logIsOpen();
-        this._answerLabel.visible = show && this._answerHasText && !this._logIsOpen() && !this._characterMenu?.isOpen;
+        this._answerLabel.visible = show && this._answerHasText;
     }
 
     _showInput() {
@@ -781,7 +783,7 @@ export default class ZaikoExtension extends Extension {
             this._clearAnswerTimeout();
             this._answerDisplayKey = key;
             if (display && this._coreOwner && !busy) {
-                this._answerHideSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 12000, () => {
+                this._answerHideSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 8000, () => {
                     this._answerHideSource = 0;
                     this._answerExpired = true;
                     this._answerHasText = false;
