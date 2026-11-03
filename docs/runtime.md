@@ -86,8 +86,12 @@ The old comparison panel is removed. Log appears only when requested. Quit is
 also available from the character menu. Escape closes the focused input or support
 panel. Hiding input keeps the latest answer visible; Quit or zaiko stop ends
 the session.
-The conversation has no title/header row. A circular close control floats at
-its corner without taking transcript space; it supports click and Escape.
+The conversation has no title/header row. Its circular close control sits inside
+the top-right corner, inset 12 px from the edges, overlaying the transcript
+without reserving a header or changing the message area. It appears
+while the pointer is anywhere in Log, including its input and close button, and
+hides immediately on leaving. Click closes
+Log; Escape works even while the close button is hidden.
 The character's right-click menu has two compact rows: Log and Quit, with no
 separator. Floating answer text is hidden while this translucent menu is open,
 so it cannot overlap the menu labels. Input Copy/Paste menus use their original GNOME
@@ -100,8 +104,9 @@ Zaiko uses a fixed One Half Dark palette: #282c34 surfaces at 90% opacity,
 #dcdfe4 text, subdued gray outlines, rounded controls, and a slim scrollbar.
 Controls, caret, selection, hover, and keyboard focus use the same neutral
 foreground tones. Close uses a gray highlight; errors use brighter, heavier text.
-Floating replies retain their transparent background and text shadow. The conversation
-has a 12 px outer radius and 16 px padding. Both composers use 38 px height,
+Panels, controls, and menus have no box shadows. Floating replies retain their
+transparent background and text shadow. The conversation
+has a 12 px outer radius and 16 px content padding. Both composers use 38 px height,
 9 px corners, 13 px text, and a 16 px outlined send/cancel icon. A single outer
 border surrounds the input and send button; keyboard focus highlights this
 border, and the embedded controls have no separate outlines. Log prefixes

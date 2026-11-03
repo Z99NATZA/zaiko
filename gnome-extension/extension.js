@@ -161,20 +161,29 @@ export default class ZaikoExtension extends Extension {
         this._buildPanel();
         this._buildCompactActors();
         // Visibility is owned here rather than trackFullscreen.
-        for (const actor of [this._character, this._panel, this._answerLabel, this._inputOverlay, this._panelClose])
+        for (const actor of [this._character, this._panel, this._answerLabel, this._inputOverlay])
             Main.layoutManager.addChrome(actor, {affectsStruts: false, trackFullscreen: false});
         this._renderSnapshot();
     }
 
     _buildPanel() {
-        this._panel = new St.BoxLayout({
-            vertical: true, style_class: 'zaiko-panel zaiko-log', width: 360, height: 400,
-            reactive: true, can_focus: true, visible: false,
+        this._panel = new St.Widget({
+            layout_manager: new Clutter.BinLayout(),
+            style_class: 'zaiko-panel zaiko-log', width: 360, height: 400,
+            reactive: true, track_hover: true, can_focus: true, visible: false,
         });
+        this._panelContent = new St.BoxLayout({
+            vertical: true, style_class: 'zaiko-panel-content', x_expand: true, y_expand: true,
+        });
+        this._panel.add_child(this._panelContent);
+        this._connect(this._panel, 'notify::hover', () => this._updatePanelClose());
         this._panelClose = new St.Button({
             style_class: 'zaiko-panel-close', width: 28, height: 28,
             can_focus: true, accessible_name: 'Close conversation', visible: false,
+            x_expand: true, y_expand: true,
+            x_align: Clutter.ActorAlign.END, y_align: Clutter.ActorAlign.START,
         });
+        this._panel.add_child(this._panelClose);
         this._panelClose.set_child(new St.Icon({icon_name: 'window-close-symbolic', icon_size: 14}));
         this._panelClose.connect('clicked', () => this._hidePanel());
         this._panelClose.connect('key-press-event', (_actor, event) => {
@@ -190,10 +199,10 @@ export default class ZaikoExtension extends Extension {
         this._registerScrollbarParts(this._logScroll);
         this._logHistory = new St.BoxLayout({vertical: true, style_class: 'zaiko-history', x_expand: true});
         this._logScroll.set_child(this._logHistory);
-        this._panel.add_child(this._logScroll);
+        this._panelContent.add_child(this._logScroll);
         this._logStatus = this._wrappedLabel('', 'zaiko-log-status');
         this._logStatus.visible = false;
-        this._panel.add_child(this._logStatus);
+        this._panelContent.add_child(this._logStatus);
         this._buildLogComposer();
         this._panel.connect('key-press-event', (_actor, event) => {
             if (event.get_key_symbol() !== Clutter.KEY_Escape)
@@ -223,7 +232,7 @@ export default class ZaikoExtension extends Extension {
         this._logSend.connect('clicked', () => this._busy() ? this._cancel() : this._submit(this._logEntry));
         this._logComposer.add_child(this._logSend);
         this._trackComposerFocus(this._logComposer, [this._logEntry.clutter_text, this._logSend]);
-        this._panel.add_child(this._logComposer);
+        this._panelContent.add_child(this._logComposer);
     }
 
     _buildCompactActors() {
@@ -341,9 +350,6 @@ export default class ZaikoExtension extends Extension {
             width: CHARACTER_WIDTH, height: CHARACTER_HEIGHT,
         }, {width: this._panel.width, height: this._panel.height}, area);
         this._panel.set_position(position.x, position.y);
-        const closePosition = clampPosition(position.x + this._panel.width - 14,
-            position.y - 14, 28, 28, area);
-        this._panelClose.set_position(closePosition.x, closePosition.y);
         const compact = compactPosition({
             x: this._character.x, y: this._character.y,
             width: CHARACTER_WIDTH, height: CHARACTER_HEIGHT,
@@ -384,7 +390,9 @@ export default class ZaikoExtension extends Extension {
         }
         this._character.visible = show;
         this._panel.visible = show && this._panelOpen;
-        this._panelClose.visible = this._panel.visible;
+        if (this._panel.visible)
+            this._panel.sync_hover();
+        this._updatePanelClose();
         this._inputOverlay.visible = show && this._inputOpen && !this._logIsOpen();
         this._answerLabel.visible = show && this._answerHasText && !this._logIsOpen() && !this._characterMenu?.isOpen;
     }
@@ -403,6 +411,15 @@ export default class ZaikoExtension extends Extension {
         this._updateVisibility();
         if (this._inputOverlay.visible)
             this._overlayEntry.grab_key_focus();
+    }
+
+    _updatePanelClose() {
+        if (!this._panelClose)
+            return;
+        const visible = Boolean(this._enabled && this._panel.visible && this._panel.hover);
+        if (!visible && this._enabled && this._panel.visible && this._panelClose.has_key_focus())
+            this._logEntry.grab_key_focus();
+        this._panelClose.visible = visible;
     }
 
     _present() {
@@ -924,13 +941,14 @@ export default class ZaikoExtension extends Extension {
         if (this._focusDismissSource)
             GLib.Source.remove(this._focusDismissSource);
         this._focusDismissSource = 0;
-        for (const actor of [this._panel, this._panelClose, this._character, this._inputOverlay, this._answerLabel]) {
+        for (const actor of [this._panel, this._character, this._inputOverlay, this._answerLabel]) {
             if (!actor)
                 continue;
             Main.layoutManager.removeChrome(actor);
             actor.destroy();
         }
         this._panel = null;
+        this._panelContent = null;
         this._panelClose = null;
         this._logScroll = null;
         this._logHistory = null;

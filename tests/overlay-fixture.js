@@ -132,6 +132,45 @@ export default class OverlayQA extends ZaikoExtension {
         settings.set_int('cursor-blink-timeout', 10);
     }
 
+    async _checkPanelClose() {
+        const [x, y] = this._panel.get_transformed_position();
+        const move = async (targetX, targetY) => {
+            this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), targetX, targetY);
+            await qaPause(50);
+        };
+        await move(100, 80);
+        qaAssert(!this._panelClose.visible && this._panel.visible, 'Close stays hidden while the pointer is outside Log');
+        const [, historyY] = this._logHistory.get_transformed_position();
+        const historyHeight = this._logScroll.height;
+        qaAssert(historyY - y >= 16 && historyY - y <= 18, 'Transcript keeps normal 16 px top padding without a close row');
+        await move(x + 20, y + 60);
+        qaAssert(this._panelClose.visible, 'Entering Log immediately reveals close');
+        const [closeX, closeY] = this._panelClose.get_transformed_position();
+        qaAssert(Math.abs(closeY - y - 12) <= 1 &&
+            Math.abs(x + this._panel.width - closeX - this._panelClose.width - 12) <= 1,
+        'Close is inset 12 px from the top and right edges');
+        qaAssert(this._logHistory.get_transformed_position()[1] === historyY && this._logScroll.height === historyHeight,
+            'Showing the overlaid close leaves message position and available height unchanged');
+        await move(closeX + 14, closeY + 14);
+        await qaPause(300);
+        qaAssert(this._panelClose.visible, 'Hovering close does not count as leaving Log');
+        const [entryX, entryY] = this._logEntry.get_transformed_position();
+        await move(entryX + 20, entryY + 10);
+        await qaPause(300);
+        qaAssert(this._panelClose.visible, 'Hovering the nested input keeps close visible');
+        await move(100, 80);
+        qaAssert(!this._panelClose.visible, 'Close hides immediately on leaving, before the old 300 ms delay');
+        await move(x + 20, y + 60);
+        qaAssert(this._panelClose.visible, 'Re-entering immediately restores close');
+        await move(100, 80);
+        this._renderSnapshot();
+        qaAssert(!this._panelClose.visible, 'Snapshot refreshes do not restore close outside Log');
+        qaAssert(this._logHistory.get_transformed_position()[1] === historyY && this._logScroll.height === historyHeight,
+            'Hiding close does not resize or move the transcript');
+        await move(x + 20, y + 60);
+        await this._shot('log-close-inside');
+    }
+
     async _runQA() {
         const {default: GObject} = await import('gi://GObject');
         if (this._coreWatch)
@@ -349,9 +388,10 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(this._panel.visible && !this._characterMenu.isOpen, 'Log opens only on request');
         qaAssert(this._logComposer.visible && !this._inputOverlay.visible, 'Log owns the active composer');
         await this._checkCaret(this._logEntry, this._logSend);
+        await this._checkPanelClose();
         qaAssert(!this._answerLabel.visible, 'Floating message does not overlap Log');
         qaAssert(!this._panelHeader && !this._panelTitle, 'Conversation has no title/header row');
-        qaAssert(this._panelClose.visible && !this._panel.contains(this._panelClose), 'Close floats independently of the content layout');
+        qaAssert(this._panelClose.visible && this._panel.contains(this._panelClose), 'Close is an overlay inside Log');
         qaAssert(this._panelClose.width === this._panelClose.height &&
             this._panelClose.get_theme_node().get_border_radius(St.Corner.TOPLEFT) >= this._panelClose.width / 2,
         'Close is circular rather than a rounded rectangle');
@@ -462,7 +502,7 @@ export default class OverlayQA extends ZaikoExtension {
         await this._shot('log-chat');
         outside.show();
         await this._click(this._panelClose);
-        qaAssert(!this._panel.visible && !this._panelClose.visible, 'Floating close dismisses panel and itself');
+        qaAssert(!this._panel.visible && !this._panelClose.visible, 'Inset close dismisses panel and itself');
         qaAssert(this._answerLabel.visible, 'Closing Log restores an answer still within its display time');
         await this._click(this._character);
         qaAssert(this._inputOverlay.visible && this._overlayEntry.get_text() === 'compact draft retained', 'Closing Log re-enables compact input with its draft');
@@ -497,9 +537,12 @@ export default class OverlayQA extends ZaikoExtension {
         this._renderSnapshot();
         qaAssert(this._thinkingSource === 0 && this._thinkingStartedUs === 0, 'Thinking clock stops when request finishes');
         this._showLog();
+        const [panelX, panelY] = this._panel.get_transformed_position();
+        this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), panelX + 20, panelY + 60);
+        await qaPause(60);
         this._panelClose.grab_key_focus();
         await this._key(Clutter.KEY_Escape);
-        qaAssert(!this._panel.visible && !this._panelClose.visible, 'Floating close also supports Escape');
+        qaAssert(!this._panel.visible && !this._panelClose.visible, 'Inset close also supports Escape');
         this._hidePanel();
         this._hideInput();
         const startX = this._character.x;
@@ -524,8 +567,12 @@ export default class OverlayQA extends ZaikoExtension {
         this._positionCharacter(450, 300);
         await qaPause(160);
         for (const actor of [this._panel, this._panelClose, this._character, this._inputOverlay, this._answerLabel]) {
-            qaAssert(actor.x >= 8 && actor.x + actor.width <= 672, 'Narrow horizontal bounds');
-            qaAssert(actor.y >= 40 && actor.y + actor.height <= 504, 'Narrow vertical bounds');
+            // Hidden actors may retain their old allocation transform. Close now
+            // uses panel-local coordinates; compare the requested positions.
+            const x = actor.x + (actor === this._panelClose ? this._panel.x : 0);
+            const y = actor.y + (actor === this._panelClose ? this._panel.y : 0);
+            qaAssert(x >= 8 && x + actor.width <= 672, 'Narrow horizontal bounds');
+            qaAssert(y >= 40 && y + actor.height <= 504, 'Narrow vertical bounds');
         }
         this._workArea = workArea;
         this._layout();
@@ -570,6 +617,12 @@ export default class OverlayQA extends ZaikoExtension {
         this._showLog();
         const carets = this._caretBlinks.slice();
         qaAssert(carets.some(caret => caret._source !== 0), 'Focused entry has an active blink timer before disable');
+        const [logX, logY] = this._panel.get_transformed_position();
+        this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), logX + 20, logY + 60);
+        await qaPause(60);
+        this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), 100, 80);
+        await qaPause(60);
+        qaAssert(!this._panelClose.visible, 'Close is already hidden on leaving Log');
         let destroyedActors = 0;
         for (const actor of actors)
             actor.connect('destroy', () => { destroyedActors++; });
@@ -586,6 +639,6 @@ export default class OverlayQA extends ZaikoExtension {
         outside.destroy();
         this._pointer = null;
         this._keyboard = null;
-        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, Enter/icon/cancel/failure/drafts, native caret blinking/focus/settings/timeout/cleanup, One Half Dark surfaces/no theme chooser, 12-second messages and lifecycle'});
+        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, inset close overlay/no reserved row/hover/immediate hide, Enter/icon/cancel/failure/drafts, native caret blinking/focus/settings/timeout/cleanup, One Half Dark surfaces/no theme chooser, 12-second messages and lifecycle'});
     }
 }
