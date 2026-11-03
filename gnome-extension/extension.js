@@ -54,6 +54,9 @@ export default class ZaikoExtension extends Extension {
         this._thinkingSource = 0;
         this._focusDismissSource = 0;
         this._selectionDrag = null;
+        this._dragOrigin = null;
+        this._characterGrab = null;
+        this._characterGrabSignal = 0;
         this._sending = false;
         this._cancelling = false;
         this._snapshotRunning = false;
@@ -213,36 +216,16 @@ export default class ZaikoExtension extends Extension {
         this._image = new St.Widget({reactive: false});
         this._character.add_child(this._image);
         this._setExpression('neutral');
-        // GNOME 50 gesture arbitration cancels the click when the pan recognizes.
-        // Keep click/drag arbitration local; outside dismissal only observes presses.
-        const click = new Clutter.ClickGesture();
-        click.set_required_button(Clutter.BUTTON_PRIMARY);
-        click.connect('recognize', () => this._showInput());
-        this._character.add_action(click);
+        // Grab from the initial press, before a fast motion can leave the actor.
+        // Grabbed events use the bubble phase, as in GNOME Shell's own DND.
+        this._character.connect('event', (_actor, event) => this._onCharacterEvent(event));
         const secondaryClick = new Clutter.ClickGesture();
         secondaryClick.set_required_button(Clutter.BUTTON_SECONDARY);
-        secondaryClick.connect('recognize', () => this._openCharacterMenu());
-        this._character.add_action(secondaryClick);
-        const pan = new Clutter.PanGesture({
-            required_button: Clutter.BUTTON_PRIMARY,
-            min_n_points: 1,
-            max_n_points: 1,
-            begin_threshold: 8,
-        });
-        pan.connect('recognize', () => {
-            this._characterMenu.close();
-            this._dragOrigin = {x: this._character.x, y: this._character.y};
-        });
-        pan.connect('pan-update', gesture => {
+        secondaryClick.connect('recognize', () => {
             if (!this._dragOrigin)
-                return;
-            const delta = gesture.get_accumulated_delta_abs();
-            this._positionCharacter(this._dragOrigin.x + delta.get_x(),
-                this._dragOrigin.y + delta.get_y());
+                this._openCharacterMenu();
         });
-        pan.connect('end', () => { this._dragOrigin = null; });
-        pan.connect('cancel', () => { this._dragOrigin = null; });
-        this._character.add_action(pan);
+        this._character.add_action(secondaryClick);
 
         this._buildPanel();
         this._buildCompactActors();
@@ -252,6 +235,68 @@ export default class ZaikoExtension extends Extension {
         Main.uiGroup.set_child_below_sibling(this._answerLabel, this._panel);
         Main.uiGroup.set_child_above_sibling(this._characterMenu.actor, this._panel);
         this._renderSnapshot();
+    }
+
+    _onCharacterEvent(event) {
+        const type = event.type();
+        if (type === Clutter.EventType.TOUCH_BEGIN ||
+            (type === Clutter.EventType.BUTTON_PRESS && event.get_button() === Clutter.BUTTON_PRIMARY)) {
+            if (this._dragOrigin)
+                return Clutter.EVENT_STOP;
+            const [pointerX, pointerY] = event.get_coords();
+            this._dragOrigin = {x: this._character.x, y: this._character.y, pointerX, pointerY,
+                device: event.get_source_device(), sequence: event.get_event_sequence(), dragging: false};
+            this._characterGrab = global.stage.grab(this._character);
+            this._characterGrabSignal = this._characterGrab.connect('notify::revoked', grab => {
+                if (grab.is_revoked())
+                    this._endCharacterDrag();
+            });
+            return Clutter.EVENT_STOP;
+        }
+        const drag = this._dragOrigin;
+        if (!drag)
+            return Clutter.EVENT_PROPAGATE;
+        if (type === Clutter.EventType.KEY_PRESS && event.get_key_symbol() === Clutter.KEY_Escape) {
+            this._endCharacterDrag();
+            return Clutter.EVENT_STOP;
+        }
+        if (event.get_source_device() !== drag.device || event.get_event_sequence() !== drag.sequence)
+            return Clutter.EVENT_PROPAGATE;
+        if (type === Clutter.EventType.TOUCH_CANCEL) {
+            this._endCharacterDrag();
+            return Clutter.EVENT_STOP;
+        }
+        const motion = [Clutter.EventType.MOTION, Clutter.EventType.TOUCH_UPDATE].includes(type);
+        const release = type === Clutter.EventType.TOUCH_END ||
+            (type === Clutter.EventType.BUTTON_RELEASE && event.get_button() === Clutter.BUTTON_PRIMARY);
+        if (!motion && !release)
+            return Clutter.EVENT_PROPAGATE;
+        const [pointerX, pointerY] = event.get_coords();
+        const dx = pointerX - drag.pointerX;
+        const dy = pointerY - drag.pointerY;
+        if (!drag.dragging && Math.hypot(dx, dy) >= 8) {
+            drag.dragging = true;
+            this._characterMenu.close();
+        }
+        if (drag.dragging)
+            this._positionCharacter(drag.x + dx, drag.y + dy);
+        if (release) {
+            this._endCharacterDrag();
+            if (!drag.dragging)
+                this._showInput();
+        }
+        return Clutter.EVENT_STOP;
+    }
+
+    _endCharacterDrag() {
+        this._dragOrigin = null;
+        const grab = this._characterGrab;
+        this._characterGrab = null;
+        if (grab) {
+            grab.disconnect(this._characterGrabSignal);
+            grab.dismiss();
+        }
+        this._characterGrabSignal = 0;
     }
 
     _buildPanel() {
@@ -489,6 +534,7 @@ export default class ZaikoExtension extends Extension {
         const show = Boolean(this._coreOwner && monitor && !monitor.inFullscreen &&
             !this._overviewShowing && !Main.sessionMode.isLocked);
         if (!show) {
+            this._endCharacterDrag();
             this._releaseFocus(false);
             this._characterMenu?.close();
         }
@@ -1138,6 +1184,7 @@ export default class ZaikoExtension extends Extension {
 
     disable() {
         this._enabled = false;
+        this._endCharacterDrag();
         this._selectionDrag = null;
         this._releaseFocus(false);
         this._characterMenu?.destroy();

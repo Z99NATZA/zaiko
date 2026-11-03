@@ -386,6 +386,76 @@ export default class OverlayQA extends ZaikoExtension {
         }
     }
 
+    async _checkFastCharacterDrag() {
+        this._hidePanel();
+        this._hideInput();
+        this._positionCharacter(760, 400);
+        await qaPause(60);
+        const start = {x: this._character.x, y: this._character.y};
+        const pointer = {x: start.x + 100, y: start.y + 130};
+        this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), pointer.x, pointer.y);
+        await qaPause(30);
+        this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
+        await qaPause(30);
+        qaAssert(global.stage.get_grab_actor() === this._character,
+            'The initial press holds pointer ownership before the first fast movement');
+        for (const [dx, dy] of [[-360, -220], [-80, -40], [-500, -280], [-140, -20]]) {
+            this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), pointer.x + dx, pointer.y + dy);
+            await qaPause(40);
+            qaAssert(Math.abs(this._character.x - start.x - dx) <= 1 &&
+                Math.abs(this._character.y - start.y - dy) <= 1,
+            `Fast drag follows jumps beyond its previous hit area: ${JSON.stringify({dx, dy, x: this._character.x, y: this._character.y, start, drag: Boolean(this._dragOrigin), grab: Boolean(this._characterGrab)})}`);
+        }
+        for (let burst = 0; burst < 12; burst++) {
+            for (const [dx, dy] of [[-600, -250], [-80, -30], [-420, -190], [-200, -100]])
+                this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), pointer.x + dx, pointer.y + dy);
+        }
+        await qaPause(60);
+        qaAssert(Math.abs(this._character.x - (start.x - 200)) <= 1 &&
+            Math.abs(this._character.y - (start.y - 100)) <= 1,
+        'A rapid burst of direction reversals retains the original pointer offset');
+        this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), 10, 40);
+        await qaPause(40);
+        qaAssert(this._character.x === this._workArea().x + 8, 'A fast drag clamps at the work-area edge');
+        this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), pointer.x - 300, pointer.y - 100);
+        await qaPause(40);
+        qaAssert(Math.abs(this._character.x - (start.x - 300)) <= 1 &&
+            Math.abs(this._character.y - (start.y - 100)) <= 1,
+        'Dragging back from a clamped edge follows the held pointer without reacquiring the character');
+        this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
+        await qaPause(50);
+        qaAssert(!this._inputOpen && !this._dragOrigin && !this._characterGrab,
+            'Fast dragging releases its pointer grab without opening input');
+        const dropped = {x: this._character.x, y: this._character.y};
+        this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), 100, 80);
+        await qaPause(30);
+        qaAssert(this._character.x === dropped.x && this._character.y === dropped.y,
+            'The character stops following the pointer after release');
+        await this._click(this._character);
+        qaAssert(this._inputOpen && this._inputOverlay.visible, 'A click still opens input after a fast drag');
+        this._hideInput();
+        for (const cancel of ['escape', 'hide']) {
+            const [x, y] = this._character.get_transformed_position();
+            this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), x + 100, y + 130);
+            await qaPause(30);
+            this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
+            await qaPause(30);
+            if (cancel === 'escape') {
+                await this._key(Clutter.KEY_Escape);
+            } else {
+                this._overviewShowing = true;
+                this._updateVisibility();
+            }
+            qaAssert(!this._characterGrab && !this._dragOrigin && global.stage.get_grab_actor() !== this._character,
+                `${cancel} cancels the held drag and releases pointer ownership`);
+            this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
+            await qaPause(40);
+            this._overviewShowing = false;
+            this._updateVisibility();
+            qaAssert(!this._inputOpen, 'Releasing a cancelled drag does not open input');
+        }
+    }
+
     async _checkCaret(entry, button) {
         await this._checkComposerHitArea(entry, button);
         const settings = this._interfaceSettings;
@@ -887,6 +957,7 @@ export default class OverlayQA extends ZaikoExtension {
         this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
         await qaPause(150);
         qaAssert(this._character.x < startX && !this._inputOpen, 'Drag does not open hidden input');
+        await this._checkFastCharacterDrag();
         this._positionCharacter(-999, -999);
         await qaPause(120);
         qaAssert(this._answerLabel.y + this._answerLabel.height <= this._character.y, 'Top edge preserves answer above head');
@@ -957,7 +1028,16 @@ export default class OverlayQA extends ZaikoExtension {
         for (const actor of actors)
             actor.connect('destroy', () => { destroyedActors++; });
         this._toggleVim();
+        const grabBeforeDisable = global.stage.get_grab_actor();
+        const [characterX, characterY] = this._character.get_transformed_position();
+        this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), characterX + 100, characterY + 130);
+        await qaPause(30);
+        this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
+        await qaPause(30);
         this.disable();
+        qaAssert(!this._characterGrab && !this._dragOrigin && global.stage.get_grab_actor() === grabBeforeDisable,
+            'Disable releases an active character grab');
+        this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
         qaAssert(destroyedActors === actors.length, 'Disable destroys actors/menu');
         qaAssert(stageSignals.every(id => !GObject.signal_handler_is_connected(global.stage, id)), 'Disable disconnects outside-click handler');
         qaAssert(this._answerHideSource === 0, 'Disable cancels answer expiry timer');

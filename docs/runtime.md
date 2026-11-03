@@ -37,7 +37,8 @@ Desktop
 
 The GNOME 50 extension renders a 200 x 260 character on the primary monitor.
 The companion follows workspaces and hides in Overview, fullscreen, and lock.
-It reserves no desktop space and does not grab the keyboard globally.
+It reserves no desktop space. Keyboard handling stays in focused UI or an active
+character drag.
 
 The character appears while the Rust core owns its session D-Bus service.
 The extension can be disabled without stopping the core. zaiko stop ends both
@@ -61,6 +62,13 @@ completed message or error disappears after 8 seconds. Repainting,
 changing the desktop font, reopening input, or using the character menu or Log
 does not hide the answer or restart that countdown. The full
 conversation stays in Log.
+
+Character dragging captures the pointer from the initial press until release,
+so fast movement outside the character keeps moving it. Movement uses desktop
+coordinates and the original pointer offset, including reversals after reaching
+a screen edge. A movement of at least 8 px counts as a drag; a shorter click
+opens input. Escape, hiding the character, or disabling the extension cancels
+the drag and releases the pointer.
 
 Thinking displays elapsed time, for example [Aiko] Thinking... (3s),
 (1m 30s), or (2h 1m 30s). It updates once per second using measured elapsed

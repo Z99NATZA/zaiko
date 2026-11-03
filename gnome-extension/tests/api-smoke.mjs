@@ -13,8 +13,10 @@ function assert(condition, description) {
 }
 
 for (const [object, method] of [
-    [Clutter.PanGesture.prototype, 'get_accumulated_delta_abs'],
-    [Clutter.PanGesture.prototype, 'set_required_button'],
+    [Clutter.Stage.prototype, 'grab'],
+    [Clutter.Grab.prototype, 'dismiss'],
+    [Clutter.Grab.prototype, 'is_revoked'],
+    [Clutter.Event.prototype, 'get_source_device'],
     [Clutter.ClickGesture.prototype, 'set_required_button'],
     [St.ScrollView.prototype, 'set_child'],
     [St.ScrollView.prototype, 'get_vadjustment'],
