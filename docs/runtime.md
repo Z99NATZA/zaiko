@@ -105,14 +105,35 @@ without reserving a header or changing the message area. It appears
 while the pointer is anywhere in Log, including its input and close button, and
 hides immediately on leaving. Click closes
 Log; Escape works even while the close button is hidden.
-The character's right-click menu has two compact rows: Log and Quit, with no
-separator. It is stacked above the floating reply. Input Copy/Paste and message
+The character's right-click menu has three compact rows: Log, Vim: off/on, and
+Quit, with no separator. It is stacked above the floating reply. Input Copy/Paste and message
 Copy menus share the Log/Quit menu's surface, corners, spacing and desktop font.
 Input menus retain GNOME's Copy/Paste actions and disabled states, without
 additional shortcut labels.
 Menus appear above the companion surfaces; input menus sit outside the complete
 composer border. Pointer highlights clear when the pointer leaves a row.
 Keyboard navigation highlights the focused row until pointer movement resumes.
+
+Input Vim
+----------
+
+Vim is off by default. Click the Vim: off/on menu row to toggle it; the menu stays
+open and the label immediately shows the current value. The choice is saved in
+~/.config/zaiko/input-vim-enabled (following XDG_CONFIG_HOME), independently of
+zhyprbola. It applies to both the compact input and the Log input.
+
+Following zhyprbola Tasks, normal mode uses a steady block cursor. h/l or the
+left/right arrows move by character, 0/$ move to the start/end, and b/w move by
+word. i inserts before the cursor, a after it, and A at the end. ciw changes the
+current word, C changes through the end, r replaces one character, and R replaces
+continuously; Backspace restores overwritten characters in R mode. dd clears
+only the current input draft. Conversation messages remain read-only.
+
+Escape returns to normal mode and keeps the input open. Enter and the send icon
+still submit normally; busy inputs cannot be edited. Mouse clicks enter insert
+mode with native caret placement and selection. Clicking away preserves the
+draft, clears focus/selection and returns to normal mode. Copy/Paste stays
+available. Turning Vim off restores ordinary typing and Escape behavior.
 
 Fixed appearance
 ----------

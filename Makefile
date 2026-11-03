@@ -27,3 +27,5 @@ check:
 	node --check gnome-extension/extension.js
 	node --check gnome-extension/answerPreview.js
 	node --check gnome-extension/caret.js
+	node --check gnome-extension/vim.js
+	node --check gnome-extension/vimInput.js

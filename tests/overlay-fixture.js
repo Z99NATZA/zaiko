@@ -280,6 +280,112 @@ export default class OverlayQA extends ZaikoExtension {
         }
     }
 
+    async _checkVimInputs() {
+        const drafts = [this._overlayEntry.get_text(), this._logEntry.get_text()];
+        const originalCall = this._callCore;
+        const messages = JSON.stringify(this._snapshot.messages);
+        const calls = [];
+        this._callCore = async (method, parameters) => { calls.push({method, args: parameters?.deep_unpack()}); return []; };
+        const keys = async value => {
+            for (const character of value)
+                await this._key(character.codePointAt(0));
+        };
+        const controller = entry => this._vimInputs.find(vim => vim.entry === entry);
+        try {
+            this._openCharacterMenu();
+            await qaPause(200);
+            qaAssert(!this._vimEnabled && this._vimMenuItem.label.text === 'Vim: off', 'Input Vim defaults to off');
+            await this._click(this._vimMenuItem);
+            qaAssert(this._vimEnabled && this._vimMenuItem.label.text === 'Vim: on' && this._characterMenu.isOpen,
+                `Clicking Vim toggles on, updates its label and keeps the menu open: ${JSON.stringify({enabled: this._vimEnabled, label: this._vimMenuItem.label.text, open: this._characterMenu.isOpen, panel: this._panel.visible, hover: this._vimMenuItem.hover})}`);
+            await this._click(this._vimMenuItem);
+            qaAssert(!this._vimEnabled && this._vimMenuItem.label.text === 'Vim: off' && this._characterMenu.isOpen,
+                'Clicking Vim again toggles off without closing the menu');
+            await this._click(this._vimMenuItem);
+            qaAssert(this._loadVimEnabled(), 'The input Vim preference is saved in Zaiko configuration');
+            await this._key(Clutter.KEY_Escape);
+            this._showLog();
+            const entry = this._logEntry;
+            const text = entry.clutter_text;
+            entry.set_text('alpha beta tail');
+            text.set_cursor_position(0);
+            await keys('wciwnew');
+            await this._key(Clutter.KEY_Escape);
+            qaAssert(entry.get_text() === 'alpha new tail' && controller(entry)._state.mode === 'normal' && this._panel.visible,
+                'Log Vim changes the inner word and Escape keeps the input open in normal mode');
+            qaAssert(!text.editable && text.get_cursor_visible() && text.get_cursor_size() >= 8 &&
+                (await qaCaretPhases(text, 200)).size === 1, 'Normal mode has a steady block cursor and blocks plain typing');
+            await this._shot('vim-normal-input');
+            await keys('0rX');
+            qaAssert(entry.get_text() === 'Xlpha new tail', 'Native key events replace a single input character');
+            await keys('RZQ');
+            await this._key(Clutter.KEY_BackSpace);
+            await this._key(Clutter.KEY_Escape);
+            qaAssert(entry.get_text() === 'Zlpha new tail', 'Replace-mode Backspace restores the overwritten input character');
+            text.set_selection(0, 5);
+            await this._click(entry, Clutter.BUTTON_SECONDARY);
+            await this._click(entry.menu._getMenuItems()[0]);
+            const clipboard = St.Clipboard.get_default();
+            const copied = await new Promise(resolve =>
+                clipboard.get_text(St.ClipboardType.CLIPBOARD, (_clipboard, value) => resolve(value)));
+            qaAssert(copied === 'Zlpha', 'Native context Copy still works in Vim normal mode');
+            text.grab_key_focus();
+            text.set_selection(-1, -1);
+            clipboard.set_text(St.ClipboardType.CLIPBOARD, ' pasted');
+            this._keyboard.notify_keyval(GLib.get_monotonic_time(), Clutter.KEY_Control_L, Clutter.KeyState.PRESSED);
+            await this._key(Clutter.KEY_v);
+            this._keyboard.notify_keyval(GLib.get_monotonic_time(), Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
+            qaAssert(entry.get_text() === 'Zlpha new tail pasted' && controller(entry)._state.mode === 'insert',
+                'Ctrl+V enters insert mode and preserves normal clipboard pasting');
+            await this._key(Clutter.KEY_Escape);
+            await keys('dd');
+            qaAssert(entry.get_text() === '' && JSON.stringify(this._snapshot.messages) === messages,
+                'dd clears only the input draft and preserves conversation history');
+            await keys('ihello');
+            await this._key(Clutter.KEY_Return);
+            qaAssert(calls.filter(call => call.method === 'Submit').length === 1 && calls.at(-1).args[1] === 'hello' &&
+                this._panel.visible && entry.get_text() === '', 'Vim Enter sends once and keeps Log open');
+            this._snapshot.state = 'thinking';
+            this._renderSnapshot();
+            await keys('iX');
+            qaAssert(entry.get_text() === '' && !text.editable, 'Vim cannot edit input while a request is busy');
+            this._snapshot.state = 'idle';
+            this._renderSnapshot();
+            this._hidePanel();
+            this._showInput();
+            const compact = this._overlayEntry;
+            compact.set_text('draft');
+            compact.clutter_text.set_cursor_position(0);
+            await keys('A!');
+            await this._key(Clutter.KEY_Escape);
+            qaAssert(compact.get_text() === 'draft!' && controller(compact)._state.mode === 'normal' && this._inputOverlay.visible,
+                'Compact input supports append and Escape without hiding the draft');
+            await this._click(compact);
+            qaAssert(controller(compact)._state.mode === 'insert' && compact.clutter_text.editable,
+                'Mouse clicks retain standard caret placement and enter insert mode');
+            this._openCharacterMenu();
+            await qaPause(200);
+            const beforeToggle = compact.get_text();
+            await this._click(this._vimMenuItem);
+            qaAssert(!this._vimEnabled && this._characterMenu.isOpen && compact.get_text() === beforeToggle,
+                'Disabling Vim preserves the input draft and keeps its menu open');
+            await this._key(Clutter.KEY_Escape);
+            this._showInput();
+            compact.clutter_text.set_selection(-1, -1);
+            await keys('h');
+            qaAssert(compact.get_text() === 'draft!h' && compact.clutter_text.get_cursor_size() < 8,
+                `Vim off restores ordinary typing and the normal insertion caret: ${JSON.stringify({text: compact.get_text(), size: compact.clutter_text.get_cursor_size(), enabled: this._vimEnabled, editable: compact.clutter_text.editable, focus: compact.clutter_text.has_key_focus()})}`);
+        } finally {
+            this._callCore = originalCall;
+            this._snapshot.state = 'idle';
+            this._overlayEntry.set_text(drafts[0]);
+            this._logEntry.set_text(drafts[1]);
+            this._hidePanel();
+            this._hideInput();
+            this._renderSnapshot();
+        }
+    }
+
     async _checkCaret(entry, button) {
         await this._checkComposerHitArea(entry, button);
         const settings = this._interfaceSettings;
@@ -588,7 +694,8 @@ export default class OverlayQA extends ZaikoExtension {
         'Floating reply is stacked below Log and the popup menu');
         await this._shot('character-context-menu');
         const items = this._characterMenu._getMenuItems();
-        qaAssert(items.length === 2 && items.map(item => item.label?.text).join(',') === 'Log,Quit', 'Character menu has Log and Quit only, without a chooser or separator');
+        qaAssert(items.length === 3 && items.map(item => item.label?.text).join(',') === 'Log,Vim: off,Quit',
+            'Character menu shows Log, the current Vim setting, and Quit');
         qaAssert(this._characterMenu.box.get_theme_node().get_border_radius(St.Corner.TOPLEFT) === 8 &&
             qaColor(this._characterMenu.box.get_theme_node().get_background_color(), '#282c34'), 'Character menu uses the One Half Dark surface');
         const logItem = items.find(item => item.label?.text === 'Log');
@@ -766,6 +873,7 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(!this._panel.visible && !this._panelClose.visible, 'Inset close also supports Escape');
         this._hidePanel();
         this._hideInput();
+        await this._checkVimInputs();
         const startX = this._character.x;
         const startY = this._character.y;
         this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), startX + 100, startY + 100);
@@ -848,6 +956,7 @@ export default class OverlayQA extends ZaikoExtension {
         let destroyedActors = 0;
         for (const actor of actors)
             actor.connect('destroy', () => { destroyedActors++; });
+        this._toggleVim();
         this.disable();
         qaAssert(destroyedActors === actors.length, 'Disable destroys actors/menu');
         qaAssert(stageSignals.every(id => !GObject.signal_handler_is_connected(global.stage, id)), 'Disable disconnects outside-click handler');
@@ -857,6 +966,7 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(outsideClicks === 2, 'Outside target works after disable');
         ZaikoExtension.prototype.enable.call(this);
         await qaPause(150);
+        qaAssert(this._vimEnabled && this._vimMenuItem.label.text === 'Vim: on', 'Re-enabling the extension restores the saved Vim preference');
         this.disable();
         outside.destroy();
         this._pointer = null;

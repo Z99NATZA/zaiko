@@ -28,10 +28,20 @@ export class CaretBlink {
         this._source = 0;
     }
 
+    setVimMode(mode) {
+        if (this._vimMode === mode)
+            return;
+        this._vimMode = mode;
+        this._reset();
+    }
+
     _reset() {
         this._stop();
-        const active = this._text.mapped && this._text.has_key_focus() && this._text.editable;
+        const active = this._text.mapped && this._text.has_key_focus() &&
+            (this._text.editable || this._vimMode === 'normal');
         this._text.set_cursor_visible(active);
+        if (this._vimMode === 'normal' || this._vimMode === 'replace')
+            return;
         const timeout = this._settings.get_int('cursor-blink-timeout');
         if (!active || !this._settings.get_boolean('cursor-blink') || timeout <= 0)
             return;

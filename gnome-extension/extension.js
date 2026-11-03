@@ -1,6 +1,7 @@
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import GObject from 'gi://GObject';
 import Pango from 'gi://Pango';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
@@ -18,10 +19,23 @@ import {
 import {EXPRESSIONS, imageGeometry} from './assets/manifest.js';
 import {answerPreview} from './answerPreview.js';
 import {CaretBlink} from './caret.js';
+import {VimInput} from './vimInput.js';
 
 const CHARACTER_WIDTH = 200;
 const CHARACTER_HEIGHT = 260;
 const EMPTY_SNAPSHOT = {messages: [], state: 'idle', request_id: null, error: null};
+
+const VimMenuItem = GObject.registerClass(class VimMenuItem extends PopupMenu.PopupMenuItem {
+    _init(label, toggle) {
+        super._init(label);
+        this._toggle = toggle;
+    }
+
+    activate() {
+        // This preference toggles in place; Log and Quit keep normal activation.
+        this._toggle();
+    }
+});
 
 export default class ZaikoExtension extends Extension {
     enable() {
@@ -46,6 +60,8 @@ export default class ZaikoExtension extends Extension {
         this._snapshotDirty = false;
         this._signals = [];
         this._caretBlinks = [];
+        this._vimInputs = [];
+        this._vimEnabled = this._loadVimEnabled();
         this._eventSubscription = 0;
         this._scrollSource = 0;
         this._uiError = null;
@@ -57,8 +73,14 @@ export default class ZaikoExtension extends Extension {
         try {
             this._buildActors();
             this._interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
-            for (const entry of [this._overlayEntry, this._logEntry])
-                this._caretBlinks.push(new CaretBlink(entry.clutter_text, this._interfaceSettings));
+            for (const entry of [this._overlayEntry, this._logEntry]) {
+                const caret = new CaretBlink(entry.clutter_text, this._interfaceSettings);
+                this._caretBlinks.push(caret);
+                const vim = new VimInput(entry, caret, () => this._submit(entry));
+                this._vimInputs.push(vim);
+                vim.setEnabled(this._vimEnabled);
+                vim.setAvailable(Boolean(this._coreOwner && !this._busy()));
+            }
             this._connect(this._interfaceSettings, 'changed::font-name', () => this._applyFont());
             this._connect(this._interfaceSettings, 'changed::text-scaling-factor', () => this._layout());
             this._connect(St.ThemeContext.get_for_stage(global.stage), 'notify::scale-factor', () => this._layout());
@@ -105,6 +127,43 @@ export default class ZaikoExtension extends Extension {
     _connect(object, signal, callback) {
         const id = object.connect(signal, callback);
         this._signals.push([object, id]);
+    }
+
+    _loadVimEnabled() {
+        this._vimPreferencePath = GLib.build_filenamev([GLib.get_user_config_dir(), 'zaiko', 'input-vim-enabled']);
+        if (!GLib.file_test(this._vimPreferencePath, GLib.FileTest.EXISTS))
+            return false;
+        try {
+            const [, contents] = GLib.file_get_contents(this._vimPreferencePath);
+            return new TextDecoder().decode(contents).trim() === 'true';
+        } catch (error) {
+            console.warn(`Zaiko: could not read input Vim preference: ${error.message}`);
+            return false;
+        }
+    }
+
+    _toggleVim() {
+        const enabled = !this._vimEnabled;
+        try {
+            if (GLib.mkdir_with_parents(GLib.path_get_dirname(this._vimPreferencePath), 0o700) !== 0)
+                throw new Error('Could not create configuration directory');
+            GLib.file_set_contents(this._vimPreferencePath, enabled ? 'true\n' : 'false\n');
+        } catch (error) {
+            console.warn(`Zaiko: could not save input Vim preference: ${error.message}`);
+            return;
+        }
+        this._vimEnabled = enabled;
+        this._vimMenuItem.label.text = `Vim: ${enabled ? 'on' : 'off'}`;
+        for (const vim of this._vimInputs)
+            vim.setEnabled(enabled);
+    }
+
+    _setEntryAvailable(entry, available) {
+        const vim = this._vimInputs.find(controller => controller.entry === entry);
+        if (vim)
+            vim.setAvailable(available);
+        else
+            entry.clutter_text.editable = available;
     }
 
     _applyFont() {
@@ -312,6 +371,8 @@ export default class ZaikoExtension extends Extension {
         this._characterMenu = new PopupMenu.PopupMenu(this._character, 0.5, St.Side.TOP);
         this._styleContextMenu(this._characterMenu);
         this._characterMenu.addAction('Log', () => this._showLog());
+        this._vimMenuItem = new VimMenuItem(`Vim: ${this._vimEnabled ? 'on' : 'off'}`, () => this._toggleVim());
+        this._characterMenu.addMenuItem(this._vimMenuItem);
         this._characterMenu.addAction('Quit', () => this._quitCore());
         Main.uiGroup.add_child(this._characterMenu.actor);
         this._characterMenu.actor.hide();
@@ -768,7 +829,7 @@ export default class ZaikoExtension extends Extension {
         this._logSend.accessible_name = this._cancelling ? 'Stopping request' : busy ? 'Cancel request' : 'Send message in Log';
         this._logSend.reactive = Boolean(this._coreOwner && !this._cancelling);
         this._logSend.can_focus = this._logSend.reactive;
-        this._logEntry.clutter_text.editable = Boolean(this._coreOwner && !busy);
+        this._setEntryAvailable(this._logEntry, Boolean(this._coreOwner && !busy));
     }
 
     _wrappedLabel(text, styleClass) {
@@ -966,7 +1027,7 @@ export default class ZaikoExtension extends Extension {
         this._overlaySend.accessible_name = this._cancelling ? 'Stopping request' : busy ? 'Cancel request' : 'Send message';
         this._overlaySend.reactive = Boolean(this._coreOwner && !this._cancelling);
         this._overlaySend.can_focus = this._overlaySend.reactive;
-        this._overlayEntry.clutter_text.editable = Boolean(this._coreOwner && !busy);
+        this._setEntryAvailable(this._overlayEntry, Boolean(this._coreOwner && !busy));
         if (this._positioned)
             this._positionCharacter(this._character.x, this._character.y);
         this._updateVisibility();
@@ -1082,6 +1143,7 @@ export default class ZaikoExtension extends Extension {
         this._characterMenu?.destroy();
         this._characterMenu = null;
         this._characterMenuManager = null;
+        this._vimMenuItem = null;
         this._clearCore();
         if (this._coreWatch)
             Gio.bus_unwatch_name(this._coreWatch);
@@ -1091,6 +1153,9 @@ export default class ZaikoExtension extends Extension {
         if (this._desktopName)
             Gio.bus_unown_name(this._desktopName);
         this._desktopName = 0;
+        for (const vim of this._vimInputs ?? [])
+            vim.destroy();
+        this._vimInputs = [];
         for (const caret of this._caretBlinks ?? [])
             caret.destroy();
         this._caretBlinks = [];
