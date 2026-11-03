@@ -24,13 +24,15 @@
     background-color: rgba(40, 44, 52, 0.9);
     margin: 12px 12px 0 0;
     padding: 0;
-    border: 1px solid #3e4451;
+    border: 1px solid transparent;
     border-radius: 999px;
     box-shadow: none;
 }
 .zaiko-panel-close:hover, .zaiko-panel-close:focus {
     color: #dcdfe4;
     background-color: rgba(62, 68, 81, 0.9);
+}
+.zaiko-panel-close:hover {
     border-color: #a0a6b1;
 }
 .zaiko-history { spacing: 0; padding-right: 4px; }
@@ -148,8 +150,12 @@
     padding: 4px;
     box-shadow: none;
 }
-.zaiko-context .popup-menu-item {
+.zaiko-context .popup-menu-item,
+.zaiko-context .popup-menu-item:selected,
+.zaiko-context .popup-menu-item:focus {
     color: #dcdfe4;
+    background-color: transparent;
+    transition-duration: 0;
     border: none;
     border-radius: 4px;
     padding: 5px 10px;
@@ -157,5 +163,5 @@
     spacing: 20px;
 }
 .zaiko-context .popup-menu-item:active, .zaiko-context .popup-menu-item:hover,
-.zaiko-context .popup-menu-item:focus { color: #dcdfe4; background-color: rgba(220, 223, 228, 0.1); }
+.zaiko-context.zaiko-keyboard .popup-menu-item:focus { color: #dcdfe4; background-color: rgba(220, 223, 228, 0.1); }
 .zaiko-context .popup-menu-item:insensitive { color: #5c6370; background-color: transparent; }

@@ -89,6 +89,39 @@ export default class OverlayQA extends ZaikoExtension {
         await qaPause(140);
     }
 
+    async _checkMenuHover(menu, composer = null) {
+        const layers = Main.uiGroup.get_children();
+        qaAssert([this._inputOverlay, this._panel, this._answerLabel, this._character]
+            .every(actor => layers.indexOf(menu.actor) > layers.indexOf(actor)),
+        'Context menu is stacked above all companion surfaces');
+        if (composer) {
+            const [, menuY] = menu.actor.get_transformed_position();
+            const [, menuHeight] = menu.actor.get_transformed_size();
+            const [, composerY] = composer.get_transformed_position();
+            const [, composerHeight] = composer.get_transformed_size();
+            qaAssert(menuY + menuHeight < composerY || menuY > composerY + composerHeight,
+                'Input context menu clears the entire composer border');
+        }
+        const item = menu._getMenuItems().find(candidate => candidate.reactive);
+        const [x, y] = item.get_transformed_position();
+        this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), x + item.width / 2, y + item.height / 2);
+        await qaPause(80);
+        qaAssert(item.hover && item.get_theme_node().get_background_color().alpha > 0,
+            'Menu row highlights while the pointer is over it');
+        this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), 100, 80);
+        await qaPause(80);
+        qaAssert(menu.isOpen && !item.hover && item.get_theme_node().get_background_color().alpha === 0,
+            'Menu row returns to its normal color after the pointer leaves despite retained key focus');
+        await this._key(Clutter.KEY_Down);
+        const focused = menu._getMenuItems().find(candidate => candidate.has_key_focus());
+        qaAssert(focused && focused.get_theme_node().get_background_color().alpha > 0,
+            'Keyboard navigation still highlights the focused menu row');
+        this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), 110, 80);
+        await qaPause(80);
+        qaAssert(focused.get_theme_node().get_background_color().alpha === 0,
+            'Pointer movement clears the keyboard highlight');
+    }
+
     async _checkMessageCopy(label) {
         const text = label.clutter_text;
         const clipboard = St.Clipboard.get_default();
@@ -146,6 +179,7 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(label.menu.isOpen && text.get_selection() === body, 'Right-click preserves the text selection');
         qaAssert(label.menu.actor.has_style_class_name('zaiko-context') &&
             qaColor(label.menu.box.get_theme_node().get_background_color(), '#282c34'), 'Message Copy menu reuses the existing context menu style');
+        await this._checkMenuHover(label.menu);
         await this._shot('message-copy-menu');
         await this._click(label.menu._getMenuItems()[0].actor);
         qaAssert(await readClipboard() === body && this._panel.visible, 'Context Copy preserves Thai, symbols and emoji while keeping Log open');
@@ -372,10 +406,16 @@ export default class OverlayQA extends ZaikoExtension {
         await this._click(this._overlayEntry, Clutter.BUTTON_SECONDARY);
         qaAssert(this._overlayEntry.menu.isOpen && this._inputOverlay.visible, 'Entry context menu does not dismiss input');
         const entryMenu = this._overlayEntry.menu;
-        qaAssert(!entryMenu.actor.has_style_class_name('zaiko-context') &&
-            !qaContainsText(entryMenu.box, 'Ctrl+C') && !qaContainsText(entryMenu.box, 'Ctrl+V'), 'Native edit menu has no custom styling or added shortcut labels');
+        qaAssert(entryMenu.actor.has_style_class_name('zaiko-context') &&
+            qaColor(entryMenu.box.get_theme_node().get_background_color(), '#282c34') &&
+            entryMenu.box.get_theme_node().get_border_radius(St.Corner.TOPLEFT) === 8 &&
+            entryMenu.actor.get_theme_node().get_font().to_string() ===
+                this._characterMenu.actor.get_theme_node().get_font().to_string() &&
+            !qaContainsText(entryMenu.box, 'Ctrl+C') && !qaContainsText(entryMenu.box, 'Ctrl+V'),
+        'Copy/Paste uses the Log/Quit menu surface, corners and font without added shortcut labels');
         const editItems = entryMenu._getMenuItems();
         qaAssert(!editItems[0].reactive && editItems[1].reactive, 'Native Copy/Paste sensitivity is preserved');
+        await this._checkMenuHover(entryMenu, this._inputOverlay);
         await this._shot('entry-context-menu');
         await this._click(editItems[1].actor);
         qaAssert(this._overlayEntry.get_text().includes('QA clipboard text') && this._inputOverlay.visible, 'Native Paste inserts clipboard text without hiding input');
@@ -592,8 +632,12 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(!this._inputOverlay.visible && this._logEntry.contains(global.stage.get_key_focus()), 'Present cannot open compact input while Log is open');
         await this._click(this._logEntry, Clutter.BUTTON_SECONDARY);
         qaAssert(this._logEntry.menu.isOpen && this._panel.visible, 'Log text-edit menu remains usable');
-        qaAssert(!this._logEntry.menu.actor.has_style_class_name('zaiko-context') &&
-            !qaContainsText(this._logEntry.menu.box, 'Ctrl+C') && !qaContainsText(this._logEntry.menu.box, 'Ctrl+V'), 'Log edit menu remains native without added shortcut labels');
+        qaAssert(this._logEntry.menu.actor.has_style_class_name('zaiko-context') &&
+            qaColor(this._logEntry.menu.box.get_theme_node().get_background_color(), '#282c34') &&
+            this._logEntry.menu.box.get_theme_node().get_border_radius(St.Corner.TOPLEFT) === 8 &&
+            !qaContainsText(this._logEntry.menu.box, 'Ctrl+C') && !qaContainsText(this._logEntry.menu.box, 'Ctrl+V'),
+        'Log Copy/Paste uses the Log/Quit menu style without added shortcut labels');
+        await this._checkMenuHover(this._logEntry.menu, this._logComposer);
         await this._key(Clutter.KEY_Escape);
 
         await this._checkFocusDismiss(rows[1]);

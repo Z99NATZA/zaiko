@@ -111,9 +111,34 @@ export default class ZaikoExtension extends Extension {
         const font = Pango.FontDescription.from_string(this._interfaceSettings.get_string('font-name'));
         const family = (font.get_family() || 'sans-serif').replaceAll('\\', '\\\\').replaceAll('"', '\\"');
         for (const actor of [this._panel, this._inputOverlay, this._answerLabel, this._characterMenu.actor,
+            this._overlayEntry.menu.actor, this._logEntry.menu.actor,
             ...this._logMessageMenus().map(menu => menu.actor)])
             actor.set_style(`font-family: "${family}";`);
         this._renderCompact();
+    }
+
+    _styleContextMenu(menu, anchor = null) {
+        menu.actor.add_style_class_name('zaiko-context');
+        menu.actor.set_style(this._panel.get_style());
+        menu.connect('open-state-changed', (_menu, open) => {
+            menu.actor.remove_style_class_name('zaiko-keyboard');
+            if (!open)
+                return;
+            // Anchor entry menus to the entire composer so a flipped menu
+            // clears its outer border instead of overlapping the entry padding.
+            if (anchor)
+                menu.actor.setPosition(anchor, 0);
+            menu.actor.get_parent().set_child_above_sibling(menu.actor, null);
+            if (Clutter.get_current_event()?.type() === Clutter.EventType.KEY_PRESS)
+                menu.actor.add_style_class_name('zaiko-keyboard');
+        });
+        menu.actor.connect('captured-event', (_actor, event) => {
+            if (event.type() === Clutter.EventType.KEY_PRESS)
+                menu.actor.add_style_class_name('zaiko-keyboard');
+            else if ([Clutter.EventType.MOTION, Clutter.EventType.BUTTON_PRESS].includes(event.type()))
+                menu.actor.remove_style_class_name('zaiko-keyboard');
+            return Clutter.EVENT_PROPAGATE;
+        });
     }
 
     _buildActors() {
@@ -225,6 +250,7 @@ export default class ZaikoExtension extends Extension {
             can_focus: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER,
         });
         ShellEntry.addContextMenu(this._logEntry);
+        this._styleContextMenu(this._logEntry.menu, this._logComposer);
         this._logEntry.menu.actor.connect('captured-event', (_actor, event) => this._dismissFocusOutside(event));
         this._logEntry.clutter_text.connect('activate', () => this._submit(this._logEntry));
         this._logComposer.add_child(this._logEntry);
@@ -250,6 +276,7 @@ export default class ZaikoExtension extends Extension {
             can_focus: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER,
         });
         ShellEntry.addContextMenu(this._overlayEntry);
+        this._styleContextMenu(this._overlayEntry.menu, this._inputOverlay);
         this._overlayEntry.menu.actor.connect('captured-event', (_actor, event) => this._dismissFocusOutside(event));
         this._overlayEntry.clutter_text.connect('activate', () => this._submit(this._overlayEntry));
         this._inputOverlay.connect('key-press-event', (_actor, event) => {
@@ -283,7 +310,7 @@ export default class ZaikoExtension extends Extension {
         });
 
         this._characterMenu = new PopupMenu.PopupMenu(this._character, 0.5, St.Side.TOP);
-        this._characterMenu.actor.add_style_class_name('zaiko-context');
+        this._styleContextMenu(this._characterMenu);
         this._characterMenu.addAction('Log', () => this._showLog());
         this._characterMenu.addAction('Quit', () => this._quitCore());
         Main.uiGroup.add_child(this._characterMenu.actor);
@@ -809,8 +836,7 @@ export default class ZaikoExtension extends Extension {
 
         label.menu = new PopupMenu.PopupMenu(label, 0, St.Side.TOP);
         label.menu.focusActor = text;
-        label.menu.actor.add_style_class_name('zaiko-context');
-        label.menu.actor.set_style(this._panel.get_style());
+        this._styleContextMenu(label.menu);
         label.menu.addAction('Copy', copy);
         Main.uiGroup.add_child(label.menu.actor);
         label.menu.actor.hide();

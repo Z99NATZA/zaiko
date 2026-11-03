@@ -106,8 +106,13 @@ while the pointer is anywhere in Log, including its input and close button, and
 hides immediately on leaving. Click closes
 Log; Escape works even while the close button is hidden.
 The character's right-click menu has two compact rows: Log and Quit, with no
-separator. It is stacked above the floating reply. Input Copy/Paste menus use their original GNOME
-appearance and actions, without additional shortcut labels.
+separator. It is stacked above the floating reply. Input Copy/Paste and message
+Copy menus share the Log/Quit menu's surface, corners, spacing and desktop font.
+Input menus retain GNOME's Copy/Paste actions and disabled states, without
+additional shortcut labels.
+Menus appear above the companion surfaces; input menus sit outside the complete
+composer border. Pointer highlights clear when the pointer leaves a row.
+Keyboard navigation highlights the focused row until pointer movement resumes.
 
 Fixed appearance
 ----------
