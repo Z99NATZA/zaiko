@@ -98,7 +98,7 @@ export function latestAssistant(messages) {
 
 export function transcriptLine(message) {
     const prefix = message.role === 'user' ? '[Me]' : message.role === 'assistant' ? '[Aiko]' : '[Action]';
-    const color = message.role === 'user' ? '#61afef' : message.role === 'assistant' ? '#c678dd' : null;
+    const color = message.role === 'user' ? '#98c379' : message.role === 'assistant' ? '#c678dd' : null;
     return {prefix, text: `${prefix} ${message.content}`, color};
 }
 

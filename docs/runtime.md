@@ -96,19 +96,25 @@ appearance and actions, without additional shortcut labels.
 Fixed appearance
 ----------
 
-Zaiko uses a fixed One Half Dark palette: #282c34 surfaces at 94% opacity,
+Zaiko uses a fixed One Half Dark palette: #282c34 surfaces at 90% opacity,
 #dcdfe4 text, subdued gray outlines, rounded controls, and a slim scrollbar.
-Blue #61afef marks actions and keyboard focus; red #e06c75 marks errors.
+Controls, caret, selection, hover, and keyboard focus use the same neutral
+foreground tones. Close uses a gray highlight; errors use brighter, heavier text.
 Floating replies retain their transparent background and text shadow. The conversation
 has a 12 px outer radius and 16 px padding. Both composers use 38 px height,
-9 px corners, 13 px text, and a 16 px outlined send/cancel icon. Log prefixes
-use blue #61afef for Me and magenta #c678dd for Aiko while message bodies
+9 px corners, 13 px text, and a 16 px outlined send/cancel icon. A single outer
+border surrounds the input and send button; keyboard focus highlights this
+border, and the embedded controls have no separate outlines. Log prefixes
+use green #98c379 for Me and magenta #c678dd for Aiko while message bodies
 share the foreground color. Palette source: https://github.com/sonph/onehalf.
 
 Theme selection and sync are removed and deferred to a future task. There is
 no appearance page, palette registry, generated palette stylesheet, or preference
 watcher. An old ~/.config/zaiko/ui.json is ignored and preserved; Zaiko does not
 read zhyprbola configuration. Desktop font-family/scaling settings still apply.
+Both inputs blink their native caret while focused and editable, following the
+desktop cursor-blink, cursor-blink-time, and cursor-blink-timeout preferences.
+Typing or moving the caret restarts blinking; hiding or unfocusing input stops it.
 
 App tools
 ----------

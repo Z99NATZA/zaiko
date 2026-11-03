@@ -17,6 +17,7 @@ import {
 } from './protocol.js';
 import {EXPRESSIONS, imageGeometry} from './assets/manifest.js';
 import {answerPreview} from './answerPreview.js';
+import {CaretBlink} from './caret.js';
 
 const CHARACTER_WIDTH = 200;
 const CHARACTER_HEIGHT = 260;
@@ -43,6 +44,7 @@ export default class ZaikoExtension extends Extension {
         this._snapshotRunning = false;
         this._snapshotDirty = false;
         this._signals = [];
+        this._caretBlinks = [];
         this._eventSubscription = 0;
         this._scrollSource = 0;
         this._uiError = null;
@@ -54,6 +56,8 @@ export default class ZaikoExtension extends Extension {
         try {
             this._buildActors();
             this._interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
+            for (const entry of [this._overlayEntry, this._logEntry])
+                this._caretBlinks.push(new CaretBlink(entry.clutter_text, this._interfaceSettings));
             this._connect(this._interfaceSettings, 'changed::font-name', () => this._applyFont());
             this._connect(this._interfaceSettings, 'changed::text-scaling-factor', () => this._layout());
             this._connect(St.ThemeContext.get_for_stage(global.stage), 'notify::scale-factor', () => this._layout());
@@ -218,6 +222,7 @@ export default class ZaikoExtension extends Extension {
         this._logSend.set_child(this._logSendIcon);
         this._logSend.connect('clicked', () => this._busy() ? this._cancel() : this._submit(this._logEntry));
         this._logComposer.add_child(this._logSend);
+        this._trackComposerFocus(this._logComposer, [this._logEntry.clutter_text, this._logSend]);
         this._panel.add_child(this._logComposer);
     }
 
@@ -247,6 +252,7 @@ export default class ZaikoExtension extends Extension {
         this._overlaySend.set_child(this._overlaySendIcon);
         this._overlaySend.connect('clicked', () => this._busy() ? this._cancel() : this._submit(this._overlayEntry));
         this._inputOverlay.add_child(this._overlaySend);
+        this._trackComposerFocus(this._inputOverlay, [this._overlayEntry.clutter_text, this._overlaySend]);
 
         // The answer is a top-level label, with no card or container behind it.
         this._answerLabel = this._wrappedLabel('', 'zaiko-answer');
@@ -273,6 +279,13 @@ export default class ZaikoExtension extends Extension {
             if (this._enabled)
                 this._updateVisibility();
         });
+    }
+
+    _trackComposerFocus(composer, controls) {
+        for (const control of controls) {
+            this._connect(control, 'key-focus-in', () => composer.add_style_pseudo_class('focus'));
+            this._connect(control, 'key-focus-out', () => composer.remove_style_pseudo_class('focus'));
+        }
     }
 
     _registerScrollbarParts(view) {
@@ -898,6 +911,9 @@ export default class ZaikoExtension extends Extension {
         if (this._desktopName)
             Gio.bus_unown_name(this._desktopName);
         this._desktopName = 0;
+        for (const caret of this._caretBlinks ?? [])
+            caret.destroy();
+        this._caretBlinks = [];
         for (const [object, id] of this._signals ?? [])
             object.disconnect(id);
         this._signals = [];

@@ -42,6 +42,16 @@ function qaTextColorAt(label, byteIndex) {
     return null;
 }
 
+async function qaCaretPhases(text, duration = 550) {
+    const phases = new Set();
+    const deadline = GLib.get_monotonic_time() + duration * 1000;
+    while (GLib.get_monotonic_time() < deadline) {
+        phases.add(text.get_cursor_visible());
+        await qaPause(25);
+    }
+    return phases;
+}
+
 export default class OverlayQA extends ZaikoExtension {
     enable() {
         super.enable();
@@ -79,6 +89,49 @@ export default class OverlayQA extends ZaikoExtension {
         await qaPause(140);
     }
 
+    async _checkCaret(entry, button) {
+        const settings = this._interfaceSettings;
+        const text = entry.clutter_text;
+        // These settings belong only to the private QA session.
+        settings.set_int('cursor-blink-time', 200);
+        settings.set_int('cursor-blink-timeout', 1);
+        settings.set_boolean('cursor-blink', true);
+        entry.grab_key_focus();
+        entry.set_text('');
+        qaAssert(text.has_key_focus(), 'Entry owns text focus');
+        qaAssert(entry.get_parent().has_style_pseudo_class('focus'), 'Input focus highlights the outer composer');
+        qaAssert(entry.get_theme_node().get_background_color().alpha === 0 &&
+            entry.get_theme_node().get_border_width(St.Side.LEFT) === 0 &&
+            button.get_theme_node().get_border_width(St.Side.LEFT) === 0,
+        'Input and send button share one outer surface without nested borders');
+        qaAssert((await qaCaretPhases(text)).size === 2, 'Focused empty input caret visibly blinks');
+        await qaPause(650);
+        qaAssert(text.get_cursor_visible() && (await qaCaretPhases(text, 200)).size === 1,
+            'Idle timeout leaves the caret steadily visible');
+        entry.set_text('caret probe');
+        qaAssert(text.get_cursor_visible(), 'Typing immediately reveals the caret');
+        qaAssert((await qaCaretPhases(text)).size === 2, 'Typing restarts blinking after idle timeout');
+        text.set_cursor_position(0);
+        qaAssert(text.get_cursor_visible(), 'Moving the caret immediately reveals it');
+        settings.set_boolean('cursor-blink', false);
+        qaAssert(text.get_cursor_visible() && (await qaCaretPhases(text, 250)).size === 1,
+            'Disabling desktop cursor blinking keeps a steady caret');
+        settings.set_boolean('cursor-blink', true);
+        text.editable = false;
+        qaAssert(!text.get_cursor_visible(), 'Read-only input hides its insertion caret');
+        text.editable = true;
+        qaAssert(text.get_cursor_visible(), 'Editable input restores its focused caret');
+        button.grab_key_focus();
+        qaAssert(entry.get_parent().has_style_pseudo_class('focus'), 'Send button focus keeps the shared composer highlight');
+        qaAssert(!text.has_key_focus() && !text.get_cursor_visible(), 'Focus transfer hides the caret');
+        qaAssert((await qaCaretPhases(text, 250)).size === 1, 'Unfocused caret stays hidden');
+        entry.grab_key_focus();
+        qaAssert(text.get_cursor_visible(), 'Refocusing immediately restores the caret');
+        entry.set_text('');
+        settings.set_int('cursor-blink-time', 1200);
+        settings.set_int('cursor-blink-timeout', 10);
+    }
+
     async _runQA() {
         const {default: GObject} = await import('gi://GObject');
         if (this._coreWatch)
@@ -108,6 +161,7 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(this._inputOverlay.visible && !this._panel.visible, 'Present opens only input');
         qaAssert(this._inputOverlay.y + this._inputOverlay.height <= this._character.y + this._character.height + 1,
             'Input overlays the bottom of character');
+        await this._checkCaret(this._overlayEntry, this._overlaySend);
 
         await this._click(this._character);
         qaAssert(this._inputOverlay.visible, 'Repeated character click keeps input open');
@@ -150,6 +204,7 @@ export default class OverlayQA extends ZaikoExtension {
         await this._click(outside);
         qaAssert(!this._inputOverlay.visible && outsideClicks === 1, 'Outside click hides input and activates its target once');
         qaAssert(global.stage.get_key_focus() === outside, 'Outside click retains target focus');
+        qaAssert(!this._overlayEntry.clutter_text.get_cursor_visible(), 'Hidden compact input has no active caret');
         qaAssert(this._overlayEntry.get_text() === 'draft kept outside', 'Outside dismissal preserves draft');
         await this._click(this._character);
         qaAssert(this._inputOverlay.visible, 'Character click opens hidden input');
@@ -293,6 +348,7 @@ export default class OverlayQA extends ZaikoExtension {
         await this._click(logItem.actor);
         qaAssert(this._panel.visible && !this._characterMenu.isOpen, 'Log opens only on request');
         qaAssert(this._logComposer.visible && !this._inputOverlay.visible, 'Log owns the active composer');
+        await this._checkCaret(this._logEntry, this._logSend);
         qaAssert(!this._answerLabel.visible, 'Floating message does not overlap Log');
         qaAssert(!this._panelHeader && !this._panelTitle, 'Conversation has no title/header row');
         qaAssert(this._panelClose.visible && !this._panel.contains(this._panelClose), 'Close floats independently of the content layout');
@@ -416,8 +472,8 @@ export default class OverlayQA extends ZaikoExtension {
         this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), 100, 80);
         this._showInput();
         const surface = this._inputOverlay.get_theme_node().get_background_color();
-        qaAssert(qaColor(surface, '#282c34') && surface.alpha >= 239 && surface.alpha <= 240, 'Compact input uses the 94% One Half Dark surface');
-        qaAssert(this._overlaySend.get_theme_node().get_background_color().alpha === 0, 'Send keeps its outlined style');
+        qaAssert(qaColor(surface, '#282c34') && surface.alpha >= 229 && surface.alpha <= 230, 'Compact input uses the 90% One Half Dark surface');
+        qaAssert(this._overlaySend.get_theme_node().get_background_color().alpha === 0, 'Send icon shares the input surface');
         qaAssert(this._answerLabel.get_theme_node().get_background_color().alpha === 0, 'Reply remains transparent');
         const panelSurface = this._panel.get_theme_node().get_background_color();
         qaAssert(qaColor(panelSurface, '#282c34') && panelSurface.alpha === surface.alpha, 'Conversation uses the same One Half Dark surface as input');
@@ -510,6 +566,10 @@ export default class OverlayQA extends ZaikoExtension {
         const stageSignals = this._signals.filter(([object]) => object === global.stage).map(([, id]) => id);
         qaAssert(stageSignals.length > 0, 'Outside-click handler registered');
         const actors = [this._panel, this._panelClose, this._character, this._inputOverlay, this._answerLabel, this._characterMenu.actor];
+        this._coreOwner = 'qa-only-no-provider';
+        this._showLog();
+        const carets = this._caretBlinks.slice();
+        qaAssert(carets.some(caret => caret._source !== 0), 'Focused entry has an active blink timer before disable');
         let destroyedActors = 0;
         for (const actor of actors)
             actor.connect('destroy', () => { destroyedActors++; });
@@ -517,6 +577,7 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(destroyedActors === actors.length, 'Disable destroys actors/menu');
         qaAssert(stageSignals.every(id => !GObject.signal_handler_is_connected(global.stage, id)), 'Disable disconnects outside-click handler');
         qaAssert(this._answerHideSource === 0, 'Disable cancels answer expiry timer');
+        qaAssert(carets.every(caret => caret._source === 0 && caret._signals.length === 0), 'Disable cancels caret timers and disconnects their signals');
         await this._click(outside);
         qaAssert(outsideClicks === 2, 'Outside target works after disable');
         ZaikoExtension.prototype.enable.call(this);
@@ -525,6 +586,6 @@ export default class OverlayQA extends ZaikoExtension {
         outside.destroy();
         this._pointer = null;
         this._keyboard = null;
-        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, Enter/icon/cancel/failure/drafts, One Half Dark surfaces/no theme chooser, 12-second messages and lifecycle'});
+        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, Enter/icon/cancel/failure/drafts, native caret blinking/focus/settings/timeout/cleanup, One Half Dark surfaces/no theme chooser, 12-second messages and lifecycle'});
     }
 }

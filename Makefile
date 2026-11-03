@@ -26,3 +26,4 @@ check:
 	cargo clippy --workspace --all-targets --locked -- -D warnings
 	node --check gnome-extension/extension.js
 	node --check gnome-extension/answerPreview.js
+	node --check gnome-extension/caret.js
