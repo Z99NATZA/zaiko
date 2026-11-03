@@ -456,6 +456,48 @@ export default class OverlayQA extends ZaikoExtension {
         }
     }
 
+    async _checkCharacterMenuPosition() {
+        this._hidePanel();
+        this._hideInput();
+        const original = {x: this._character.x, y: this._character.y};
+        const area = this._workArea();
+        const width = this._character.width;
+        const height = this._character.height;
+        for (const [name, x, y, offsetX, offsetY] of [
+            ['middle', area.x + area.width / 2 - width / 2, area.y + area.height / 2 - height / 2, 40, 60],
+            ['top-left', area.x, area.y, 3, 3],
+            ['top-right', area.x + area.width, area.y, width - 3, 3],
+            ['bottom-left', area.x, area.y + area.height, 3, height - 3],
+            ['bottom-right', area.x + area.width, area.y + area.height, width - 3, height - 3],
+        ]) {
+            this._positionCharacter(x, y);
+            await qaPause(40);
+            const pointerX = this._character.x + offsetX;
+            const pointerY = this._character.y + offsetY;
+            this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), pointerX, pointerY);
+            await qaPause(25);
+            this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_SECONDARY, Clutter.ButtonState.PRESSED);
+            await qaPause(25);
+            this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_SECONDARY, Clutter.ButtonState.RELEASED);
+            await qaPause(180);
+            qaAssert(this._characterMenu.isOpen, `${name}: native right-click opens the character menu`);
+            const [menuX, menuY] = this._characterMenu.actor.get_transformed_position();
+            const [menuWidth, menuHeight] = this._characterMenu.actor.get_transformed_size();
+            const distanceX = Math.max(menuX - pointerX, 0, pointerX - menuX - menuWidth);
+            const distanceY = Math.max(menuY - pointerY, 0, pointerY - menuY - menuHeight);
+            qaAssert(Math.hypot(distanceX, distanceY) <= 12,
+                `${name}: the menu stays near the click: ${JSON.stringify({pointerX, pointerY, menuX, menuY, menuWidth, menuHeight, anchorX: this._characterMenuAnchor.x, anchorY: this._characterMenuAnchor.y, mapped: this._characterMenuAnchor.mapped, anchorPosition: this._characterMenuAnchor.get_transformed_position()})}`);
+            qaAssert(menuX >= area.x && menuY >= area.y &&
+                menuX + menuWidth <= area.x + area.width && menuY + menuHeight <= area.y + area.height,
+            `${name}: the complete menu stays inside the monitor work area`);
+            if (name === 'bottom-right')
+                await this._shot('character-menu-at-screen-edge');
+            await this._key(Clutter.KEY_Escape);
+            qaAssert(!this._characterMenu.isOpen, `${name}: Escape closes the character menu`);
+        }
+        this._positionCharacter(original.x, original.y);
+    }
+
     async _checkCaret(entry, button) {
         await this._checkComposerHitArea(entry, button);
         const settings = this._interfaceSettings;
@@ -958,6 +1000,7 @@ export default class OverlayQA extends ZaikoExtension {
         await qaPause(150);
         qaAssert(this._character.x < startX && !this._inputOpen, 'Drag does not open hidden input');
         await this._checkFastCharacterDrag();
+        await this._checkCharacterMenuPosition();
         this._positionCharacter(-999, -999);
         await qaPause(120);
         qaAssert(this._answerLabel.y + this._answerLabel.height <= this._character.y, 'Top edge preserves answer above head');
@@ -1013,7 +1056,8 @@ export default class OverlayQA extends ZaikoExtension {
         const stageSignals = this._signals.filter(([object]) => object === global.stage).map(([, id]) => id);
         qaAssert(stageSignals.length > 0, 'Outside-click handler registered');
         const actors = [this._panel, this._panelClose, this._character, this._inputOverlay, this._answerLabel,
-            this._characterMenu.actor, ...this._logMessageMenus().map(menu => menu.actor)];
+            this._characterMenu.actor, this._characterMenuAnchor,
+            ...this._logMessageMenus().map(menu => menu.actor)];
         this._coreOwner = 'qa-only-no-provider';
         this._showLog();
         const carets = this._caretBlinks.slice();

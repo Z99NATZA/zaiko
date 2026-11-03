@@ -186,8 +186,8 @@ export default class ZaikoExtension extends Extension {
             menu.actor.remove_style_class_name('zaiko-keyboard');
             if (!open)
                 return;
-            // Anchor entry menus to the entire composer so a flipped menu
-            // clears its outer border instead of overlapping the entry padding.
+            // Keep the interaction source while positioning against the whole
+            // composer or a private point anchor at the right-click location.
             if (anchor)
                 menu.actor.setPosition(anchor, 0);
             menu.actor.get_parent().set_child_above_sibling(menu.actor, null);
@@ -221,9 +221,9 @@ export default class ZaikoExtension extends Extension {
         this._character.connect('event', (_actor, event) => this._onCharacterEvent(event));
         const secondaryClick = new Clutter.ClickGesture();
         secondaryClick.set_required_button(Clutter.BUTTON_SECONDARY);
-        secondaryClick.connect('recognize', () => {
+        secondaryClick.connect('recognize', gesture => {
             if (!this._dragOrigin)
-                this._openCharacterMenu();
+                this._openCharacterMenu(gesture.get_coords_abs());
         });
         this._character.add_action(secondaryClick);
 
@@ -413,8 +413,12 @@ export default class ZaikoExtension extends Extension {
             return Clutter.EVENT_STOP;
         });
 
-        this._characterMenu = new PopupMenu.PopupMenu(this._character, 0.5, St.Side.TOP);
-        this._styleContextMenu(this._characterMenu);
+        // A private point anchor keeps the character as the menu's focus owner
+        // while BoxPointer positions/flips the popup in the pointer's work area.
+        this._characterMenuAnchor = new St.Widget({width: 1, height: 1, opacity: 0, reactive: false});
+        Main.uiGroup.add_child(this._characterMenuAnchor);
+        this._characterMenu = new PopupMenu.PopupMenu(this._character, 0, St.Side.TOP);
+        this._styleContextMenu(this._characterMenu, this._characterMenuAnchor);
         this._characterMenu.addAction('Log', () => this._showLog());
         this._vimMenuItem = new VimMenuItem(`Vim: ${this._vimEnabled ? 'on' : 'off'}`, () => this._toggleVim());
         this._characterMenu.addMenuItem(this._vimMenuItem);
@@ -592,10 +596,14 @@ export default class ZaikoExtension extends Extension {
         return this._panelOpen;
     }
 
-    _openCharacterMenu() {
+    _openCharacterMenu(point = null) {
         if (!this._character.visible)
             return;
         this._rememberFocus();
+        const [x, y] = point ? [point.x, point.y] : global.get_pointer();
+        this._characterMenuAnchor.set_position(Math.round(x), Math.round(y));
+        // Reused popups must see the new point before their own allocation.
+        this._characterMenuAnchor.allocate_preferred_size(Math.round(x), Math.round(y));
         this._characterMenu.toggle();
     }
 
@@ -1190,6 +1198,8 @@ export default class ZaikoExtension extends Extension {
         this._characterMenu?.destroy();
         this._characterMenu = null;
         this._characterMenuManager = null;
+        this._characterMenuAnchor?.destroy();
+        this._characterMenuAnchor = null;
         this._vimMenuItem = null;
         this._clearCore();
         if (this._coreWatch)
