@@ -39,6 +39,7 @@ export default class ZaikoExtension extends Extension {
         this._thinkingRequestId = null;
         this._thinkingSource = 0;
         this._focusDismissSource = 0;
+        this._selectionDrag = null;
         this._sending = false;
         this._cancelling = false;
         this._snapshotRunning = false;
@@ -74,7 +75,7 @@ export default class ZaikoExtension extends Extension {
                 this._updateVisibility();
             });
             this._connect(Main.sessionMode, 'updated', () => this._updateVisibility());
-            this._connect(global.stage, 'captured-event', (_stage, event) => this._dismissInputOutside(event));
+            this._connect(global.stage, 'captured-event', (_stage, event) => this._dismissFocusOutside(event));
             this._connect(global.stage, 'notify::key-focus', () => this._queueFocusDismiss());
             this._layout();
 
@@ -109,7 +110,8 @@ export default class ZaikoExtension extends Extension {
     _applyFont() {
         const font = Pango.FontDescription.from_string(this._interfaceSettings.get_string('font-name'));
         const family = (font.get_family() || 'sans-serif').replaceAll('\\', '\\\\').replaceAll('"', '\\"');
-        for (const actor of [this._panel, this._inputOverlay, this._answerLabel, this._characterMenu.actor])
+        for (const actor of [this._panel, this._inputOverlay, this._answerLabel, this._characterMenu.actor,
+            ...this._logMessageMenus().map(menu => menu.actor)])
             actor.set_style(`font-family: "${family}";`);
         this._renderCompact();
     }
@@ -223,6 +225,7 @@ export default class ZaikoExtension extends Extension {
             can_focus: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER,
         });
         ShellEntry.addContextMenu(this._logEntry);
+        this._logEntry.menu.actor.connect('captured-event', (_actor, event) => this._dismissFocusOutside(event));
         this._logEntry.clutter_text.connect('activate', () => this._submit(this._logEntry));
         this._logComposer.add_child(this._logEntry);
         this._logSend = new St.Button({
@@ -247,6 +250,7 @@ export default class ZaikoExtension extends Extension {
             can_focus: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER,
         });
         ShellEntry.addContextMenu(this._overlayEntry);
+        this._overlayEntry.menu.actor.connect('captured-event', (_actor, event) => this._dismissFocusOutside(event));
         this._overlayEntry.clutter_text.connect('activate', () => this._submit(this._overlayEntry));
         this._inputOverlay.connect('key-press-event', (_actor, event) => {
             if (event.get_key_symbol() !== Clutter.KEY_Escape)
@@ -468,7 +472,8 @@ export default class ZaikoExtension extends Extension {
     _rememberFocus() {
         const focus = global.stage.get_key_focus();
         const roots = [this._panel, this._panelClose, this._inputOverlay, this._answerLabel, this._characterMenu?.actor,
-            this._overlayEntry?.menu?.actor, this._logEntry?.menu?.actor];
+            this._overlayEntry?.menu?.actor, this._logEntry?.menu?.actor,
+            ...this._logMessageMenus().map(menu => menu.actor)];
         if (!this._ownsFocus(focus, roots))
             this._focusBeforeUI = global.display.focus_window;
     }
@@ -484,6 +489,10 @@ export default class ZaikoExtension extends Extension {
             roots.push(this._panelClose);
             roots.push(this._logEntry?.menu?.actor);
             this._logEntry?.menu?.close();
+            for (const menu of this._logMessageMenus()) {
+                roots.push(menu.actor);
+                menu.close();
+            }
         }
         if (actors.includes(this._characterMenu?.actor))
             this._characterMenu?.close();
@@ -507,11 +516,37 @@ export default class ZaikoExtension extends Extension {
         this._inputOverlay.hide();
     }
 
-    _dismissInputOutside(event) {
-        if (!this._inputOpen || ![Clutter.EventType.BUTTON_PRESS, Clutter.EventType.TOUCH_BEGIN].includes(event.type()))
+    _dismissFocusOutside(event) {
+        if (this._selectionDrag && [Clutter.EventType.MOTION, Clutter.EventType.BUTTON_RELEASE].includes(event.type())) {
+            const {text, anchor} = this._selectionDrag;
+            text.set_selection(anchor, this._textPositionAtEvent(text, event));
+            if (event.type() === Clutter.EventType.BUTTON_RELEASE)
+                this._selectionDrag = null;
+        }
+        if (![Clutter.EventType.BUTTON_PRESS, Clutter.EventType.TOUCH_BEGIN].includes(event.type()))
             return Clutter.EVENT_PROPAGATE;
         const source = global.stage.get_event_actor(event);
-        if (!this._ownsFocus(source, [this._inputOverlay, this._character, this._overlayEntry?.menu?.actor]))
+        const controls = [
+            [this._inputOverlay, this._overlayEntry.clutter_text, this._overlayEntry.menu],
+            [this._logComposer, this._logEntry.clutter_text, this._logEntry.menu],
+            [this._answerLabel, this._answerLabel.clutter_text, null],
+            ...this._logHistory.get_children().map(label => [label, label.clutter_text, label.menu]),
+        ];
+        for (const [actor, text, menu] of controls) {
+            const roots = [actor, menu?.actor];
+            if (this._ownsFocus(source, roots))
+                continue;
+            if (text.get_selection()) {
+                const cursor = text.get_cursor_position();
+                text.set_selection(cursor, cursor);
+            }
+            const ownedFocus = this._ownsFocus(global.stage.get_key_focus(), roots);
+            menu?.close();
+            if (ownedFocus)
+                global.stage.set_key_focus(null);
+        }
+        if (this._inputOpen &&
+            !this._ownsFocus(source, [this._inputOverlay, this._character, this._overlayEntry?.menu?.actor]))
             this._hideInput(false);
         // Observe only: the same press still reaches its original desktop target.
         return Clutter.EVENT_PROPAGATE;
@@ -662,6 +697,7 @@ export default class ZaikoExtension extends Extension {
         for (const message of this._snapshot.messages) {
             const {prefix, text, color} = transcriptLine(message);
             const label = this._wrappedLabel(text, 'zaiko-log-message');
+            this._makeMessageCopyable(label);
             label.clutter_text.set_line_alignment(Pango.Alignment.LEFT);
             if (color) {
                 const applyPrefix = () => {
@@ -715,6 +751,94 @@ export default class ZaikoExtension extends Extension {
         label.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
         label.clutter_text.selectable = true;
         return label;
+    }
+
+    _logMessageMenus() {
+        return this._logHistory?.get_children().map(label => label.menu).filter(Boolean) ?? [];
+    }
+
+    _textPositionAtEvent(text, event) {
+        const [stageX, stageY] = event.get_coords();
+        const [success, x, y] = text.transform_stage_point(stageX, stageY);
+        if (!success)
+            return text.get_cursor_position();
+        return text.coords_to_position(Math.max(0, Math.min(x, text.width - 1)),
+            Math.max(0, Math.min(y, text.height - 1)));
+    }
+
+    _makeMessageCopyable(label) {
+        const text = label.clutter_text;
+        label.reactive = true;
+        label.can_focus = true;
+        text.reactive = true;
+        label.connect('button-press-event', (_actor, event) => {
+            // Native text selection handles the content; let the surrounding
+            // padding start a selection too, clamping to the nearest character.
+            if (event.get_button() !== Clutter.BUTTON_PRIMARY || global.stage.get_event_actor(event) !== label)
+                return Clutter.EVENT_PROPAGATE;
+            this._rememberFocus();
+            text.grab_key_focus();
+            const anchor = this._textPositionAtEvent(text, event);
+            text.set_selection(anchor, anchor);
+            this._selectionDrag = {text, anchor};
+            return Clutter.EVENT_STOP;
+        });
+        // St.Label does not forward the entry selection CSS to Clutter.Text.
+        label.connect('style-changed', () => {
+            const node = label.get_theme_node();
+            const [hasBackground, background] = node.lookup_color('selection-background-color', false);
+            const [hasForeground, foreground] = node.lookup_color('selected-color', false);
+            if (hasBackground)
+                text.set_selection_color(background);
+            if (hasForeground)
+                text.set_selected_text_color(foreground);
+        });
+        const clipboard = St.Clipboard.get_default();
+        const copy = () => clipboard.set_text(St.ClipboardType.CLIPBOARD,
+            text.get_selection() || label.text);
+        text.connect('key-press-event', (_actor, event) => {
+            const symbol = event.get_key_symbol();
+            if ((event.get_state() & Clutter.ModifierType.CONTROL_MASK) &&
+                [Clutter.KEY_c, Clutter.KEY_C].includes(symbol)) {
+                if (text.get_selection())
+                    copy();
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
+
+        label.menu = new PopupMenu.PopupMenu(label, 0, St.Side.TOP);
+        label.menu.focusActor = text;
+        label.menu.actor.add_style_class_name('zaiko-context');
+        label.menu.actor.set_style(this._panel.get_style());
+        label.menu.addAction('Copy', copy);
+        Main.uiGroup.add_child(label.menu.actor);
+        label.menu.actor.hide();
+        label._menuManager = new PopupMenu.PopupMenuManager(label);
+        label._menuManager.addMenu(label.menu);
+        label.menu.actor.connect('captured-event', (_actor, event) => this._dismissFocusOutside(event));
+
+        // Capture the secondary press before Clutter.Text changes the selection,
+        // matching the native entry menu's gesture handling.
+        const click = new Clutter.ClickGesture();
+        click.set_recognize_on_press(true);
+        click.set_required_button(Clutter.BUTTON_SECONDARY);
+        click.connect('recognize', gesture => {
+            this._rememberFocus();
+            const coords = gesture.get_coords_abs();
+            const [success, x] = label.transform_stage_point(coords.x, coords.y);
+            if (success && label.width)
+                label.menu.setSourceAlignment(x / label.width);
+            label.menu.toggle();
+        });
+        label.add_action_full('copy-menu', Clutter.EventPhase.CAPTURE, click);
+        label.connect('destroy', () => {
+            if (this._selectionDrag?.text === text)
+                this._selectionDrag = null;
+            label.menu.destroy();
+            label.menu = null;
+            label._menuManager = null;
+        });
     }
 
     _clearAnswerTimeout() {
@@ -927,6 +1051,7 @@ export default class ZaikoExtension extends Extension {
 
     disable() {
         this._enabled = false;
+        this._selectionDrag = null;
         this._releaseFocus(false);
         this._characterMenu?.destroy();
         this._characterMenu = null;

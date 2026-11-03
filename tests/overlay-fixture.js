@@ -89,6 +89,76 @@ export default class OverlayQA extends ZaikoExtension {
         await qaPause(140);
     }
 
+    async _checkMessageCopy(label) {
+        const text = label.clutter_text;
+        const clipboard = St.Clipboard.get_default();
+        const readClipboard = () => new Promise(resolve =>
+            clipboard.get_text(St.ClipboardType.CLIPBOARD, (_clipboard, value) => resolve(value)));
+        const [x, y] = text.get_transformed_position();
+        const [startOk, startX, startY, lineHeight] = text.position_to_coords(0);
+        const [endOk, endX, endY] = text.position_to_coords(4);
+        qaAssert(startOk && endOk, 'Transcript selection coordinates are available');
+        const [labelX] = label.get_transformed_position();
+        const [lastOk, lastX] = text.position_to_coords(-1);
+        qaAssert(lastOk, 'The last character has selection coordinates');
+        for (const [paddingX, paddingY] of [
+            [labelX + label.width - 2, y + lineHeight / 2],
+            [Math.min(x + lastX + 2, labelX + label.width - 2), y + text.height + 2],
+        ]) {
+            this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), paddingX, paddingY);
+            await qaPause(25);
+            this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
+            for (let step = 1; step <= 4; step++) {
+                this._pointer.notify_absolute_motion(GLib.get_monotonic_time(),
+                    paddingX + (x + startX - paddingX) * step / 4,
+                    paddingY + (y + startY + lineHeight / 2 - paddingY) * step / 4);
+                await qaPause(25);
+            }
+            this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
+            await qaPause(40);
+            qaAssert(text.get_selection() === label.text && !this._selectionDrag,
+                `Dragging from the right/bottom padding selects the whole message: ${JSON.stringify({selection: text.get_selection(), expected: label.text})}`);
+        }
+        this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), x + startX + 1, y + startY + lineHeight / 2);
+        await qaPause(25);
+        this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
+        for (let step = 1; step <= 4; step++) {
+            this._pointer.notify_absolute_motion(GLib.get_monotonic_time(),
+                x + startX + (endX - startX) * step / 4, y + endY + lineHeight / 2);
+            await qaPause(25);
+        }
+        this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
+        await qaPause(40);
+        const selection = text.get_selection();
+        qaAssert(selection && selection.length < label.text.length, 'Dragging selects part of a read-only transcript message');
+        qaAssert(text.has_key_focus() && !text.editable, 'Transcript selection receives keyboard focus without enabling edits');
+        qaAssert(qaColor(text.get_selection_color(), '#3e4451') &&
+            qaColor(text.get_selected_text_color(), '#dcdfe4'), 'Transcript selection uses the existing visible selection palette');
+        clipboard.set_text(St.ClipboardType.CLIPBOARD, 'before copy');
+        this._keyboard.notify_keyval(GLib.get_monotonic_time(), Clutter.KEY_Control_L, Clutter.KeyState.PRESSED);
+        await this._key(Clutter.KEY_c);
+        this._keyboard.notify_keyval(GLib.get_monotonic_time(), Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
+        qaAssert(await readClipboard() === selection, 'Ctrl+C copies the selected transcript text');
+
+        text.set_selection(7, -1);
+        const body = text.get_selection();
+        await this._click(label, Clutter.BUTTON_SECONDARY);
+        qaAssert(label.menu.isOpen && text.get_selection() === body, 'Right-click preserves the text selection');
+        qaAssert(label.menu.actor.has_style_class_name('zaiko-context') &&
+            qaColor(label.menu.box.get_theme_node().get_background_color(), '#282c34'), 'Message Copy menu reuses the existing context menu style');
+        await this._shot('message-copy-menu');
+        await this._click(label.menu._getMenuItems()[0].actor);
+        qaAssert(await readClipboard() === body && this._panel.visible, 'Context Copy preserves Thai, symbols and emoji while keeping Log open');
+        text.set_selection(0, 0);
+        await this._click(label, Clutter.BUTTON_SECONDARY);
+        await this._click(label.menu._getMenuItems()[0].actor);
+        qaAssert(await readClipboard() === label.text, 'Context Copy copies the full message when there is no selection');
+        await this._click(label, Clutter.BUTTON_SECONDARY);
+        this._hidePanel();
+        qaAssert(!label.menu.isOpen && !this._panel.visible, 'Hiding Log closes its message menu');
+        this._showLog();
+    }
+
     async _checkComposerHitArea(entry, button) {
         const composer = entry.get_parent();
         const [x, y] = composer.get_transformed_position();
@@ -120,6 +190,60 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(entry.clutter_text.get_cursor_position() >= 0 && entry.clutter_text.get_cursor_position() < 5,
             'Native text clicks still place the caret near the clicked character');
         entry.set_text('');
+    }
+
+    async _checkFocusDismiss(label) {
+        const text = label.clutter_text;
+        const entry = this._logEntry;
+        const draft = entry.get_text();
+        entry.set_text('focus dismissal draft');
+        entry.grab_key_focus();
+        entry.clutter_text.set_selection(0, -1);
+        await this._click(this._logScroll);
+        qaAssert(!entry.clutter_text.get_selection() && !this._ownsFocus(global.stage.get_key_focus()),
+            'Blank space inside Log clears input selection and keyboard focus');
+        qaAssert(this._panel.visible && entry.get_text() === 'focus dismissal draft' &&
+            !entry.clutter_text.get_cursor_visible(), 'Log stays open with its draft and no active caret');
+
+        text.grab_key_focus();
+        text.set_selection(7, -1);
+        await this._click(entry);
+        qaAssert(!text.get_selection() && entry.contains(global.stage.get_key_focus()),
+            'Clicking input clears the old message selection and focuses the input');
+        entry.clutter_text.set_selection(0, -1);
+        await this._click(label);
+        qaAssert(!entry.clutter_text.get_selection() && text.has_key_focus(),
+            'Clicking a message clears the old input selection and transfers focus');
+
+        const outside = new St.Widget({reactive: true, width: 80, height: 48});
+        outside.set_position(300, 100);
+        let presses = 0;
+        outside.connect('button-press-event', () => { presses++; return Clutter.EVENT_PROPAGATE; });
+        Main.uiGroup.add_child(outside);
+        try {
+            await qaPause(60);
+            text.set_selection(7, -1);
+            await this._click(outside);
+            qaAssert(!text.get_selection() && !this._ownsFocus(global.stage.get_key_focus()) && presses === 1,
+                `A nonfocusable outside target clears message selection/focus and receives the same press once: ${JSON.stringify({selection: text.get_selection(), focus: global.stage.get_key_focus()?.toString(), presses})}`);
+            text.grab_key_focus();
+            text.set_selection(7, -1);
+            await this._click(label, Clutter.BUTTON_SECONDARY);
+            await this._click(outside);
+            qaAssert(!label.menu.isOpen && !text.get_selection() &&
+                !this._ownsFocus(global.stage.get_key_focus()),
+            `Outside click closes Copy and clears its selection/focus: ${JSON.stringify({open: label.menu.isOpen, selection: text.get_selection(), focus: global.stage.get_key_focus()?.toString()})}`);
+            const beforeInputClick = presses;
+            entry.grab_key_focus();
+            entry.clutter_text.set_selection(0, -1);
+            await this._click(outside);
+            qaAssert(!entry.clutter_text.get_selection() && !entry.clutter_text.has_key_focus() &&
+                this._panel.visible && entry.get_text() === 'focus dismissal draft' && presses === beforeInputClick + 1,
+            'Outside click releases Log input and selection while preserving the panel and draft');
+        } finally {
+            outside.destroy();
+            entry.set_text(draft);
+        }
     }
 
     async _checkCaret(entry, button) {
@@ -274,10 +398,12 @@ export default class OverlayQA extends ZaikoExtension {
         outside.connect('clicked', () => { outsideClicks++; outside.grab_key_focus(); });
         Main.uiGroup.add_child(outside);
         await qaPause(80);
+        this._overlayEntry.clutter_text.set_selection(0, -1);
         await this._click(outside);
         qaAssert(!this._inputOverlay.visible && outsideClicks === 1, 'Outside click hides input and activates its target once');
         qaAssert(global.stage.get_key_focus() === outside, 'Outside click retains target focus');
         qaAssert(!this._overlayEntry.clutter_text.get_cursor_visible(), 'Hidden compact input has no active caret');
+        qaAssert(!this._overlayEntry.clutter_text.get_selection(), 'Outside click also clears compact input selection');
         qaAssert(this._overlayEntry.get_text() === 'draft kept outside', 'Outside dismissal preserves draft');
         await this._click(this._character);
         qaAssert(this._inputOverlay.visible, 'Character click opens hidden input');
@@ -445,7 +571,10 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(rows.length === 3 && rows.every(row => row instanceof St.Label), 'Transcript is flat text without message containers');
         qaAssert(rows[0].text === `[Me] ${literal}` && rows[1].text === '[Aiko] คุยใน Log ได้เลยค่ะ <>& 😊', 'Role prefixes and literal contents render inline');
         for (const row of rows) {
-            qaAssert(row.get_theme_node().get_background_color().alpha === 0 && row.get_theme_node().get_padding(St.Side.LEFT) === 0, 'Transcript has no bubble background or padding');
+            qaAssert(row.get_theme_node().get_background_color().alpha === 0 &&
+                row.get_theme_node().get_padding(St.Side.LEFT) === 6 &&
+                row.get_theme_node().get_padding(St.Side.TOP) === 4,
+            'Transcript stays transparent with 6 px horizontal and 4 px vertical selection padding');
             qaAssert(row.clutter_text.get_line_alignment() === Pango.Alignment.LEFT, 'All text is left aligned');
             qaAssert(qaColor(row.get_theme_node().get_foreground_color(), '#dcdfe4'), 'Message bodies share the One Half Dark foreground');
         }
@@ -455,6 +584,7 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(meColor && aikoColor && meColor !== aikoColor, 'Participants have distinct rendered prefix colors');
         qaAssert(bodyColor === qaTextColorAt(rows[1], 7), 'Rendered message bodies share one color');
         qaAssert(meColor !== bodyColor && aikoColor !== bodyColor, 'Only prefixes carry participant-specific colors');
+        await this._checkMessageCopy(rows[1]);
         this._overlayEntry.set_text('compact draft retained');
         await this._click(this._character);
         qaAssert(!this._inputOverlay.visible && this._logEntry.contains(global.stage.get_key_focus()), 'Character click routes to Log while open');
@@ -466,6 +596,7 @@ export default class OverlayQA extends ZaikoExtension {
             !qaContainsText(this._logEntry.menu.box, 'Ctrl+C') && !qaContainsText(this._logEntry.menu.box, 'Ctrl+V'), 'Log edit menu remains native without added shortcut labels');
         await this._key(Clutter.KEY_Escape);
 
+        await this._checkFocusDismiss(rows[1]);
         this._callCore = async (method, parameters) => {
             calls.push({method, args: parameters?.deep_unpack()});
             return [];
@@ -658,7 +789,8 @@ export default class OverlayQA extends ZaikoExtension {
 
         const stageSignals = this._signals.filter(([object]) => object === global.stage).map(([, id]) => id);
         qaAssert(stageSignals.length > 0, 'Outside-click handler registered');
-        const actors = [this._panel, this._panelClose, this._character, this._inputOverlay, this._answerLabel, this._characterMenu.actor];
+        const actors = [this._panel, this._panelClose, this._character, this._inputOverlay, this._answerLabel,
+            this._characterMenu.actor, ...this._logMessageMenus().map(menu => menu.actor)];
         this._coreOwner = 'qa-only-no-provider';
         this._showLog();
         const carets = this._caretBlinks.slice();

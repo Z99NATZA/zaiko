@@ -33,12 +33,14 @@
     background-color: rgba(62, 68, 81, 0.9);
     border-color: #a0a6b1;
 }
-.zaiko-history { spacing: 8px; padding-right: 10px; }
+.zaiko-history { spacing: 0; padding-right: 4px; }
 .zaiko-log-message {
     color: #dcdfe4;
+    selection-background-color: #3e4451;
+    selected-color: #dcdfe4;
     background-color: transparent;
     border: none;
-    padding: 0;
+    padding: 4px 6px;
     margin: 0;
     font-size: 14px;
     font-weight: 400;

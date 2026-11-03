@@ -73,6 +73,16 @@ session conversation. Its flat, left-aligned transcript displays [Me] message
 and [Aiko] message directly, without bubbles or separate role headings. Only
 the prefixes have participant-specific colors; all message bodies use the same
 color. Tool results use [Action]. Markup-like message content is literal text.
+Drag to select text within a message and press Ctrl+C to copy it. Right click a
+message and choose Copy to copy the selection, or the whole message when nothing
+is selected. This menu uses the existing One Half Dark context-menu style.
+Click elsewhere to clear a message or input selection and release its keyboard
+focus, including unused space inside Log. Log stays open and input drafts are
+preserved. Using a text field's or message's own context menu keeps its selection
+available for Copy/Paste.
+Each message has 6 px horizontal and 4 px vertical mouse padding. Dragging from
+this padding starts selection at the nearest character, including beyond the
+last character. The padding stays transparent and replaces the old row spacing.
 
 The input at the bottom of Log supports Enter and its embedded send/cancel icon.
 Successful Log sends clear only its draft and keep Log open for continued chat.
