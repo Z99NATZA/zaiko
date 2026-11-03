@@ -89,7 +89,41 @@ export default class OverlayQA extends ZaikoExtension {
         await qaPause(140);
     }
 
+    async _checkComposerHitArea(entry, button) {
+        const composer = entry.get_parent();
+        const [x, y] = composer.get_transformed_position();
+        const [width, height] = composer.get_transformed_size();
+        const [entryX, entryY] = entry.get_transformed_position();
+        const clickAt = async (targetX, targetY) => {
+            this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), targetX, targetY);
+            await qaPause(25);
+            this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
+            await qaPause(25);
+            this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
+            await qaPause(50);
+        };
+        entry.set_text('focus area draft');
+        const [buttonX] = button.get_transformed_position();
+        for (const [targetX, targetY] of [
+            [x + 2, y + height / 2], [x + width - 2, y + height / 2],
+            [x + width / 2, y + 2], [x + width / 2, y + height - 2],
+            [buttonX - 2, y + height / 2],
+        ]) {
+            button.grab_key_focus();
+            await clickAt(targetX, targetY);
+            qaAssert(entry.clutter_text.has_key_focus(), 'Clicking inside each edge or gap focuses input');
+            qaAssert(composer.visible && composer.has_style_pseudo_class('focus'), 'Padding clicks retain input and its focus highlight');
+            qaAssert(entry.get_text() === 'focus area draft', 'Padding clicks do not submit or clear the draft');
+        }
+        entry.clutter_text.set_cursor_position(-1);
+        await clickAt(entryX + 10, entryY + entry.height / 2);
+        qaAssert(entry.clutter_text.get_cursor_position() >= 0 && entry.clutter_text.get_cursor_position() < 5,
+            'Native text clicks still place the caret near the clicked character');
+        entry.set_text('');
+    }
+
     async _checkCaret(entry, button) {
+        await this._checkComposerHitArea(entry, button);
         const settings = this._interfaceSettings;
         const text = entry.clutter_text;
         // These settings belong only to the private QA session.
@@ -651,6 +685,6 @@ export default class OverlayQA extends ZaikoExtension {
         outside.destroy();
         this._pointer = null;
         this._keyboard = null;
-        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, inset close overlay/no reserved row/hover/immediate hide, Enter/icon/cancel/failure/drafts, native caret blinking/focus/settings/timeout/cleanup, One Half Dark surfaces/no theme chooser, replies remain visible through menu/Log until original 8-second expiry, lifecycle'});
+        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, full composer interior click focus/native caret placement, inset close overlay/no reserved row/hover/immediate hide, Enter/icon/cancel/failure/drafts, native caret blinking/focus/settings/timeout/cleanup, One Half Dark surfaces/no theme chooser, replies remain visible through menu/Log until original 8-second expiry, lifecycle'});
     }
 }

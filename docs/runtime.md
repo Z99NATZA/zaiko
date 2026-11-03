@@ -111,7 +111,10 @@ transparent background and text shadow. The conversation
 has a 12 px outer radius and 16 px content padding. Both composers use 38 px height,
 9 px corners, 13 px text, and a 16 px outlined send/cancel icon. A single outer
 border surrounds the input and send button; keyboard focus highlights this
-border, and the embedded controls have no separate outlines. Log prefixes
+border, and the embedded controls have no separate outlines. Clicking padding
+or gaps anywhere inside this border focuses the input. Clicking text still
+positions/selects it normally, and the send/cancel button keeps its own action.
+Log prefixes
 use green #98c379 for Me and magenta #c678dd for Aiko while message bodies
 share the foreground color. Palette source: https://github.com/sonph/onehalf.
 

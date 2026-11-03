@@ -233,7 +233,7 @@ export default class ZaikoExtension extends Extension {
         this._logSend.set_child(this._logSendIcon);
         this._logSend.connect('clicked', () => this._busy() ? this._cancel() : this._submit(this._logEntry));
         this._logComposer.add_child(this._logSend);
-        this._trackComposerFocus(this._logComposer, [this._logEntry.clutter_text, this._logSend]);
+        this._trackComposerFocus(this._logComposer, this._logEntry, this._logSend);
         this._panelContent.add_child(this._logComposer);
     }
 
@@ -263,7 +263,7 @@ export default class ZaikoExtension extends Extension {
         this._overlaySend.set_child(this._overlaySendIcon);
         this._overlaySend.connect('clicked', () => this._busy() ? this._cancel() : this._submit(this._overlayEntry));
         this._inputOverlay.add_child(this._overlaySend);
-        this._trackComposerFocus(this._inputOverlay, [this._overlayEntry.clutter_text, this._overlaySend]);
+        this._trackComposerFocus(this._inputOverlay, this._overlayEntry, this._overlaySend);
 
         // The answer is a top-level label, with no card or container behind it.
         this._answerLabel = this._wrappedLabel('', 'zaiko-answer');
@@ -292,8 +292,18 @@ export default class ZaikoExtension extends Extension {
         });
     }
 
-    _trackComposerFocus(composer, controls) {
-        for (const control of controls) {
+    _trackComposerFocus(composer, entry, sendButton) {
+        composer.reactive = true;
+        this._connect(composer, 'button-press-event', (_actor, event) => {
+            // Only handle the surrounding padding/gaps. Native entry clicks
+            // retain caret placement/selection; send and cancel keep their action.
+            if (event.get_button() !== Clutter.BUTTON_PRIMARY || global.stage.get_event_actor(event) !== composer)
+                return Clutter.EVENT_PROPAGATE;
+            this._rememberFocus();
+            entry.grab_key_focus();
+            return Clutter.EVENT_STOP;
+        });
+        for (const control of [entry.clutter_text, sendButton]) {
             this._connect(control, 'key-focus-in', () => composer.add_style_pseudo_class('focus'));
             this._connect(control, 'key-focus-out', () => composer.remove_style_pseudo_class('focus'));
         }
