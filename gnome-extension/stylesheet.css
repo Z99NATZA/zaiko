@@ -1,33 +1,41 @@
-/* One fixed translucent style. Theme selection is intentionally deferred. */
+/* Fixed One Half Dark palette: https://github.com/sonph/onehalf
+ * Background #282c34, foreground #dcdfe4, blue #61afef,
+ * magenta #c678dd, red #e06c75; neutral borders keep accents restrained.
+ * Theme selection is intentionally deferred. */
 .zaiko-character { background-color: transparent; }
 .zaiko-panel {
-    color: #F2F5FC;
-    background-color: rgba(20, 24, 32, 0.28);
-    border: 1px solid rgba(235, 241, 255, 0.32);
+    color: #dcdfe4;
+    background-color: rgba(40, 44, 52, 0.94);
+    border: 1px solid #3e4451;
     border-radius: 12px;
     padding: 16px;
     spacing: 12px;
-    box-shadow: none;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.24);
+    text-shadow: none;
     font-family: sans-serif;
     font-size: 14px;
     font-weight: 400;
 }
 .zaiko-panel-close {
-    color: #F2F5FC;
-    background-color: rgba(20, 24, 32, 0.56);
+    color: #a0a6b1;
+    background-color: #282c34;
     padding: 0;
-    border: 1px solid rgba(235, 241, 255, 0.32);
+    border: 1px solid #3e4451;
     border-radius: 999px;
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.18);
 }
-.zaiko-panel-close:hover, .zaiko-panel-close:focus {
-    background-color: rgba(60, 68, 84, 0.72);
-    border-color: rgba(235, 241, 255, 0.65);
+.zaiko-panel-close:hover {
+    color: #e06c75;
+    background-color: #353039;
+    border-color: #e06c75;
+}
+.zaiko-panel-close:focus {
+    color: #61afef;
+    border-color: #61afef;
 }
 .zaiko-history { spacing: 8px; padding-right: 10px; }
 .zaiko-log-message {
-    color: #F2F5FC;
+    color: #dcdfe4;
     background-color: transparent;
     border: none;
     padding: 0;
@@ -35,63 +43,68 @@
     font-size: 14px;
     font-weight: 400;
 }
-.zaiko-placeholder, .zaiko-log-status { color: rgba(242, 245, 252, 0.68); font-size: 12px; }
+.zaiko-placeholder, .zaiko-log-status { color: #a0a6b1; font-size: 12px; }
 .zaiko-placeholder { padding: 12px 0; }
-.zaiko-log-status.zaiko-log-error { color: #FFB6C7; }
+.zaiko-log-status.zaiko-log-error { color: #e06c75; }
 .zaiko-log-composer, .zaiko-input-overlay {
-    color: #F2F5FC;
-    background-color: rgba(20, 24, 32, 0.28);
-    border: 1px solid rgba(235, 241, 255, 0.32);
+    color: #dcdfe4;
+    background-color: rgba(40, 44, 52, 0.94);
+    border: 1px solid #3e4451;
     border-radius: 9px;
     padding: 3px 5px;
     spacing: 4px;
     box-shadow: none;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+    text-shadow: none;
     font-family: sans-serif;
     font-size: 13px;
     font-weight: 400;
 }
-.zaiko-log-entry, .zaiko-log-entry:focus,
-.zaiko-overlay-entry, .zaiko-overlay-entry:focus {
-    color: #F2F5FC;
+.zaiko-log-entry, .zaiko-overlay-entry {
+    color: #dcdfe4;
     background-color: transparent;
-    border: none;
+    border: 1px solid transparent;
     border-radius: 6px;
-    padding: 5px 7px;
+    padding: 4px 6px;
     box-shadow: none;
-    caret-color: #F2F5FC;
-    selection-background-color: rgba(242, 245, 252, 0.22);
-    selected-color: #FFFFFF;
+    caret-color: #61afef;
+    selection-background-color: #3e5871;
+    selected-color: #dcdfe4;
     font-size: 13px;
     font-weight: 400;
 }
-.zaiko-log-entry StLabel, .zaiko-overlay-entry StLabel { color: rgba(242, 245, 252, 0.6); }
+.zaiko-log-entry:focus, .zaiko-overlay-entry:focus {
+    border-color: #61afef;
+}
+.zaiko-log-entry StLabel, .zaiko-overlay-entry StLabel { color: #a0a6b1; }
 .zaiko-log-send, .zaiko-overlay-send {
-    color: rgba(242, 245, 252, 0.85);
+    color: #61afef;
     background-color: transparent;
-    border: 1px solid rgba(235, 241, 255, 0.3);
+    border: 1px solid rgba(97, 175, 239, 0.4);
     border-radius: 7px;
     padding: 5px;
     box-shadow: none;
 }
 .zaiko-log-send:hover, .zaiko-log-send:focus,
 .zaiko-overlay-send:hover, .zaiko-overlay-send:focus {
-    color: #FFFFFF;
-    background-color: rgba(242, 245, 252, 0.1);
-    border-color: rgba(235, 241, 255, 0.7);
+    color: #61afef;
+    background-color: rgba(97, 175, 239, 0.16);
+    border-color: #61afef;
+}
+.zaiko-log-send:active, .zaiko-overlay-send:active {
+    background-color: rgba(97, 175, 239, 0.24);
 }
 .zaiko-log-send:insensitive, .zaiko-overlay-send:insensitive {
-    color: rgba(242, 245, 252, 0.3);
+    color: #5c6370;
     background-color: transparent;
-    border-color: rgba(235, 241, 255, 0.15);
+    border-color: #3e4451;
 }
 .zaiko-scroll StScrollBar { width: 6px; min-width: 6px; min-height: 6px; padding: 0; }
 .zaiko-scroll-track#trough {
-    background-color: rgba(242, 245, 252, 0.06);
+    background-color: rgba(92, 99, 112, 0.16);
     border-radius: 3px;
 }
 .zaiko-scroll-thumb.vhandle, .zaiko-scroll-thumb.hhandle {
-    background-color: rgba(242, 245, 252, 0.45);
+    background-color: #5c6370;
     border-radius: 3px;
     border-width: 0;
     padding: 0;
@@ -99,9 +112,9 @@
 }
 .zaiko-scroll-thumb.vhandle { min-height: 28px; }
 .zaiko-scroll-thumb.vhandle:hover, .zaiko-scroll-thumb.hhandle:hover,
-.zaiko-scroll-thumb.vhandle:active, .zaiko-scroll-thumb.hhandle:active { background-color: rgba(242, 245, 252, 0.8); }
+.zaiko-scroll-thumb.vhandle:active, .zaiko-scroll-thumb.hhandle:active { background-color: #61afef; }
 .zaiko-answer {
-    color: #F2F5FC;
+    color: #dcdfe4;
     background-color: transparent;
     border: none;
     border-radius: 0;
@@ -113,10 +126,10 @@
     font-size: 14px;
     font-weight: 400;
 }
-.zaiko-answer.zaiko-answer-error { color: #FFB6C7; }
+.zaiko-answer.zaiko-answer-error { color: #e06c75; }
 .zaiko-context {
-    color: #F2F5FC;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+    color: #dcdfe4;
+    text-shadow: none;
     min-width: 190px;
     font-size: 13px;
     font-weight: 400;
@@ -124,18 +137,18 @@
     -arrow-rise: 0;
     -arrow-border-width: 0;
     -arrow-border-radius: 8px;
-    -arrow-background-color: rgba(20, 24, 32, 0.28);
+    -arrow-background-color: rgba(40, 44, 52, 0.94);
     -boxpointer-gap: 4px;
 }
 .zaiko-context .popup-menu-content {
-    background-color: rgba(20, 24, 32, 0.28);
-    border: 1px solid rgba(235, 241, 255, 0.32);
+    background-color: rgba(40, 44, 52, 0.94);
+    border: 1px solid #3e4451;
     border-radius: 8px;
     padding: 4px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
 }
 .zaiko-context .popup-menu-item {
-    color: #F2F5FC;
+    color: #dcdfe4;
     border: none;
     border-radius: 4px;
     padding: 5px 10px;
@@ -143,5 +156,5 @@
     spacing: 20px;
 }
 .zaiko-context .popup-menu-item:active, .zaiko-context .popup-menu-item:hover,
-.zaiko-context .popup-menu-item:focus { color: #FFFFFF; background-color: rgba(242, 245, 252, 0.1); }
-.zaiko-context .popup-menu-item:insensitive { color: rgba(242, 245, 252, 0.35); background-color: transparent; }
+.zaiko-context .popup-menu-item:focus { color: #61afef; background-color: rgba(97, 175, 239, 0.14); }
+.zaiko-context .popup-menu-item:insensitive { color: #5c6370; background-color: transparent; }

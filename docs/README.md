@@ -12,7 +12,7 @@ Click the character to type and click elsewhere to hide input. Replies are
 plain text; the old comparison panel is removed.
 Log has its own input and flat left-aligned messages. Participant prefixes use
 different colors while message bodies share one color. Log owns conversation
-input while it is open. All surfaces use the fixed translucent input style;
+input while it is open. All surfaces use a fixed One Half Dark palette;
 there is no theme chooser or sync.
 
 Use Rust as the core. Start with GNOME on Wayland.

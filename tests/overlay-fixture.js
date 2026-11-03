@@ -284,7 +284,7 @@ export default class OverlayQA extends ZaikoExtension {
         const items = this._characterMenu._getMenuItems();
         qaAssert(items.length === 2 && items.map(item => item.label?.text).join(',') === 'Log,Quit', 'Character menu has Log and Quit only, without a chooser or separator');
         qaAssert(this._characterMenu.box.get_theme_node().get_border_radius(St.Corner.TOPLEFT) === 8 &&
-            qaColor(this._characterMenu.box.get_theme_node().get_background_color(), '#141820'), 'Character menu keeps the fixed compact glass style');
+            qaColor(this._characterMenu.box.get_theme_node().get_background_color(), '#282c34'), 'Character menu uses the One Half Dark surface');
         const logItem = items.find(item => item.label?.text === 'Log');
         qaAssert(!items.some(item => item.label?.text === 'Theme') && items.some(item => item.label?.text === 'Quit'), 'Quit is reachable and theme selection is gone');
         await this._key(Clutter.KEY_Escape);
@@ -305,7 +305,7 @@ export default class OverlayQA extends ZaikoExtension {
         for (const row of rows) {
             qaAssert(row.get_theme_node().get_background_color().alpha === 0 && row.get_theme_node().get_padding(St.Side.LEFT) === 0, 'Transcript has no bubble background or padding');
             qaAssert(row.clutter_text.get_line_alignment() === Pango.Alignment.LEFT, 'All text is left aligned');
-            qaAssert(qaColor(row.get_theme_node().get_foreground_color(), '#F2F5FC'), 'Message bodies share one fixed light color');
+            qaAssert(qaColor(row.get_theme_node().get_foreground_color(), '#dcdfe4'), 'Message bodies share the One Half Dark foreground');
         }
         const meColor = qaTextColorAt(rows[0], 1);
         const aikoColor = qaTextColorAt(rows[1], 1);
@@ -396,8 +396,8 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(thumb && thumb.width <= 6 && thumb.get_theme_node().get_border_width(St.Side.LEFT) === 0,
             `Scrollbar thumb should be slim: ${JSON.stringify({thumb: thumb?.toString(), width: thumb?.width,
                 border: thumb?.get_theme_node().get_border_width(St.Side.LEFT), bars: barDetails})}`);
-        qaAssert(qaColor(thumb.get_theme_node().get_background_color(), '#F2F5FC'),
-            'Scrollbar thumb uses the same fixed light style');
+        qaAssert(qaColor(thumb.get_theme_node().get_background_color(), '#5c6370'),
+            'Scrollbar thumb uses the muted One Half Dark neutral');
         outside.hide();
         await this._shot('chat-scroll');
         this._snapshot.messages = originalMessages;
@@ -416,11 +416,11 @@ export default class OverlayQA extends ZaikoExtension {
         this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), 100, 80);
         this._showInput();
         const surface = this._inputOverlay.get_theme_node().get_background_color();
-        qaAssert(qaColor(surface, '#141820') && surface.alpha > 0 && surface.alpha < 128, 'Compact input uses the fixed translucent surface');
+        qaAssert(qaColor(surface, '#282c34') && surface.alpha >= 239 && surface.alpha <= 240, 'Compact input uses the 94% One Half Dark surface');
         qaAssert(this._overlaySend.get_theme_node().get_background_color().alpha === 0, 'Send keeps its outlined style');
         qaAssert(this._answerLabel.get_theme_node().get_background_color().alpha === 0, 'Reply remains transparent');
         const panelSurface = this._panel.get_theme_node().get_background_color();
-        qaAssert(qaColor(panelSurface, '#141820') && panelSurface.alpha > 0 && panelSurface.alpha < 128, 'Conversation uses the same translucent style as input');
+        qaAssert(qaColor(panelSurface, '#282c34') && panelSurface.alpha === surface.alpha, 'Conversation uses the same One Half Dark surface as input');
         this._snapshot.state = 'thinking';
         this._snapshot.request_id = 'qa-thinking-clock';
         this._renderSnapshot();
@@ -525,6 +525,6 @@ export default class OverlayQA extends ZaikoExtension {
         outside.destroy();
         this._pointer = null;
         this._keyboard = null;
-        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, Enter/icon/cancel/failure/drafts, fixed glass style/no theme chooser, 12-second messages and lifecycle'});
+        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, Enter/icon/cancel/failure/drafts, One Half Dark surfaces/no theme chooser, 12-second messages and lifecycle'});
     }
 }

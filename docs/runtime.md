@@ -96,11 +96,14 @@ appearance and actions, without additional shortcut labels.
 Fixed appearance
 ----------
 
-Zaiko uses one static translucent style matching the compact input: thin light
-outlines, light text, rounded controls, and a slim scrollbar. The conversation
+Zaiko uses a fixed One Half Dark palette: #282c34 surfaces at 94% opacity,
+#dcdfe4 text, subdued gray outlines, rounded controls, and a slim scrollbar.
+Blue #61afef marks actions and keyboard focus; red #e06c75 marks errors.
+Floating replies retain their transparent background and text shadow. The conversation
 has a 12 px outer radius and 16 px padding. Both composers use 38 px height,
 9 px corners, 13 px text, and a 16 px outlined send/cancel icon. Log prefixes
-use fixed blue/lavender colors while message bodies share one light color.
+use blue #61afef for Me and magenta #c678dd for Aiko while message bodies
+share the foreground color. Palette source: https://github.com/sonph/onehalf.
 
 Theme selection and sync are removed and deferred to a future task. There is
 no appearance page, palette registry, generated palette stylesheet, or preference
