@@ -78,6 +78,10 @@ impl Desktop {
         }
         (true, format!("Launch requested for {app}."))
     }
+    async fn open_terminal(&self, mode: &str) -> (bool, String) {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        (true, format!("Terminal mode requested: {mode}."))
+    }
 }
 
 async fn snapshot(proxy: &Proxy<'_>) -> Value {
@@ -263,6 +267,64 @@ async fn cancellation_releases_slot_and_old_work_cannot_overwrite_new_snapshot()
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn terminal_modes_cross_the_bus_without_provider_credentials() {
+    let bus = Bus::start();
+    let _core = bus.core();
+    let connection = bus.connection().await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let _desktop = zbus::connection::Builder::address(bus.address.as_str())
+        .unwrap()
+        .serve_at(
+            "/org/zaiko/Desktop",
+            Desktop {
+                calls: calls.clone(),
+            },
+        )
+        .unwrap()
+        .name("org.zaiko.Desktop")
+        .unwrap()
+        .build()
+        .await
+        .unwrap();
+    let proxy = ready(&connection).await;
+    for (mode, expected) in [
+        ("default", "Launch requested for terminal."),
+        ("tab", "Terminal mode requested: tab."),
+        ("standalone", "Terminal mode requested: standalone."),
+    ] {
+        proxy
+            .call::<_, _, ()>("OpenTerminal", &(mode, mode))
+            .await
+            .unwrap();
+        let finished = idle(&proxy).await;
+        assert!(
+            finished["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|message| {
+                    message["content"]
+                        .as_str()
+                        .is_some_and(|text| text.contains(expected))
+                })
+        );
+        assert!(
+            proxy
+                .call::<_, _, ()>("OpenTerminal", &(mode, mode))
+                .await
+                .is_err()
+        );
+    }
+    assert!(
+        proxy
+            .call::<_, _, ()>("OpenTerminal", &("invalid-mode", "shell"))
+            .await
+            .is_err()
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
 }
 
 #[test]

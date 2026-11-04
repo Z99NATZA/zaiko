@@ -149,7 +149,7 @@ def session_checks(layout):
         check(snapshot()["messages"] == [], "Restart retained the previous in-memory session")
         run([launcher, "stop"], cwd=working)
         eventually(lambda: not has_owner(CORE_BUS), "final stop releases service")
-        print("PASS isolated D-Bus lifecycle, tools, duplicate/overlap rejection, and no shell execution")
+        print("PASS isolated D-Bus lifecycle, tools, duplicate/overlap rejection, and no shell execution from app aliases")
     finally:
         if has_owner(CORE_BUS):
             call("Quit", success=False)

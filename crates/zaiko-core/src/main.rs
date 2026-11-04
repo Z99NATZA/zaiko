@@ -1,3 +1,4 @@
+mod command;
 mod config;
 mod provider;
 mod service;

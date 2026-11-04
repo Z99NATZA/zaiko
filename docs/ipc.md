@@ -16,15 +16,19 @@ Core methods
 
 Submit(request_id: s, text: s) -> ()
 OpenApp(request_id: s, app: s) -> ()
+OpenTerminal(request_id: s, mode: s) -> ()
 Cancel(request_id: s) -> ()
 GetSnapshot() -> s
 Show() -> ()
 Quit() -> ()
 
-Submit and OpenApp enqueue a bounded request and return immediately.
+Submit, OpenApp, and OpenTerminal enqueue a bounded request and return immediately.
 Reject a second active request and duplicate request IDs without executing again.
 Only terminal and vscode are valid app aliases.
-Cancel accepts the active request ID; it does not undo a completed app launch.
+OpenApp uses default mode. OpenTerminal accepts default, tab, or standalone;
+unknown modes fail before reserving a request ID.
+Cancel accepts the active request ID and stops an active command process group;
+it does not undo completed changes or app launches.
 Show emits a present event and requests the desktop to present the companion.
 Quit cancels active work and releases the core service.
 
@@ -37,20 +41,39 @@ Payload is JSON with type and optional request_id, state, content, role, message
 Types: state, message, error, present. States: idle, thinking, working, error.
 All user-visible conversation and request state can be recovered from GetSnapshot.
 Snapshot JSON: messages [{role, content}], state, request_id, error, provider, model.
-API keys and provider HTTP bodies are never included.
+The selected provider API key and provider HTTP bodies are never included.
+Commands and compact command results are retained as assistant messages.
 
 Desktop methods
 ----------
 
 Present() -> ()
 OpenApp(app: s) -> (success: b, message: s)
+OpenTerminal(mode: s) -> (success: b, message: s)
 
-OpenApp requests a new window on every call. Success means a new-window launch
-was requested, not independently verified window visibility. Unknown aliases and
-launchers missing the required desktop action fail explicitly.
+OpenApp("terminal") requests the primary zter instance, presenting its existing
+window or opening it with one tab. OpenTerminal("default") does the same.
+OpenTerminal("tab") adds a tab to the primary instance via new-tab (--new-tab),
+or opens its first window with one tab if absent. OpenTerminal("standalone")
+opens a separate instance via new-window (--standalone). Default and tab never
+target a standalone instance. OpenApp("vscode") opens a new VS Code window via
+new-empty-window (--new-window).
+
+Success means the activation, tab, or window request was submitted, not verified
+visibility. Unknown aliases, modes, and missing desktop actions fail explicitly.
 Use desktop IDs io.github.z99natza.zter.desktop and code.desktop/code-oss.desktop.
-Use action new-window for zter (--standalone) and new-empty-window for VS Code
-(--new-window). Existing windows are left open.
+
+The provider open_app tool accepts app plus nullable mode (default, tab,
+standalone). Omitted/null mode defaults to default. Only terminal accepts tab or
+standalone; VS Code uses default. Duplicate tool calls for the same app and mode
+within a request execute once; different modes are distinct actions.
+
+The run_command provider tool accepts command, nullable workdir, and nullable
+timeout_ms. It executes in the Rust core; no raw-command method is exported by
+the desktop service. Output contains success, exit_code, stdout, stderr,
+timed_out, truncated, and workdir, or success=false plus a validation/start error.
+Tool call IDs are replay-protected. A new ID can run the same command again,
+allowing reads to observe changes made by earlier commands.
 
 Lifecycle
 ----------

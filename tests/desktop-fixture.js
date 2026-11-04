@@ -10,6 +10,11 @@ const xml = `<node><interface name="org.zaiko.Desktop">
     <arg name="success" type="b" direction="out"/>
     <arg name="message" type="s" direction="out"/>
   </method>
+  <method name="OpenTerminal">
+    <arg name="mode" type="s" direction="in"/>
+    <arg name="success" type="b" direction="out"/>
+    <arg name="message" type="s" direction="out"/>
+  </method>
 </interface></node>`;
 
 function record(value) {
@@ -30,6 +35,11 @@ const object = Gio.DBusExportedObject.wrapJSObject(xml, {
             ]));
             return GLib.SOURCE_REMOVE;
         });
+    },
+    OpenTerminal(mode) {
+        record({method: 'OpenTerminal', mode});
+        return [['default', 'tab', 'standalone'].includes(mode),
+            'QA fixture: terminal mode requested; no GUI was opened.'];
     },
 });
 

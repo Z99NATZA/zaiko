@@ -7,8 +7,9 @@ use tokio_util::sync::CancellationToken;
 use zbus::{Connection, Proxy, fdo, object_server::SignalEmitter};
 
 use crate::{
+    command::{self, CommandRequest},
     config::Config,
-    provider::{App, Client, Message, Tools},
+    provider::{App, Client, LaunchMode, Message, Tools},
 };
 
 const BUS: &str = "org.zaiko.Companion";
@@ -156,7 +157,7 @@ impl Runtime {
         connection: &Connection,
         id: &str,
         text: &str,
-        app: Option<App>,
+        app: Option<(App, LaunchMode)>,
     ) -> fdo::Result<()> {
         let text = text.trim();
         if text.is_empty() || text.len() > MAX_TEXT {
@@ -190,8 +191,8 @@ impl Runtime {
                     connection: &connection,
                     id: &id,
                 };
-                if let Some(app) = app {
-                    let result = tools.open_app(app).await?;
+                if let Some((app, mode)) = app {
+                    let result = tools.open_app(app, mode).await?;
                     if result["success"] == true {
                         Ok(None)
                     } else {
@@ -208,7 +209,7 @@ impl Runtime {
             let result = tokio::select! {
                 biased;
                 _=cancel.cancelled()=>return,
-                result=tokio::time::timeout(Duration::from_secs(90),work)=>match result {
+                result=tokio::time::timeout(Duration::from_secs(300),work)=>match result {
                     Ok(result)=>result,
                     Err(_)=>Err("Request timed out. You can try again.".to_owned()),
                 }
@@ -272,7 +273,7 @@ impl Runtime {
         state.snapshot.request_id = None;
         state.snapshot.state = "idle";
         state.snapshot.error = None;
-        let content = "Request cancelled. An app launch already requested cannot be undone.";
+        let content = "Request cancelled; running command processes are being stopped. Completed changes and app launches cannot be undone.";
         state.append(Message {
             role: "assistant".into(),
             content: content.into(),
@@ -297,7 +298,76 @@ struct DesktopTools<'a> {
 }
 
 impl Tools for DesktopTools<'_> {
-    async fn open_app(&mut self, app: App) -> Result<Value, String> {
+    async fn run_command(&mut self, request: CommandRequest) -> Result<Value, String> {
+        {
+            let mut state = self.runtime.state.lock().await;
+            if !state.owns(self.id) {
+                return Err("Request cancelled.".into());
+            }
+            state.snapshot.state = "working";
+            emit(self.connection, json!({"type":"state","request_id":self.id,"state":"working","content":"Running command…"})).await;
+        }
+        let command = request.command.clone();
+        let mut result = match command::run(request).await {
+            Ok(output) => serde_json::to_value(output).expect("command output serialization"),
+            Err(message) => json!({"success":false,"message":message}),
+        };
+        // Redact before returning output to either the model or desktop.
+        if let Some(fields) = result.as_object_mut() {
+            for value in fields.values_mut() {
+                if let Some(text) = value.as_str() {
+                    *value = json!(self.runtime.clean(text));
+                }
+            }
+        }
+        let mut state = self.runtime.state.lock().await;
+        if !state.owns(self.id) {
+            return Err("Request cancelled.".into());
+        }
+        let mut content = format!("Command: {}", truncate(&self.runtime.clean(&command), 1024));
+        if let Some(message) = result["message"].as_str() {
+            content.push_str(&format!("\n{message}"));
+        } else {
+            content.push_str(&format!(
+                "\nDirectory: {}\nExit: {}{}{}",
+                result["workdir"].as_str().unwrap_or_default(),
+                result["exit_code"],
+                if result["timed_out"] == true {
+                    " (timed out)"
+                } else {
+                    ""
+                },
+                if result["truncated"] == true {
+                    " (output truncated)"
+                } else {
+                    ""
+                }
+            ));
+            for stream in ["stdout", "stderr"] {
+                if let Some(text) = result[stream].as_str().filter(|text| !text.is_empty()) {
+                    content.push_str(&format!("\n{stream}: {}", truncate(text, 2048)));
+                }
+            }
+        }
+        state.append(Message {
+            role: "assistant".into(),
+            content: content.clone(),
+        });
+        emit(
+            self.connection,
+            json!({"type":"message","request_id":self.id,"role":"assistant","content":content}),
+        )
+        .await;
+        state.snapshot.state = "thinking";
+        emit(
+            self.connection,
+            json!({"type":"state","request_id":self.id,"state":"thinking"}),
+        )
+        .await;
+        Ok(result)
+    }
+
+    async fn open_app(&mut self, app: App, mode: LaunchMode) -> Result<Value, String> {
         {
             let mut state = self.runtime.state.lock().await;
             if !state.owns(self.id) {
@@ -314,9 +384,15 @@ impl Tools for DesktopTools<'_> {
                 "org.zaiko.Desktop",
             )
             .await?;
-            desktop
-                .call::<_, _, (bool, String)>("OpenApp", &(app.name(),))
-                .await
+            if app == App::Terminal && mode != LaunchMode::Default {
+                desktop
+                    .call::<_, _, (bool, String)>("OpenTerminal", &(mode.name(),))
+                    .await
+            } else {
+                desktop
+                    .call::<_, _, (bool, String)>("OpenApp", &(app.name(),))
+                    .await
+            }
         })
         .await;
         let (success, message) = match result {
@@ -351,7 +427,7 @@ impl Tools for DesktopTools<'_> {
             json!({"type":"state","request_id":self.id,"state":"thinking"}),
         )
         .await;
-        Ok(json!({"success":success,"message":message,"app":app.name()}))
+        Ok(json!({"success":success,"message":message,"app":app.name(),"mode":mode.name()}))
     }
 }
 
@@ -401,7 +477,24 @@ impl Companion {
                 connection,
                 request_id,
                 &format!("Open {}", app.name()),
-                Some(app),
+                Some((app, LaunchMode::Default)),
+            )
+            .await
+    }
+
+    async fn open_terminal(
+        &self,
+        request_id: &str,
+        mode: &str,
+        #[zbus(connection)] connection: &Connection,
+    ) -> fdo::Result<()> {
+        let mode = LaunchMode::parse(mode).map_err(fdo::Error::InvalidArgs)?;
+        self.runtime
+            .accept(
+                connection,
+                request_id,
+                &format!("Open terminal ({})", mode.name()),
+                Some((App::Terminal, mode)),
             )
             .await
     }

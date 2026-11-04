@@ -12,6 +12,11 @@ export const DESKTOP_XML = `<node>
       <arg name="success" type="b" direction="out"/>
       <arg name="message" type="s" direction="out"/>
     </method>
+    <method name="OpenTerminal">
+      <arg name="mode" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+      <arg name="message" type="s" direction="out"/>
+    </method>
   </interface>
 </node>`;
 
@@ -21,8 +26,13 @@ export const APP_IDS = Object.freeze({
 });
 
 export const APP_ACTIONS = Object.freeze({
-    terminal: 'new-window',
     vscode: 'new-empty-window',
+});
+
+export const TERMINAL_ACTIONS = Object.freeze({
+    default: null,
+    tab: 'new-tab',
+    standalone: 'new-window',
 });
 
 export function parseSnapshot(payload) {

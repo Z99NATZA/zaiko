@@ -12,7 +12,7 @@ import * as ShellEntry from 'resource:///org/gnome/shell/ui/shellEntry.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 import {
-    APP_IDS, APP_ACTIONS, CORE_BUS, CORE_PATH, DESKTOP_BUS, DESKTOP_PATH, DESKTOP_XML,
+    APP_IDS, APP_ACTIONS, TERMINAL_ACTIONS, CORE_BUS, CORE_PATH, DESKTOP_BUS, DESKTOP_PATH, DESKTOP_XML,
     panelPosition, clampPosition, compactPosition, expressionFor, isBusy, latestAssistant, parseEvent, parseSnapshot,
     transcriptLine, formatElapsed,
 } from './protocol.js';
@@ -107,6 +107,7 @@ export default class ZaikoExtension extends Extension {
             this._desktopObject = Gio.DBusExportedObject.wrapJSObject(DESKTOP_XML, {
                 Present: () => this._present(),
                 OpenApp: app => this._openApp(app),
+                OpenTerminal: mode => this._openApp('terminal', mode),
             });
             this._desktopName = Gio.bus_own_name(Gio.BusType.SESSION, DESKTOP_BUS,
                 Gio.BusNameOwnerFlags.NONE,
@@ -1161,24 +1162,63 @@ export default class ZaikoExtension extends Extension {
         }
     }
 
-    _openApp(alias) {
+    _openApp(alias, mode = 'default') {
         const candidates = Object.hasOwn(APP_IDS, alias) ? APP_IDS[alias] : null;
         if (!candidates)
             return [false, 'Unsupported app. Choose terminal or vscode.'];
+        if (!Object.hasOwn(TERMINAL_ACTIONS, mode) || (alias !== 'terminal' && mode !== 'default'))
+            return [false, 'Unsupported launch mode. Terminal modes: default, tab, standalone.'];
         const system = Shell.AppSystem.get_default();
         const app = candidates.map(id => system.lookup_app(id)).find(Boolean);
         if (!app)
             return [false, `${alias === 'terminal' ? 'zter' : 'VS Code'} is not installed or has no desktop launcher.`];
         try {
-            const action = APP_ACTIONS[alias];
-            if (!app.get_app_info().list_actions().includes(action))
-                return [false, `${alias === 'terminal' ? 'zter' : 'VS Code'} has no new-window desktop action. Update its desktop launcher.`];
+            const action = alias === 'terminal' ? TERMINAL_ACTIONS[mode] : APP_ACTIONS[alias];
+            const info = app.get_app_info();
+            if (action && !info.list_actions().includes(action))
+                return [false, `${alias === 'terminal' ? 'zter' : 'VS Code'} has no ${action} desktop action. Update its desktop launcher.`];
             this._releaseFocus(false);
-            app.launch_action(action, global.get_current_time(), -1);
-            return [true, `New ${alias === 'terminal' ? 'zter standalone' : 'VS Code'} window requested.`];
+            if (action)
+                app.launch_action(action, global.get_current_time(), -1);
+            else if (!info.launch([], global.create_app_launch_context(global.get_current_time(), -1)))
+                return [false, 'Could not request the primary zter terminal.'];
+            if (alias === 'terminal' && mode !== 'standalone')
+                this._focusPrimaryTerminal(app);
+            const target = alias === 'vscode' ? 'New VS Code window' : {
+                default: 'Primary zter terminal',
+                tab: 'New tab in the primary zter terminal',
+                standalone: 'New standalone zter window',
+            }[mode];
+            return [true, `${target} requested.`];
         } catch (_error) {
             return [false, `Could not request ${alias === 'terminal' ? 'zter' : 'VS Code'}.`];
         }
+    }
+
+    _focusPrimaryTerminal(app) {
+        // Standalone windows share the app ID; match the primary GTK service owner.
+        const busName = app.get_id().replace(/\.desktop$/, '');
+        Gio.DBus.session.call('org.freedesktop.DBus', '/org/freedesktop/DBus',
+            'org.freedesktop.DBus', 'GetNameOwner', new GLib.Variant('(s)', [busName]),
+            new GLib.VariantType('(s)'), Gio.DBusCallFlags.NONE, 1000, null,
+            (connection, result) => {
+                try {
+                    const [owner] = connection.call_finish(result).deep_unpack();
+                    if (!this._enabled)
+                        return;
+                    const windows = app.get_windows().filter(window => window.get_gtk_unique_bus_name() === owner);
+                    const workspace = global.workspace_manager.get_active_workspace();
+                    const window = windows.find(candidate => candidate.has_focus()) ||
+                        windows.find(candidate => candidate.get_workspace() === workspace) || windows[0];
+                    if (window) {
+                        if (window.minimized)
+                            window.unminimize();
+                        Main.activateWindow(window);
+                    }
+                } catch (_error) {
+                    // Cold startup has no bus owner/window yet; zter presents it.
+                }
+            });
     }
 
     disable() {

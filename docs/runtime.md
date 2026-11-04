@@ -172,15 +172,52 @@ Both inputs blink their native caret while focused and editable, following the
 desktop cursor-blink, cursor-blink-time, and cursor-blink-timeout preferences.
 Typing or moving the caret restarts blinking; hiding or unfocusing input stops it.
 
-App tools
+Computer tools
 ----------
 
-Only terminal (zter) and vscode are supported. Each new user request opens a new
-window, even when the app is already running. Zaiko uses the desktop launcher's
-new-window action: zter starts a standalone instance with --standalone, and
-VS Code opens a new window with --new-window. A launcher without the required
-action reports an error. Success reports a new-window request, not verified
-window visibility. Duplicate request IDs still cannot launch again.
+Only terminal (zter) and vscode are supported. Opening terminal normally launches
+or focuses the primary zter instance without adding a tab. An explicit new-tab
+request uses its new-tab desktop action (--new-tab). If the primary instance is
+absent, this creates its first window with one tab. An explicit new-terminal or
+separate-window request uses new-window (--standalone). Default and tab requests
+target the primary instance, even when standalone windows are open.
+
+VS Code keeps opening a new window using new-empty-window (--new-window).
+A launcher without a requested action reports an error; Zaiko does not substitute
+another mode. Install the updated zter binary and desktop launcher for tab support.
+Close and reopen the primary terminal after updating zter so the running instance
+can receive --new-tab requests.
+Success means the launch/activation request was submitted, not verified window or
+tab visibility. Duplicate request IDs still cannot launch again.
+
+General commands
+----------
+
+The run_command tool runs local Bash commands as the current desktop user.
+It can inspect or edit files, invoke installed programs, and run scripts without
+adding a tool for each program. Supported desktop actions still use open_app.
+The command and a compact result appear in Log, including failures and partial
+output. The model receives stdout, stderr, exit code, actual working directory,
+and flags for timeout and output truncation before choosing its next action.
+
+Commands use /bin/bash --noprofile --norc -c with closed stdin. workdir must be
+an absolute existing directory, or null to use HOME. Each call has a fresh shell;
+directory changes, shell variables, and startup-file aliases do not persist.
+Installed programs are resolved through the core's inherited PATH.
+Interactive sessions are unavailable. Explicitly detached jobs with redirected
+stdin/stdout/stderr can survive normal shell completion. Capture their PIDs and
+inspect or stop them through later commands; they are not tracked by the core,
+and Cancel after command completion does not stop them. A background child that
+keeps an output pipe open keeps the command active until EOF or timeout.
+
+The default command timeout is 30 seconds; a call can request 1–120000 ms.
+Each stream retains at most 8192 bytes while excess output is drained. Timeout,
+Cancel and Quit stop the active command's process group. Changes already
+made to files or external systems are not rolled back. Commands use normal user
+permissions without an added filesystem sandbox or command allowlist.
+OPENAI_API_KEY and DEEPSEEK_API_KEY are removed from the child environment;
+the selected provider key is redacted from returned strings before they reach
+the model or Log. Other local secrets require the same care as ordinary shell use.
 
 Configuration and providers
 ----------
@@ -189,18 +226,20 @@ The character is Aiko; Zaiko is the application name. Her prompt is compiled fro
 crates/zaiko-core/prompts/aiko.md, adapted from wfchat's authoritative character
 profile. Both providers use the same prompt: calm, warm, lightly playful, concise,
 and feminine Thai speech. Her fixed profile is birthday 2000-05-27, height 175 cm,
-and weight 58 kg. The desktop tool permissions remain terminal and vscode only.
+and weight 58 kg. Dedicated desktop tools cover terminal and vscode; general
+local work uses run_command within the user's requested scope.
 Prompt edits take effect after rebuilding, reinstalling, and restarting the core.
 
 The core reads configuration once at startup. Environment variables take
 precedence over the explicitly selected dotenv file. Only the selected key is
 required. Missing configuration appears in chat as an error; direct app requests
-remain available. API keys never cross D-Bus or appear in provider error reports.
+remain available. The selected provider key is redacted from conversation and
+command results, and does not appear in provider error reports.
 
 OpenAI uses Responses with function-call outputs and retained reasoning items.
 DeepSeek uses Chat Completions. Model names come from configuration without
-automatic substitution. Requests have a 90-second deadline and at most four
-tool calls. Cancel cannot undo a launch already requested.
+automatic substitution. Requests have a five-minute deadline and at most 16
+tool calls. Cancel stops active command processes but cannot undo completed work.
 
 Session limits
 ----------
@@ -250,10 +289,12 @@ Live OpenAI conversation and tool follow-up passed using gpt-6.1-sol with a
 simulated desktop tool target. Live DeepSeek and a physical Thai IME were not
 tested. Updated extension code loads after logging out of GNOME and back in.
 
-New-window dispatch was checked in a private GNOME session with temporary desktop
-launchers. Repeated OpenApp calls dispatched --standalone twice for zter and
---new-window twice for VS Code; unsupported aliases were rejected. This check
-opened no real application windows and made no provider requests.
+The terminal modes were checked with a real zter release build in a private
+GNOME session: repeated default activation kept one primary window/tab, tab
+requests added shells to the same process, standalone created a separate process,
+and subsequent default/tab requests targeted the primary while standalone stayed
+open. Cold tab startup created one primary tab. VS Code dispatch was checked
+with a temporary launcher; provider mode routing used mock HTTP responses.
 
 make test-desktop runs a private GNOME compositor and D-Bus session with temporary
 HOME/XDG directories, no core or API credentials, and deterministic Submit/Cancel

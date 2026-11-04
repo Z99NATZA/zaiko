@@ -4,6 +4,7 @@ import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GioUnix from 'gi://GioUnix';
 import GLib from 'gi://GLib';
+import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
 import {APP_IDS, DESKTOP_XML, parseSnapshot} from '../protocol.js';
@@ -26,6 +27,8 @@ for (const [object, method] of [
     [Shell.App.prototype, 'get_app_info'],
     [Shell.App.prototype, 'launch_action'],
     [GioUnix.DesktopAppInfo.prototype, 'list_actions'],
+    [GioUnix.DesktopAppInfo.prototype, 'launch'],
+    [Meta.Window.prototype, 'get_gtk_unique_bus_name'],
 ])
     assert(typeof object[method] === 'function', `Required GNOME API: ${method}`);
 
@@ -35,6 +38,9 @@ assert(iface.name === 'org.zaiko.Desktop', 'Desktop interface name');
 const method = iface.methods.find(item => item.name === 'OpenApp');
 assert(method.in_args.map(arg => arg.signature).join('') === 's', 'OpenApp input signature');
 assert(method.out_args.map(arg => arg.signature).join('') === 'bs', 'OpenApp output signature');
+const terminalMethod = iface.methods.find(item => item.name === 'OpenTerminal');
+assert(terminalMethod.in_args.map(arg => arg.signature).join('') === 's', 'OpenTerminal input signature');
+assert(terminalMethod.out_args.map(arg => arg.signature).join('') === 'bs', 'OpenTerminal output signature');
 assert(Object.hasOwn(APP_IDS, 'terminal') && !Object.hasOwn(APP_IDS, 'note'), 'Supported app aliases');
 assert(parseSnapshot('{"messages":[],"state":"idle"}').state === 'idle', 'GJS JSON contract');
 assert(new GLib.Variant('(ss)', ['request-id', 'สวัสดี']).deep_unpack()[1] === 'สวัสดี', 'Thai D-Bus text');
