@@ -175,9 +175,12 @@ Typing or moving the caret restarts blinking; hiding or unfocusing input stops i
 App tools
 ----------
 
-Only terminal (zter) and vscode are supported. Existing windows are focused
-without minimizing them; otherwise the app's desktop launcher is activated.
-Success reports a launch/activation request, not verified window visibility.
+Only terminal (zter) and vscode are supported. Each new user request opens a new
+window, even when the app is already running. Zaiko uses the desktop launcher's
+new-window action: zter starts a standalone instance with --standalone, and
+VS Code opens a new window with --new-window. A launcher without the required
+action reports an error. Success reports a new-window request, not verified
+window visibility. Duplicate request IDs still cannot launch again.
 
 Configuration and providers
 ----------
@@ -241,10 +244,16 @@ and syntax. These commands do not call a live provider or start GNOME Shell.
 
 Additional checks ran in a separate GNOME 50.1 compositor: rendered character and
 chat, native virtual-pointer click/drag, Thai text retention, focus release,
-disable/re-enable cleanup, and real zter/VS Code launch and repeated activation.
+disable/re-enable cleanup, and real zter/VS Code launch and repeated activation
+before the change to new-window actions.
 Live OpenAI conversation and tool follow-up passed using gpt-6.1-sol with a
 simulated desktop tool target. Live DeepSeek and a physical Thai IME were not
 tested. Updated extension code loads after logging out of GNOME and back in.
+
+New-window dispatch was checked in a private GNOME session with temporary desktop
+launchers. Repeated OpenApp calls dispatched --standalone twice for zter and
+--new-window twice for VS Code; unsupported aliases were rejected. This check
+opened no real application windows and made no provider requests.
 
 make test-desktop runs a private GNOME compositor and D-Bus session with temporary
 HOME/XDG directories, no core or API credentials, and deterministic Submit/Cancel

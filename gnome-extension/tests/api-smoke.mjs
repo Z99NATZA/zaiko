@@ -2,6 +2,7 @@
 // This inspects APIs and XML only; it does not start Shell or construct UI actors.
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
+import GioUnix from 'gi://GioUnix';
 import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
@@ -22,7 +23,9 @@ for (const [object, method] of [
     [St.ScrollView.prototype, 'get_vadjustment'],
     [St.Entry.prototype, 'get_text'],
     [Shell.AppSystem.prototype, 'lookup_app'],
-    [Shell.App.prototype, 'activate'],
+    [Shell.App.prototype, 'get_app_info'],
+    [Shell.App.prototype, 'launch_action'],
+    [GioUnix.DesktopAppInfo.prototype, 'list_actions'],
 ])
     assert(typeof object[method] === 'function', `Required GNOME API: ${method}`);
 

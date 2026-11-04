@@ -20,6 +20,11 @@ export const APP_IDS = Object.freeze({
     vscode: ['code.desktop', 'code-oss.desktop'],
 });
 
+export const APP_ACTIONS = Object.freeze({
+    terminal: 'new-window',
+    vscode: 'new-empty-window',
+});
+
 export function parseSnapshot(payload) {
     const snapshot = JSON.parse(payload);
     if (!snapshot || !Array.isArray(snapshot.messages) ||

@@ -12,7 +12,7 @@ import * as ShellEntry from 'resource:///org/gnome/shell/ui/shellEntry.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 import {
-    APP_IDS, CORE_BUS, CORE_PATH, DESKTOP_BUS, DESKTOP_PATH, DESKTOP_XML,
+    APP_IDS, APP_ACTIONS, CORE_BUS, CORE_PATH, DESKTOP_BUS, DESKTOP_PATH, DESKTOP_XML,
     panelPosition, clampPosition, compactPosition, expressionFor, isBusy, latestAssistant, parseEvent, parseSnapshot,
     transcriptLine, formatElapsed,
 } from './protocol.js';
@@ -1170,21 +1170,12 @@ export default class ZaikoExtension extends Extension {
         if (!app)
             return [false, `${alias === 'terminal' ? 'zter' : 'VS Code'} is not installed or has no desktop launcher.`];
         try {
+            const action = APP_ACTIONS[alias];
+            if (!app.get_app_info().list_actions().includes(action))
+                return [false, `${alias === 'terminal' ? 'zter' : 'VS Code'} has no new-window desktop action. Update its desktop launcher.`];
             this._releaseFocus(false);
-            const windows = app.get_windows();
-            const currentWorkspace = global.workspace_manager.get_active_workspace();
-            const window = windows.find(candidate => candidate.has_focus()) ||
-                windows.find(candidate => candidate.get_workspace() === currentWorkspace) || windows[0];
-            if (window) {
-                if (!window.has_focus()) {
-                    if (window.minimized)
-                        window.unminimize();
-                    Main.activateWindow(window);
-                }
-            } else {
-                app.activate();
-            }
-            return [true, `Launch or activation requested for ${alias === 'terminal' ? 'zter' : 'VS Code'}.`];
+            app.launch_action(action, global.get_current_time(), -1);
+            return [true, `New ${alias === 'terminal' ? 'zter standalone' : 'VS Code'} window requested.`];
         } catch (_error) {
             return [false, `Could not request ${alias === 'terminal' ? 'zter' : 'VS Code'}.`];
         }

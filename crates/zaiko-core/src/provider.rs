@@ -141,7 +141,7 @@ impl Client {
                 "model": self.config.model,
                 "instructions": SYSTEM,
                 "input": input,
-                "tools": [{"type":"function","name":"open_app","description":"Open or focus zter terminal or VS Code.","parameters":schema(),"strict":true}],
+                "tools": [{"type":"function","name":"open_app","description":"Open a new standalone zter terminal window or a new VS Code window.","parameters":schema(),"strict":true}],
                 "parallel_tool_calls": false,
                 "store": false,
                 "include": ["reasoning.encrypted_content"],
@@ -212,7 +212,7 @@ impl Client {
             let response = self.post(json!({
                 "model":self.config.model,
                 "messages":messages,
-                "tools":[{"type":"function","function":{"name":"open_app","description":"Open or focus zter terminal or VS Code.","parameters":schema()}}],
+                "tools":[{"type":"function","function":{"name":"open_app","description":"Open a new standalone zter terminal window or a new VS Code window.","parameters":schema()}}],
                 "max_tokens":2048,
                 "stream":false
             })).await?;

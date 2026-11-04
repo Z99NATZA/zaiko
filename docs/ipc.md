@@ -45,10 +45,12 @@ Desktop methods
 Present() -> ()
 OpenApp(app: s) -> (success: b, message: s)
 
-OpenApp opens or focuses the mapped app. Success means launch/activation requested,
-not independently verified window visibility. Unknown aliases fail explicitly.
+OpenApp requests a new window on every call. Success means a new-window launch
+was requested, not independently verified window visibility. Unknown aliases and
+launchers missing the required desktop action fail explicitly.
 Use desktop IDs io.github.z99natza.zter.desktop and code.desktop/code-oss.desktop.
-An already focused app remains focused; the action never minimizes it.
+Use action new-window for zter (--standalone) and new-empty-window for VS Code
+(--new-window). Existing windows are left open.
 
 Lifecycle
 ----------
