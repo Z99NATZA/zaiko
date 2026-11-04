@@ -280,6 +280,122 @@ export default class OverlayQA extends ZaikoExtension {
         }
     }
 
+    async _checkCommandMenus() {
+        const drafts = [this._overlayEntry.get_text(), this._logEntry.get_text()];
+        const catalogs = this._commandMenus.map(menu => menu._commands);
+        const originalCall = this._callCore;
+        const calls = [];
+        this._callCore = async (method, parameters) => {
+            calls.push({method, args: parameters?.deep_unpack()});
+            return [];
+        };
+        try {
+            this._hidePanel();
+            this._showInput();
+            const entry = this._overlayEntry;
+            const menu = this._commandMenus.find(candidate => candidate.entry === entry);
+            entry.set_text('/');
+            await qaPause(180);
+            qaAssert(menu.actor.visible && menu._rows.length === 1 && menu._matches[0].name === '/status',
+                'The production picker contains only supported commands');
+            // Large-list fixtures exist only in this isolated compositor test.
+            const fixtures = [menu._commands[0], ...Array.from({length: 20}, (_, index) => ({
+                name: `/test${String(index + 1).padStart(3, '0')}`,
+                description: 'Isolated picker test fixture',
+            }))];
+            for (const picker of this._commandMenus) {
+                picker._commands = fixtures;
+                picker.hide();
+                picker.sync();
+            }
+            await qaPause(100);
+            const adjustment = menu._scroll.get_vadjustment();
+            const visibleRowsHeight = menu._rows.slice(0, 8).reduce((height, row) => height + row.height, 0);
+            await this._shot('command-menu-eight-rows');
+            qaAssert(Math.abs(adjustment.page_size - visibleRowsHeight) <= 1 && adjustment.upper > adjustment.page_size,
+                `Picker displays eight rows and scrolls the rest: ${JSON.stringify({page: adjustment.page_size, visibleRowsHeight, upper: adjustment.upper, actor: [menu.actor.width, menu.actor.height, menu.actor.mapped], scroll: [menu._scroll.width, menu._scroll.height, menu._scroll.mapped]})}`);
+            this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), 100, 80);
+            await this._key(Clutter.KEY_Up);
+            qaAssert(menu._selected === 0 && adjustment.value === 0,
+                'Up at the first command stays at the start instead of wrapping');
+            for (let index = 0; index < 9; index++)
+                await this._key(Clutter.KEY_Down);
+            qaAssert(menu._selected === 9 && adjustment.value > 0 &&
+                menu._rows[9].y + menu._rows[9].height <= adjustment.value + adjustment.page_size + 1,
+            'Arrow navigation scrolls the selected command into view');
+            for (let index = 0; index < 13; index++)
+                await this._key(Clutter.KEY_Down);
+            qaAssert(menu._selected === 20 && Math.abs(adjustment.value - (adjustment.upper - adjustment.page_size)) <= 1,
+                'Repeated Down stops at the final command and end of the scroll range');
+            for (let index = 0; index < 11; index++)
+                await this._key(Clutter.KEY_Up);
+            await this._key(Clutter.KEY_Tab);
+            qaAssert(entry.get_text() === '/test009' && !menu.actor.visible && !calls.length && entry.clutter_text.has_key_focus(),
+                'Tab completes the highlighted command without executing or losing focus');
+            await this._key(Clutter.KEY_Return);
+            qaAssert(calls.length === 1 && calls[0].args[1] === '/test009' && !this._inputOverlay.visible,
+                'Enter after completion submits once through the existing input');
+
+            this._showLog();
+            const log = this._logEntry;
+            const logMenu = this._commandMenus.find(candidate => candidate.entry === log);
+            log.set_text('/test00');
+            await qaPause(180);
+            qaAssert(logMenu.actor.visible && logMenu._rows.length === 9 && !menu.actor.visible,
+                'Log filters command prefixes independently of compact input');
+            const [x, y] = logMenu._scroll.get_transformed_position();
+            this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), x + 110, y + 100);
+            await qaPause(40);
+            this._pointer.notify_discrete_scroll(GLib.get_monotonic_time(), Clutter.ScrollDirection.DOWN, Clutter.ScrollSource.WHEEL);
+            await qaPause(180);
+            qaAssert(logMenu._scroll.get_vadjustment().value > 0, 'Native mouse wheel scrolls the command list');
+            await this._click(logMenu._rows[8]);
+            qaAssert(calls.length === 2 && calls[1].args[1] === '/test009' && this._panel.visible && log.clutter_text.has_key_focus(),
+                'Clicking a test fixture submits once and preserves Log focus');
+            log.set_text('/sta');
+            await qaPause(80);
+            qaAssert(logMenu._rows.length === 1 && logMenu._matches[0].name === '/status',
+                'Typing narrows the picker to the matching command');
+            await this._key(Clutter.KEY_Return);
+            qaAssert(calls.length === 3 && calls[2].args[1] === '/status', 'Enter executes the highlighted match once');
+            log.set_text('/s');
+            await qaPause(80);
+            await this._key(Clutter.KEY_Escape);
+            this._renderSnapshot();
+            qaAssert(!logMenu.actor.visible && this._panel.visible && log.get_text() === '/s',
+                'Escape dismisses suggestions while preserving the composer and draft across repaints');
+            log.set_text('ordinary text');
+            qaAssert(!logMenu.actor.visible, 'Ordinary text has no command suggestions');
+            this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), 100, 80);
+            await qaPause(40);
+            this._toggleVim();
+            log.set_text('/s');
+            await qaPause(80);
+            await this._key(Clutter.KEY_Down);
+            await this._key(Clutter.KEY_Tab);
+            qaAssert(log.get_text() === '/status' && !logMenu.actor.visible,
+                `Command navigation takes priority over Vim input handling: ${JSON.stringify({text: log.get_text(), visible: logMenu.actor.visible, selected: logMenu._selected, matches: logMenu._matches.map(command => command.name), focus: log.clutter_text.has_key_focus()})}`);
+            this._toggleVim();
+            log.set_text('/s');
+            this._snapshot.state = 'thinking';
+            this._renderSnapshot();
+            qaAssert(!logMenu.actor.visible, 'Busy requests hide and disable command suggestions');
+            this._snapshot.state = 'idle';
+            this._renderSnapshot();
+            this._hidePanel();
+            await qaPause(80);
+            qaAssert(!logMenu.actor.visible, 'Closing the composer hides its command list');
+        } finally {
+            this._callCore = originalCall;
+            this._commandMenus.forEach((menu, index) => {
+                menu._commands = catalogs[index];
+                menu.hide();
+            });
+            this._overlayEntry.set_text(drafts[0]);
+            this._logEntry.set_text(drafts[1]);
+        }
+    }
+
     async _checkVimInputs() {
         const drafts = [this._overlayEntry.get_text(), this._logEntry.get_text()];
         const originalCall = this._callCore;
@@ -602,6 +718,15 @@ export default class OverlayQA extends ZaikoExtension {
         this._snapshot = {messages: [], state: 'idle'};
         this._renderSnapshot();
         this._updateVisibility();
+        if (GLib.getenv('ZAIKO_QA_COMMANDS_ONLY') === '1') {
+            await this._checkCommandMenus();
+            const menus = this._commandMenus.slice();
+            this.disable();
+            qaAssert(menus.every(menu => menu._signals.length === 0 && !menu.actor.get_parent()),
+                'Disable disconnects and destroys command pickers');
+            this._qaResult({ok: true, checked: 'command picker: eight rows, keyboard/mouse scrolling, filtering, Tab/Enter/click, focus, Escape, Vim, busy state, lifecycle'});
+            return;
+        }
         qaAssert(!this._inputOverlay.visible && !this._panel.visible, 'No input or support panel auto-opens on core connection');
         qaAssert(!this._chat && !this._entry && !this._composer && !this._answerBubble, 'Legacy UI/composer/card actors removed');
         qaAssert(!this._answerLabel.visible, 'No empty answer placeholder');
@@ -985,6 +1110,7 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(!this._panel.visible && !this._panelClose.visible, 'Inset close also supports Escape');
         this._hidePanel();
         this._hideInput();
+        await this._checkCommandMenus();
         await this._checkVimInputs();
         const startX = this._character.x;
         const startY = this._character.y;
@@ -1056,6 +1182,7 @@ export default class OverlayQA extends ZaikoExtension {
         const stageSignals = this._signals.filter(([object]) => object === global.stage).map(([, id]) => id);
         qaAssert(stageSignals.length > 0, 'Outside-click handler registered');
         const actors = [this._panel, this._panelClose, this._character, this._inputOverlay, this._answerLabel,
+            ...this._commandMenus.map(menu => menu.actor),
             this._characterMenu.actor, this._characterMenuAnchor,
             ...this._logMessageMenus().map(menu => menu.actor)];
         this._coreOwner = 'qa-only-no-provider';
@@ -1095,6 +1222,6 @@ export default class OverlayQA extends ZaikoExtension {
         outside.destroy();
         this._pointer = null;
         this._keyboard = null;
-        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, full composer interior click focus/native caret placement, inset close overlay/no reserved row/hover/immediate hide, Enter/icon/cancel/failure/drafts, native caret blinking/focus/settings/timeout/cleanup, One Half Dark surfaces/no theme chooser, replies remain visible through menu/Log until original 8-second expiry, lifecycle'});
+        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, full composer interior click focus/native caret placement, inset close overlay/no reserved row/hover/immediate hide, Enter/icon/cancel/failure/drafts, native caret blinking/focus/settings/timeout/cleanup, command picker/eight rows/arrows/mouse wheel/filtering/Tab/Enter/click/Escape/Vim, One Half Dark surfaces/no theme chooser, replies remain visible through menu/Log until original 8-second expiry, lifecycle'});
     }
 }

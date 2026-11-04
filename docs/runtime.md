@@ -124,6 +124,30 @@ Menus appear above the companion surfaces; input menus sit outside the complete
 composer border. Pointer highlights clear when the pointer leaves a row.
 Keyboard navigation highlights the focused row until pointer movement resumes.
 
+Slash commands
+----------
+
+Type /status in either input while no request is active. The core reports the
+state before this command, configured provider/model, and actual permission
+boundaries. It currently runs with the current user's permissions, without a
+filesystem sandbox or protected sensitive folders. Missing provider configuration
+is reported without requiring an API key or contacting the provider.
+
+The reply appears in the existing answer preview and Log. Like other retained
+messages, it can be included in the history of a later model request. Commands
+share the existing request-ID, cancellation, and active-request guards.
+Leading/trailing whitespace is ignored. /status takes no arguments; other slash
+commands return a local unsupported-command reply instead of reaching the model.
+Typing / opens a command picker above the focused compact or Log composer.
+Each row shows a command and its description; typing filters command prefixes.
+At most eight rows are visible, with native mouse-wheel scrolling for the rest.
+Up/Down select and scroll the chosen row into view, stopping at the first/last
+command without wrapping. Tab fills the command without
+submitting; Enter or clicking a row submits it once. Escape closes the picker
+and preserves the draft; the next Escape follows the normal composer/Vim behavior.
+The picker hides while busy, on focus loss, and when its composer is hidden.
+It stays within the monitor work area, using space below when needed.
+
 Input Vim
 ----------
 
@@ -268,6 +292,10 @@ make check
 # Isolated GNOME compositor: character input/answer/Log, native event checks,
 # fixed glass styling, failure paths, and lifecycle. Saves screenshots and a shell log.
 make test-desktop
+
+# Only the command picker: eight-row limit, native arrows/mouse wheel, filtering,
+# completion/submission, focus, Escape, Vim, and cleanup. No live provider calls.
+ZAIKO_QA_COMMANDS_ONLY=1 python3 tests/overlay-shell.py
 ```
 
 ## Details

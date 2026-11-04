@@ -24,6 +24,12 @@ Quit() -> ()
 
 Submit, OpenApp, and OpenTerminal enqueue a bounded request and return immediately.
 Reject a second active request and duplicate request IDs without executing again.
+Submit recognizes /status after trimming whitespace and responds locally without
+constructing a provider client or running tools, including when configuration is
+invalid. It reports the state before reserving this request, provider/model, and
+current permission boundaries. Arguments and unknown slash commands receive local
+usage/unsupported replies. Local replies use the normal message/state events and
+retained history; the same active-slot and request-ID guards apply.
 Only terminal and vscode are valid app aliases.
 OpenApp uses default mode. OpenTerminal accepts default, tab, or standalone;
 unknown modes fail before reserving a request ID.

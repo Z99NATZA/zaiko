@@ -20,6 +20,7 @@ import {EXPRESSIONS, imageGeometry} from './assets/manifest.js';
 import {answerPreview} from './answerPreview.js';
 import {CaretBlink} from './caret.js';
 import {VimInput} from './vimInput.js';
+import {CommandMenu} from './commandMenu.js';
 
 const CHARACTER_WIDTH = 200;
 const CHARACTER_HEIGHT = 260;
@@ -64,6 +65,7 @@ export default class ZaikoExtension extends Extension {
         this._signals = [];
         this._caretBlinks = [];
         this._vimInputs = [];
+        this._commandMenus = [];
         this._vimEnabled = this._loadVimEnabled();
         this._eventSubscription = 0;
         this._scrollSource = 0;
@@ -77,6 +79,9 @@ export default class ZaikoExtension extends Extension {
             this._buildActors();
             this._interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
             for (const entry of [this._overlayEntry, this._logEntry]) {
+                const composer = entry === this._overlayEntry ? this._inputOverlay : this._logComposer;
+                this._commandMenus.push(new CommandMenu(entry, composer, () => this._workArea(),
+                    () => this._submit(entry), view => this._registerScrollbarParts(view)));
                 const caret = new CaretBlink(entry.clutter_text, this._interfaceSettings);
                 this._caretBlinks.push(caret);
                 const vim = new VimInput(entry, caret, () => this._submit(entry));
@@ -163,6 +168,7 @@ export default class ZaikoExtension extends Extension {
     }
 
     _setEntryAvailable(entry, available) {
+        this._commandMenus.find(menu => menu.entry === entry)?.setAvailable(available);
         const vim = this._vimInputs.find(controller => controller.entry === entry);
         if (vim)
             vim.setAvailable(available);
@@ -174,6 +180,7 @@ export default class ZaikoExtension extends Extension {
         const font = Pango.FontDescription.from_string(this._interfaceSettings.get_string('font-name'));
         const family = (font.get_family() || 'sans-serif').replaceAll('\\', '\\\\').replaceAll('"', '\\"');
         for (const actor of [this._panel, this._inputOverlay, this._answerLabel, this._characterMenu.actor,
+            ...this._commandMenus.map(menu => menu.actor),
             this._overlayEntry.menu.actor, this._logEntry.menu.actor,
             ...this._logMessageMenus().map(menu => menu.actor)])
             actor.set_style(`font-family: "${family}";`);
@@ -511,6 +518,8 @@ export default class ZaikoExtension extends Extension {
         {width: this._inputOverlay.width, height: this._inputOverlay.height}, area);
         this._inputOverlay.set_position(compact.input.x, compact.input.y);
         this._answerLabel.set_position(compact.answer.x, compact.answer.y);
+        for (const menu of this._commandMenus)
+            menu.layout();
     }
 
     _layout() {
@@ -550,6 +559,8 @@ export default class ZaikoExtension extends Extension {
         this._updatePanelClose();
         this._inputOverlay.visible = show && this._inputOpen && !this._logIsOpen();
         this._answerLabel.visible = show && this._answerHasText;
+        for (const menu of this._commandMenus)
+            menu.sync();
     }
 
     _showInput() {
@@ -655,6 +666,7 @@ export default class ZaikoExtension extends Extension {
 
     _hideInput(restore = false) {
         this._inputOpen = false;
+        this._commandMenus.find(menu => menu.entry === this._overlayEntry)?.hide();
         this._releaseFocus(restore, [this._inputOverlay]);
         this._inputOverlay.hide();
     }
@@ -677,6 +689,9 @@ export default class ZaikoExtension extends Extension {
         ];
         for (const [actor, text, menu] of controls) {
             const roots = [actor, menu?.actor];
+            const commands = this._commandMenus.find(candidate => candidate.entry.clutter_text === text);
+            if (commands)
+                roots.push(commands.actor);
             if (this._ownsFocus(source, roots))
                 continue;
             if (text.get_selection()) {
@@ -689,7 +704,8 @@ export default class ZaikoExtension extends Extension {
                 global.stage.set_key_focus(null);
         }
         if (this._inputOpen &&
-            !this._ownsFocus(source, [this._inputOverlay, this._character, this._overlayEntry?.menu?.actor]))
+            !this._ownsFocus(source, [this._inputOverlay, this._character, this._overlayEntry?.menu?.actor,
+                ...this._commandMenus.filter(menu => menu.entry === this._overlayEntry).map(menu => menu.actor)]))
             this._hideInput(false);
         // Observe only: the same press still reaches its original desktop target.
         return Clutter.EVENT_PROPAGATE;
@@ -1244,6 +1260,9 @@ export default class ZaikoExtension extends Extension {
         for (const vim of this._vimInputs ?? [])
             vim.destroy();
         this._vimInputs = [];
+        for (const menu of this._commandMenus ?? [])
+            menu.destroy();
+        this._commandMenus = [];
         for (const caret of this._caretBlinks ?? [])
             caret.destroy();
         this._caretBlinks = [];

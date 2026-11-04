@@ -119,6 +119,93 @@ async fn idle(proxy: &Proxy<'_>) -> Value {
 }
 
 #[tokio::test]
+async fn slash_commands_work_without_provider_config_and_keep_request_guards() {
+    let bus = Bus::start();
+    let _core = bus.core();
+    let connection = bus.connection().await;
+    let proxy = ready(&connection).await;
+
+    proxy
+        .call::<_, _, ()>("Submit", &("status-one", "  /status\n"))
+        .await
+        .unwrap();
+    let result = idle(&proxy).await;
+    let reply = result["messages"].as_array().unwrap().last().unwrap()["content"]
+        .as_str()
+        .unwrap();
+    // A successful reply with no API key proves this did not enter the provider path.
+    assert!(reply.contains("สถานะ: error"));
+    assert!(reply.contains("OPENAI_API_KEY"));
+    assert!(reply.contains("ไม่มี sandbox"));
+    assert!(result["error"].is_null());
+    assert!(
+        proxy
+            .call::<_, _, ()>("Submit", &("status-one", "/status"))
+            .await
+            .is_err()
+    );
+    assert!(
+        proxy
+            .call::<_, _, ()>("Submit", &("invalid id", "/status"))
+            .await
+            .is_err()
+    );
+
+    for (id, text, expected) in [
+        ("status-args", "/status extra", "ไม่ใส่อาร์กิวเมนต์"),
+        ("unknown-command", "/permissions", "ยังไม่รองรับคำสั่งนี้"),
+        ("status-again", "/status", "สถานะ: idle"),
+        ("removed-mock", "/s001", "ยังไม่รองรับคำสั่งนี้"),
+    ] {
+        proxy.call::<_, _, ()>("Submit", &(id, text)).await.unwrap();
+        let result = idle(&proxy).await;
+        assert!(
+            result["messages"].as_array().unwrap().last().unwrap()["content"]
+                .as_str()
+                .unwrap()
+                .contains(expected)
+        );
+    }
+
+    let _desktop = zbus::connection::Builder::address(bus.address.as_str())
+        .unwrap()
+        .serve_at(
+            "/org/zaiko/Desktop",
+            Desktop {
+                calls: Arc::new(AtomicUsize::new(0)),
+            },
+        )
+        .unwrap()
+        .name("org.zaiko.Desktop")
+        .unwrap()
+        .build()
+        .await
+        .unwrap();
+    // Local commands share the existing request slot and cannot interrupt active work.
+    proxy
+        .call::<_, _, ()>("OpenApp", &("working", "terminal"))
+        .await
+        .unwrap();
+    assert!(
+        proxy
+            .call::<_, _, ()>("Submit", &("busy-status", "/status"))
+            .await
+            .is_err()
+    );
+    assert_eq!(snapshot(&proxy).await["request_id"], "working");
+    proxy
+        .call::<_, _, ()>("Cancel", &("working",))
+        .await
+        .unwrap();
+    proxy
+        .call::<_, _, ()>("Submit", &("busy-status", "/status"))
+        .await
+        .unwrap();
+    idle(&proxy).await;
+    proxy.call::<_, _, ()>("Quit", &()).await.unwrap();
+}
+
+#[tokio::test]
 async fn service_runs_without_key_and_rejects_duplicate_instances_and_requests() {
     let bus = Bus::start();
     let _core = bus.core();

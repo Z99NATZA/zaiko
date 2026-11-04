@@ -152,6 +152,31 @@ impl Runtime {
         }
     }
 
+    fn slash_reply(&self, text: &str, snapshot: &Snapshot) -> Option<String> {
+        let name = text.split_whitespace().next()?;
+        if !name.starts_with('/') {
+            return None;
+        }
+        if name != "/status" {
+            return Some("ยังไม่รองรับคำสั่งนี้ค่ะ คำสั่งที่ใช้ได้: /status".into());
+        }
+        if text != "/status" {
+            return Some("ใช้ /status โดยไม่ใส่อาร์กิวเมนต์ค่ะ".into());
+        }
+        let (provider, model) = match &self.config {
+            Ok(config) => (config.provider.name(), config.model.as_str()),
+            Err(_) => ("ยังไม่พร้อม", "ยังไม่พร้อม"),
+        };
+        let mut reply = format!(
+            "สถานะ: {}\nProvider: {provider}\nModel: {model}\nสิทธิ์: บัญชีผู้ใช้ปัจจุบัน (ไม่มี sandbox)\nการป้องกันไฟล์/โฟลเดอร์สำคัญ: ยังไม่มี",
+            snapshot.state,
+        );
+        if let Err(error) = &self.config {
+            reply.push_str(&format!("\nการตั้งค่า: {error}"));
+        }
+        Some(reply)
+    }
+
     async fn accept(
         self: &Arc<Self>,
         connection: &Connection,
@@ -165,8 +190,15 @@ impl Runtime {
                 "Text must contain 1–8192 UTF-8 bytes.".to_owned(),
             ));
         }
-        let (cancel, history) = {
+        let (cancel, history, local_reply) = {
             let mut state = self.state.lock().await;
+            // Capture the state before reserving this request changes it to thinking.
+            // Desktop actions do not enter the slash-command path.
+            let local_reply = if app.is_none() {
+                self.slash_reply(text, &state.snapshot)
+            } else {
+                None
+            };
             let safe_text = self.clean(text);
             let (cancel, history) = state.reserve(id, safe_text.clone())?;
             emit(
@@ -179,13 +211,17 @@ impl Runtime {
                 json!({"type":"state","request_id":id,"state":"thinking"}),
             )
             .await;
-            (cancel, history)
+            (cancel, history, local_reply)
         };
         let runtime = self.clone();
         let connection = connection.clone();
         let id = id.to_owned();
         tokio::spawn(async move {
             let work = async {
+                // Local commands also work when provider configuration is invalid.
+                if let Some(reply) = local_reply {
+                    return Ok(Some(reply));
+                }
                 let mut tools = DesktopTools {
                     runtime: &runtime,
                     connection: &connection,
@@ -605,6 +641,23 @@ async fn terminate_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn status_reports_runtime_configuration_without_credentials() {
+        let runtime = Runtime::new(Ok(Config {
+            provider: crate::config::Provider::DeepSeek,
+            model: "test-model".into(),
+            api_key: "dummy-secret-value".into(),
+        }));
+        let state = runtime.state.lock().await;
+        let reply = runtime.slash_reply("/status", &state.snapshot).unwrap();
+        assert!(reply.contains("สถานะ: idle"));
+        assert!(reply.contains("Provider: deepseek\nModel: test-model"));
+        assert!(reply.contains("ไม่มี sandbox"));
+        assert!(reply.contains("การป้องกันไฟล์/โฟลเดอร์สำคัญ: ยังไม่มี"));
+        assert!(!reply.contains("dummy-secret-value"));
+        assert!(runtime.slash_reply("สวัสดี", &state.snapshot).is_none());
+    }
 
     #[tokio::test]
     async fn request_ids_and_active_slot_prevent_reexecution() {

@@ -165,3 +165,23 @@
 .zaiko-context .popup-menu-item:active, .zaiko-context .popup-menu-item:hover,
 .zaiko-context.zaiko-keyboard .popup-menu-item:focus { color: #dcdfe4; background-color: rgba(220, 223, 228, 0.1); }
 .zaiko-context .popup-menu-item:insensitive { color: #5c6370; background-color: transparent; }
+.zaiko-command-menu {
+    color: #dcdfe4;
+    background-color: rgba(40, 44, 52, 0.98);
+    border: 1px solid #3e4451;
+    border-radius: 8px;
+    padding: 4px;
+    font-size: 13px;
+    box-shadow: none;
+    text-shadow: none;
+}
+.zaiko-command-row {
+    color: #dcdfe4;
+    background-color: transparent;
+    border-radius: 4px;
+    padding: 6px 8px;
+}
+.zaiko-command-row:selected { background-color: #3e4451; }
+.zaiko-command-columns { spacing: 12px; }
+.zaiko-command-name { min-width: 76px; font-weight: 500; }
+.zaiko-command-description { color: #a0a6b1; }
