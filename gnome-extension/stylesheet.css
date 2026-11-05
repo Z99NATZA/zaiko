@@ -1,6 +1,6 @@
-/* Neutral tones from One Half Dark: https://github.com/sonph/onehalf
+/* One Half Dark: https://github.com/sonph/onehalf
  * Background #282c34, foreground #dcdfe4; controls and interaction states
- * use shades of the foreground rather than colored accents.
+ * use neutral tones, with a green selection bar for slash commands.
  * Theme selection is intentionally deferred. */
 .zaiko-character { background-color: transparent; }
 .zaiko-panel {
@@ -160,20 +160,26 @@
 .zaiko-command-menu {
     color: #dcdfe4;
     background-color: rgba(40, 44, 52, 0.98);
-    border: 1px solid #3e4451;
-    border-radius: 8px;
-    padding: 4px;
+    border: none;
+    border-radius: 0;
+    padding: 0;
     font-size: 13px;
     box-shadow: none;
     text-shadow: none;
 }
-.zaiko-command-row {
+.zaiko-command-row, .zaiko-command-row:hover,
+.zaiko-command-row:focus, .zaiko-command-row:active {
     color: #dcdfe4;
     background-color: transparent;
-    border-radius: 4px;
-    padding: 6px 8px;
+    border: none;
+    border-radius: 0;
+    padding: 1px 9px;
+    transition-duration: 0;
 }
-.zaiko-command-row:selected { background-color: #3e4451; }
-.zaiko-command-columns { spacing: 12px; }
-.zaiko-command-name { min-width: 76px; font-weight: 500; }
+.zaiko-command-row:selected, .zaiko-command-row:selected:hover,
+.zaiko-command-row:selected:focus, .zaiko-command-row:selected:active { color: #151820; background-color: #98c379; }
+.zaiko-command-columns { spacing: 8px; }
+.zaiko-command-indicator { width: 8px; }
+.zaiko-command-name { font-weight: 500; }
 .zaiko-command-description { color: #a0a6b1; }
+.zaiko-command-row:selected .zaiko-command-description { color: #151820; }

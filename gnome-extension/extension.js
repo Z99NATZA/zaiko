@@ -449,7 +449,9 @@ export default class ZaikoExtension extends Extension {
             available = this._panel.height - contentNode.get_padding(St.Side.TOP) -
                 contentNode.get_padding(St.Side.BOTTOM) - chromeHeight - statusHeight - 12 - 40 - 2;
         }
-        scroll.height = Math.max(1, Math.min(height + padding(St.Side.TOP) + padding(St.Side.BOTTOM), available));
+        const scrollHeight = Math.max(1, Math.min(height + padding(St.Side.TOP) + padding(St.Side.BOTTOM), available));
+        if (scroll.height !== scrollHeight)
+            scroll.height = scrollHeight;
     }
 
     _queueComposerLayout() {

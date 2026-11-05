@@ -148,6 +148,12 @@ Leading/trailing whitespace is ignored. /status takes no arguments; other slash
 commands return a local unsupported-command reply instead of reaching the model.
 Typing / opens a command picker above the focused compact or Log composer.
 Each row shows a command and its description; typing filters command prefixes.
+The flat list aligns to the input's width, with shared command/description
+columns. A full-width green (#98c379, matching Me) selection bar and leading ›
+mark the selected row. Filtering reuses matching rows so the highlight stays
+steady while typing.
+Popup geometry is measured after the input is allocated, keeping its full
+width stable during text edits.
 At most eight rows are visible, with native mouse-wheel scrolling for the rest.
 Up/Down select and scroll the chosen row into view, stopping at the first/last
 command without wrapping. Tab fills the command without
@@ -195,6 +201,7 @@ Zaiko uses a fixed One Half Dark palette: #282c34 surfaces at 90% opacity,
 #dcdfe4 text, subdued gray outlines, rounded controls, and a slim scrollbar.
 Controls, caret, selection, hover, and keyboard focus use the same neutral
 foreground tones. Close uses a gray highlight; errors use brighter, heavier text.
+The slash picker marks its selected row with a green bar and dark text.
 Panels, controls, and menus have no box shadows. Floating replies retain their
 transparent background and text shadow. The conversation
 has a 12 px outer radius and 16 px content padding. Both inputs use the same

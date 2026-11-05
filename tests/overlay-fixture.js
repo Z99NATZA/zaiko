@@ -294,6 +294,57 @@ export default class OverlayQA extends ZaikoExtension {
         }
     }
 
+    async _checkCommandHighlight(entry, menu) {
+        const statusRow = menu._rows[0];
+        let remapped = 0;
+        const mappingSignal = statusRow.connect('notify::mapped', () => { remapped++; });
+        const colors = [];
+        const pixels = [];
+        const bounds = [menu.actor.x, menu.actor.y, menu.actor.width, menu.actor.height];
+        const geometryChanges = [];
+        const geometrySignals = ['notify::x', 'notify::y', 'notify::width', 'notify::height'].map(signal =>
+            menu.actor.connect(signal, () => {
+                const current = [menu.actor.x, menu.actor.y, menu.actor.width, menu.actor.height];
+                if (current.some((value, index) => value !== bounds[index]))
+                    geometryChanges.push(current);
+            }));
+        let samplePixels = true;
+        const [rowX, rowY] = statusRow.get_transformed_position();
+        const pixelReader = new Shell.Screenshot();
+        const pixelTask = (async () => {
+            while (samplePixels) {
+                const [color] = await pixelReader.pick_color(Math.round(rowX + 2), Math.round(rowY + statusRow.height / 2));
+                pixels.push([color.red, color.green, color.blue]);
+                await qaPause(1);
+            }
+        })();
+        const colorSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 16, () => {
+            colors.push(menu.actor.visible && statusRow.mapped &&
+                qaColor(statusRow.get_theme_node().get_background_color(), '#98c379'));
+            return GLib.SOURCE_CONTINUE;
+        });
+        try {
+            for (const character of 'status') {
+                await this._key(character.codePointAt(0));
+                qaAssert(menu._rows[0] === statusRow && statusRow.has_style_pseudo_class('selected') &&
+                    entry.clutter_text.has_key_focus(),
+                    'Typing a slash command retains its selected row and input focus');
+            }
+            qaAssert(colors.length > 0 && colors.every(Boolean) && remapped === 0,
+                'The green selection stays visible without fading or remapping while typing');
+        } finally {
+            samplePixels = false;
+            await pixelTask;
+            GLib.Source.remove(colorSource);
+            statusRow.disconnect(mappingSignal);
+            geometrySignals.forEach(signal => menu.actor.disconnect(signal));
+        }
+        qaAssert(geometryChanges.length === 0,
+            `The picker never shrinks or moves while typing a matching prefix: ${JSON.stringify({bounds, changes: geometryChanges})}`);
+        qaAssert(pixels.length > 0 && pixels.every(([r, g, b]) => r === 152 && g === 195 && b === 121),
+            `Rendered selection pixels stay green while typing: ${JSON.stringify({count: pixels.length, colors: [...new Set(pixels.map(pixel => pixel.join(',')))]})}`);
+    }
+
     async _checkCommandMenus() {
         const drafts = [this._overlayEntry.get_text(), this._logEntry.get_text()];
         const catalogs = this._commandMenus.map(menu => menu._commands);
@@ -312,6 +363,15 @@ export default class OverlayQA extends ZaikoExtension {
             await qaPause(180);
             qaAssert(menu.actor.visible && menu._rows.length === 1 && menu._matches[0].name === '/status',
                 'The production picker contains only supported commands');
+            await this._checkCommandHighlight(entry, menu);
+            this._showLog();
+            this._logEntry.set_text('/');
+            await qaPause(180);
+            await this._checkCommandHighlight(this._logEntry,
+                this._commandMenus.find(candidate => candidate.entry === this._logEntry));
+            this._hidePanel();
+            this._showInput();
+            entry.set_text('/');
             // Large-list fixtures exist only in this isolated compositor test.
             const fixtures = [menu._commands[0], ...Array.from({length: 20}, (_, index) => ({
                 name: `/test${String(index + 1).padStart(3, '0')}`,
@@ -322,10 +382,28 @@ export default class OverlayQA extends ZaikoExtension {
                 picker.hide();
                 picker.sync();
             }
+            const retained = menu._rows[1];
+            entry.set_text('/test00');
+            qaAssert(menu._rows[0] === retained, 'Filtering moves a surviving row instead of rebuilding it');
+            entry.set_text('/');
             await qaPause(100);
             const adjustment = menu._scroll.get_vadjustment();
             const visibleRowsHeight = menu._rows.slice(0, 8).reduce((height, row) => height + row.height, 0);
             await this._shot('command-menu-eight-rows');
+            const [composerX, composerY] = this._inputOverlay.get_transformed_position();
+            const [menuX, menuY] = menu.actor.get_transformed_position();
+            qaAssert(menuX === composerX && menu.actor.width === this._inputOverlay.width &&
+                menuY + menu.actor.height <= composerY &&
+                menu.actor.get_theme_node().get_border_width(St.Side.LEFT) === 0 &&
+                menu.actor.get_theme_node().get_border_radius(St.Corner.TOPLEFT) === 0,
+                'The flat command list aligns above the full composer width without a card border');
+            const descriptionXs = menu._rows.map(row => row.get_child().get_children()[2].get_transformed_position()[0]);
+            qaAssert(descriptionXs.every(value => Math.abs(value - descriptionXs[0]) < 1),
+                `Descriptions align in one column even when command names differ in length: ${JSON.stringify({xs: descriptionXs, widths: menu._names.map(name => name.width), allocated: this._inputOverlay.has_allocation()})}`);
+            qaAssert(menu._indicators[0].opacity === 255 && menu._indicators.slice(1).every(marker => marker.opacity === 0) &&
+                qaColor(menu._rows[0].get_theme_node().get_background_color(), '#98c379') &&
+                qaColor(menu._rows[0].get_child().get_children()[2].get_theme_node().get_foreground_color(), '#151820'),
+                'Selection uses a leading marker and dark text on a full-row green bar');
             qaAssert(Math.abs(adjustment.page_size - visibleRowsHeight) <= 1 && adjustment.upper > adjustment.page_size,
                 `Picker displays eight rows and scrolls the rest: ${JSON.stringify({page: adjustment.page_size, visibleRowsHeight, upper: adjustment.upper, actor: [menu.actor.width, menu.actor.height, menu.actor.mapped], scroll: [menu._scroll.width, menu._scroll.height, menu._scroll.mapped]})}`);
             this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), 100, 80);
@@ -336,7 +414,9 @@ export default class OverlayQA extends ZaikoExtension {
                 await this._key(Clutter.KEY_Down);
             qaAssert(menu._selected === 9 && adjustment.value > 0 &&
                 menu._rows[9].y + menu._rows[9].height <= adjustment.value + adjustment.page_size + 1,
-            'Arrow navigation scrolls the selected command into view');
+            `Arrow navigation scrolls the selected command into view: ${JSON.stringify({selected: menu._selected, value: adjustment.value, page: adjustment.page_size, y: menu._rows[9].y, height: menu._rows[9].height})}`);
+            qaAssert(menu._indicators[9].opacity === 255 && menu._indicators[0].opacity === 0,
+                'The leading marker follows keyboard selection');
             for (let index = 0; index < 13; index++)
                 await this._key(Clutter.KEY_Down);
             qaAssert(menu._selected === 20 && Math.abs(adjustment.value - (adjustment.upper - adjustment.page_size)) <= 1,
