@@ -87,7 +87,7 @@ test('single replace and continuous replace restore overwritten characters with 
     assert.equal(input.text, 'Zlpha beta tail');
 });
 
-test('pending commands cancel on Escape and dd clears only the draft', () => {
+test('pending commands cancel on Escape and dd clears a single-line draft', () => {
     const input = editor('draft 🙂');
     input.key('d');
     input.key('Escape');
@@ -101,6 +101,37 @@ test('pending commands cancel on Escape and dd clears only the draft', () => {
     input.vim.reset('insert');
     input.keys('!');
     assert.equal(input.text, 'fres!h');
+});
+
+test('dd deletes only the current logical line and keeps the remaining lines intact', () => {
+    for (const [value, cursor, expected, position] of [
+        ['hello\nworld', 10, 'hello', 0],
+        ['hello\nworld', 2, 'world', 0],
+        ['one\ntwo\nthree', 5, 'one\nthree', 4],
+        ['one\ntwo\nthree', 10, 'one\ntwo', 4],
+        ['one\n\nthree', 4, 'one\nthree', 4],
+        ['\nworld', 0, 'world', 0],
+        ['hello\n', 6, 'hello', 0],
+        ['hello\nworld\n', 7, 'hello\n', 6],
+        ['a\n\n\nb', 2, 'a\n\nb', 2],
+        ['🙂ที่\nไทย', 6, '🙂ที่', 0],
+        ['🙂ที่\nไทย', 2, 'ไทย', 0],
+        ['hello', 3, '', 0],
+        ['', 0, '', 0],
+        ['\n', 0, '', 0],
+        ['\n', 1, '', 0],
+    ]) {
+        const input = editor(value, cursor);
+        input.keys('dd');
+        assert.equal(input.text, expected, JSON.stringify({value, cursor}));
+        assert.equal(input.cursor, position);
+        assert.equal(input.vim.mode, 'normal');
+        assert.equal(input.vim.pending, '');
+    }
+    const input = editor('one\ntwo\nthree', 5);
+    input.keys('dddddd');
+    assert.equal(input.text, '');
+    assert.equal(input.cursor, 0);
 });
 
 test('o and O open logical lines above/below a Unicode draft and enter insert mode', () => {

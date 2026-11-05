@@ -502,6 +502,13 @@ export default class OverlayQA extends ZaikoExtension {
                 await ctrlJ();
                 qaAssert(entry.get_text() === 'a\nb' && entry.clutter_text.get_cursor_position() === 2,
                     'Ctrl+J replaces the selection with one newline');
+                await this._key(Clutter.KEY_Escape);
+                entry.set_text('hello\nworld');
+                entry.clutter_text.set_selection(10, 10);
+                await physical(32); // d
+                await physical(32);
+                qaAssert(entry.get_text() === 'hello' && vim._state.mode === 'normal' && entry.mapped,
+                    'Physical dd under Thai deletes only the current row in each composer');
                 this._toggleVim();
                 entry.set_text('');
                 await physical(23);

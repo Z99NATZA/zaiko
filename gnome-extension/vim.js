@@ -48,8 +48,24 @@ export class InputVim {
             const command = this.pending + key;
             this.pending = '';
             if (command === 'dd') {
-                characters.length = 0;
-                cursor = 0;
+                let start = cursor;
+                let end = cursor;
+                while (start > 0 && characters[start - 1] !== '\n')
+                    start--;
+                while (end < characters.length && characters[end] !== '\n')
+                    end++;
+                if (end < characters.length) {
+                    // Include the following newline so adjacent lines stay separate.
+                    characters.splice(start, end - start + 1);
+                    cursor = start;
+                } else {
+                    // The last line has no terminator; remove its preceding newline.
+                    const from = Math.max(0, start - 1);
+                    characters.splice(from, end - from);
+                    cursor = from;
+                    while (cursor > 0 && characters[cursor - 1] !== '\n')
+                        cursor--;
+                }
             } else if (command === 'ci') {
                 this.pending = 'ci';
             } else if (command === 'ciw') {
