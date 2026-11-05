@@ -21,12 +21,13 @@ import {answerPreview} from './answerPreview.js';
 import {CaretBlink} from './caret.js';
 import {VimInput} from './vimInput.js';
 import {CommandMenu} from './commandMenu.js';
+import {LANGUAGES, normalizeLanguage, createTranslator} from './i18n.js';
 
 const CHARACTER_WIDTH = 200;
 const CHARACTER_HEIGHT = 260;
 const EMPTY_SNAPSHOT = {messages: [], state: 'idle', request_id: null, error: null};
 
-const VimMenuItem = GObject.registerClass(class VimMenuItem extends PopupMenu.PopupMenuItem {
+const ToggleMenuItem = GObject.registerClass(class ToggleMenuItem extends PopupMenu.PopupMenuItem {
     _init(label, toggle) {
         super._init(label);
         this._toggle = toggle;
@@ -69,6 +70,9 @@ export default class ZaikoExtension extends Extension {
         this._vimInputs = [];
         this._commandMenus = [];
         this._vimEnabled = this._loadVimEnabled();
+        this._catalogs = this._loadCatalogs();
+        this._language = this._loadLanguage();
+        this._translate = createTranslator(this._catalogs, this._language);
         this._eventSubscription = 0;
         this._scrollSource = 0;
         this._composerLayoutSource = 0;
@@ -84,7 +88,7 @@ export default class ZaikoExtension extends Extension {
             for (const entry of [this._overlayEntry, this._logEntry]) {
                 const composer = entry === this._overlayEntry ? this._inputOverlay : this._logComposer;
                 this._commandMenus.push(new CommandMenu(entry, composer, () => this._workArea(),
-                    () => this._submit(entry), view => this._registerScrollbarParts(view)));
+                    () => this._submit(entry), view => this._registerScrollbarParts(view), key => this._t(key)));
                 const caret = new CaretBlink(entry.clutter_text, this._interfaceSettings);
                 this._caretBlinks.push(caret);
                 const keepsFocus = entry === this._logEntry
@@ -144,6 +148,81 @@ export default class ZaikoExtension extends Extension {
         this._signals.push([object, id]);
     }
 
+    _loadCatalogs() {
+        const catalogs = {};
+        for (const language of LANGUAGES) {
+            try {
+                const file = this.dir.get_child('locales').get_child(`${language}.json`);
+                const [, bytes] = file.load_contents(null);
+                const catalog = JSON.parse(new TextDecoder().decode(bytes));
+                if (!catalog || typeof catalog !== 'object' || Array.isArray(catalog) ||
+                    !Object.values(catalog).every(value => typeof value === 'string'))
+                    throw new Error('Expected a JSON object containing string translations');
+                catalogs[language] = catalog;
+            } catch (error) {
+                console.warn(`Zaiko: could not load ${language} translations: ${error.message}`);
+                catalogs[language] = {};
+            }
+        }
+        return catalogs;
+    }
+
+    _loadLanguage() {
+        this._languagePreferencePath = GLib.build_filenamev([GLib.get_user_config_dir(), 'zaiko', 'language.json']);
+        if (!GLib.file_test(this._languagePreferencePath, GLib.FileTest.EXISTS))
+            return 'en';
+        try {
+            const [, bytes] = GLib.file_get_contents(this._languagePreferencePath);
+            return normalizeLanguage(JSON.parse(new TextDecoder().decode(bytes)).language);
+        } catch (error) {
+            console.warn(`Zaiko: could not read language preference: ${error.message}`);
+            return 'en';
+        }
+    }
+
+    _t(key, values = {}) {
+        return this._translate(key, values);
+    }
+
+    _vimLabel() {
+        return this._t('menu.vim', {state: this._t(this._vimEnabled ? 'state.on' : 'state.off')});
+    }
+
+    _toggleLanguage() {
+        const language = this._language === 'en' ? 'th' : 'en';
+        try {
+            if (GLib.mkdir_with_parents(GLib.path_get_dirname(this._languagePreferencePath), 0o700) !== 0)
+                throw new Error('Could not create configuration directory');
+            GLib.file_set_contents(this._languagePreferencePath, `${JSON.stringify({language}, null, 2)}\n`);
+        } catch (error) {
+            console.warn(`Zaiko: could not save language preference: ${error.message}`);
+            return;
+        }
+        this._language = language;
+        this._translate = createTranslator(this._catalogs, language);
+        this._logMenuItem.label.text = this._t('menu.log');
+        this._vimMenuItem.label.text = this._vimLabel();
+        this._langMenuItem.label.text = this._t('menu.language', {language});
+        this._quitMenuItem.label.text = this._t('menu.quit');
+        this._character.accessible_name = this._t('accessibility.character');
+        this._panelClose.accessible_name = this._t('accessibility.close');
+        for (const {entry, cancel} of this._composers) {
+            entry.accessible_name = this._t('accessibility.message');
+            cancel.accessible_name = this._t('accessibility.cancel');
+            this._translateEntryMenu(entry);
+        }
+        for (const menu of this._commandMenus)
+            menu.setTranslator(key => this._t(key));
+        this._historySignature = null;
+        this._renderSnapshot();
+        this._queueComposerLayout();
+    }
+
+    _translateEntryMenu(entry) {
+        entry.menu._copyItem.label.text = this._t('action.copy');
+        entry.menu._pasteItem.label.text = this._t('action.paste');
+    }
+
     _loadVimEnabled() {
         this._vimPreferencePath = GLib.build_filenamev([GLib.get_user_config_dir(), 'zaiko', 'input-vim-enabled']);
         if (!GLib.file_test(this._vimPreferencePath, GLib.FileTest.EXISTS))
@@ -168,7 +247,7 @@ export default class ZaikoExtension extends Extension {
             return;
         }
         this._vimEnabled = enabled;
-        this._vimMenuItem.label.text = `Vim: ${enabled ? 'on' : 'off'}`;
+        this._vimMenuItem.label.text = this._vimLabel();
         for (const vim of this._vimInputs)
             vim.setEnabled(enabled);
     }
@@ -224,7 +303,7 @@ export default class ZaikoExtension extends Extension {
             height: CHARACTER_HEIGHT,
             reactive: true,
             clip_to_allocation: true,
-            accessible_name: 'Zaiko — left-click to type, right-click for Log, drag to move',
+            accessible_name: this._t('accessibility.character'),
             visible: false,
         });
         this._image = new St.Widget({reactive: false});
@@ -326,7 +405,7 @@ export default class ZaikoExtension extends Extension {
         this._connect(this._panel, 'notify::hover', () => this._updatePanelClose());
         this._panelClose = new St.Button({
             style_class: 'zaiko-panel-close', width: 28, height: 28,
-            can_focus: true, accessible_name: 'Close conversation', visible: false,
+            can_focus: true, accessible_name: this._t('accessibility.close'), visible: false,
             x_expand: true, y_expand: true,
             x_align: Clutter.ActorAlign.END, y_align: Clutter.ActorAlign.START,
         });
@@ -383,7 +462,7 @@ export default class ZaikoExtension extends Extension {
         const content = new St.BoxLayout({vertical: true, x_expand: true});
         scroll.set_child(content);
         const entry = new St.Entry({
-            style_class: entryClass, accessible_name: 'Message',
+            style_class: entryClass, accessible_name: this._t('accessibility.message'),
             can_focus: true, x_expand: true, y_align: Clutter.ActorAlign.START,
         });
         const text = entry.clutter_text;
@@ -405,13 +484,14 @@ export default class ZaikoExtension extends Extension {
         });
         text.connect('activate', () => this._submit(entry));
         ShellEntry.addContextMenu(entry);
+        this._translateEntryMenu(entry);
         this._styleContextMenu(entry.menu, actor);
         entry.menu.actor.connect('captured-event', (_actor, event) => this._dismissFocusOutside(event));
         content.add_child(entry);
         actor.add_child(scroll);
         const cancel = new St.Button({
-            style_class: 'zaiko-input-cancel', label: 'Stop', can_focus: true,
-            accessible_name: 'Cancel request', y_align: Clutter.ActorAlign.END, visible: false,
+            style_class: 'zaiko-input-cancel', label: this._t('action.stop'), can_focus: true,
+            accessible_name: this._t('accessibility.cancel'), y_align: Clutter.ActorAlign.END, visible: false,
         });
         cancel.connect('clicked', () => this._cancel());
         actor.add_child(cancel);
@@ -524,10 +604,12 @@ export default class ZaikoExtension extends Extension {
         Main.uiGroup.add_child(this._characterMenuAnchor);
         this._characterMenu = new PopupMenu.PopupMenu(this._character, 0, St.Side.TOP);
         this._styleContextMenu(this._characterMenu, this._characterMenuAnchor);
-        this._characterMenu.addAction('Log', () => this._showLog());
-        this._vimMenuItem = new VimMenuItem(`Vim: ${this._vimEnabled ? 'on' : 'off'}`, () => this._toggleVim());
+        this._logMenuItem = this._characterMenu.addAction(this._t('menu.log'), () => this._showLog());
+        this._vimMenuItem = new ToggleMenuItem(this._vimLabel(), () => this._toggleVim());
         this._characterMenu.addMenuItem(this._vimMenuItem);
-        this._characterMenu.addAction('Quit', () => this._quitCore());
+        this._langMenuItem = new ToggleMenuItem(this._t('menu.language', {language: this._language}), () => this._toggleLanguage());
+        this._characterMenu.addMenuItem(this._langMenuItem);
+        this._quitMenuItem = this._characterMenu.addAction(this._t('menu.quit'), () => this._quitCore());
         Main.uiGroup.add_child(this._characterMenu.actor);
         this._characterMenu.actor.hide();
         this._characterMenuManager = new PopupMenu.PopupMenuManager(this._character);
@@ -877,7 +959,7 @@ export default class ZaikoExtension extends Extension {
                         this._present();
                     this._refreshSnapshot();
                 } catch (_error) {
-                    this._snapshotError = 'Could not read the companion update.';
+                    this._snapshotError = 'error.update';
                     this._renderSnapshot();
                     this._refreshSnapshot();
                 }
@@ -956,7 +1038,7 @@ export default class ZaikoExtension extends Extension {
             this._renderSnapshot();
         } catch (_error) {
             if (this._enabled && epoch === this._epoch) {
-                this._snapshotError = 'Could not connect to Zaiko. Try again.';
+                this._snapshotError = 'error.connect';
                 this._renderSnapshot();
             }
         } finally {
@@ -985,11 +1067,13 @@ export default class ZaikoExtension extends Extension {
         this._historySignature = signature;
         this._logHistory.destroy_all_children();
         if (!this._snapshot.messages.length) {
-            const placeholder = this._wrappedLabel('No conversation yet.', 'zaiko-placeholder');
+            const placeholder = this._wrappedLabel(this._t('log.empty'), 'zaiko-placeholder');
             this._logHistory.add_child(placeholder);
         }
         for (const message of this._snapshot.messages) {
-            const {prefix, text, color} = transcriptLine(message);
+            const {prefix, text, color} = transcriptLine(message, {
+                me: this._t('speaker.me'), action: this._t('speaker.action'),
+            });
             const label = this._wrappedLabel(text, 'zaiko-log-message');
             this._makeMessageCopyable(label);
             label.clutter_text.set_line_alignment(Pango.Alignment.LEFT);
@@ -998,13 +1082,13 @@ export default class ZaikoExtension extends Extension {
                     const channels = [1, 3, 5].map(offset => Number.parseInt(color.slice(offset, offset + 2), 16) * 257);
                     const attribute = Pango.attr_foreground_new(...channels);
                     attribute.start_index = 0;
-                    attribute.end_index = prefix.length;
+                    attribute.end_index = new TextEncoder().encode(prefix).length;
                     const attributes = label.clutter_text.get_attributes()?.copy() ?? Pango.AttrList.new();
                     attributes.change(attribute);
                     label.clutter_text.set_attributes(attributes);
                 };
                 // St replaces foreground attributes when applying CSS. Run after
-                // its style handler, overriding only the ASCII prefix byte range.
+                // its style handler, overriding only the prefix's UTF-8 byte range.
                 // All message text remains literal; no markup is parsed.
                 label.connect_after('style-changed', applyPrefix);
                 applyPrefix();
@@ -1026,13 +1110,13 @@ export default class ZaikoExtension extends Extension {
     _renderLogState() {
         const busy = this._busy();
         const error = this._uiError || this._snapshotError || this._snapshot.error ||
-            (this._snapshot.state === 'error' ? 'Something went wrong.' : null);
-        const status = error || this._requestStatus();
+            (this._snapshot.state === 'error' ? 'error.generic' : null);
+        const status = error ? this._t(error) : this._requestStatus();
         this._logStatus.text = status ? `[Aiko] ${status}` : '';
         this._logStatus.visible = Boolean(this._logStatus.text);
         this._logStatus.set_style_class_name(`zaiko-log-status${error ? ' zaiko-log-error' : ''}`);
         this._logCancel.visible = busy;
-        this._logCancel.label = this._cancelling ? 'Stopping…' : 'Stop';
+        this._logCancel.label = this._t(this._cancelling ? 'action.stopping' : 'action.stop');
         this._logCancel.reactive = Boolean(this._coreOwner && !this._cancelling);
         this._logCancel.can_focus = this._logCancel.reactive;
         this._setEntryAvailable(this._logEntry, Boolean(this._coreOwner && !busy));
@@ -1104,7 +1188,7 @@ export default class ZaikoExtension extends Extension {
         label.menu = new PopupMenu.PopupMenu(label, 0, St.Side.TOP);
         label.menu.focusActor = text;
         this._styleContextMenu(label.menu);
-        label.menu.addAction('Copy', copy);
+        label.menu.addAction(this._t('action.copy'), copy);
         Main.uiGroup.add_child(label.menu.actor);
         label.menu.actor.hide();
         label._menuManager = new PopupMenu.PopupMenuManager(label);
@@ -1181,13 +1265,15 @@ export default class ZaikoExtension extends Extension {
 
     _requestStatus() {
         if (this._sending)
-            return 'Sending…';
+            return this._t('status.sending');
         if (this._snapshot.state === 'thinking') {
             const elapsed = this._thinkingStartedUs
                 ? (GLib.get_monotonic_time() - this._thinkingStartedUs) / 1_000_000 : 0;
-            return `Thinking... (${formatElapsed(elapsed)})`;
+            return this._t('status.thinking', {elapsed: formatElapsed(elapsed, {
+                hour: this._t('time.hour'), minute: this._t('time.minute'), second: this._t('time.second'),
+            })});
         }
-        return this._snapshot.state === 'working' ? 'Opening app…' : '';
+        return this._snapshot.state === 'working' ? this._t('status.opening') : '';
     }
 
     _renderCompact() {
@@ -1195,8 +1281,8 @@ export default class ZaikoExtension extends Extension {
             return;
         const busy = this._busy();
         const error = this._uiError || this._snapshotError || this._snapshot.error ||
-            (this._snapshot.state === 'error' ? 'Something went wrong.' : null);
-        const text = error || this._requestStatus() || latestAssistant(this._snapshot.messages);
+            (this._snapshot.state === 'error' ? 'error.generic' : null);
+        const text = error ? this._t(error) : this._requestStatus() || latestAssistant(this._snapshot.messages);
         const contentWidth = Math.max(1, this._answerLabel.width);
         const layout = this._answerLabel.clutter_text.get_layout().copy();
         layout.set_font_description(this._answerLabel.get_theme_node().get_font());
@@ -1204,7 +1290,7 @@ export default class ZaikoExtension extends Extension {
         const display = text ? `[Aiko] ${text}` : '';
         // Repaints, font changes and reopening input must not prolong a message.
         // The count also distinguishes a new reply with exactly the same text.
-        const key = JSON.stringify([busy ? (error || (this._sending ? 'sending' : this._snapshot.state)) : display,
+        const key = JSON.stringify([busy ? (error || (this._sending ? 'sending' : this._snapshot.state)) : error || display,
             this._snapshot.messages.filter(message => message.role === 'assistant').length]);
         if (key !== this._answerDisplayKey) {
             this._clearAnswerTimeout();
@@ -1230,7 +1316,7 @@ export default class ZaikoExtension extends Extension {
         else
             this._answerLabel.remove_style_class_name('zaiko-answer-error');
         this._overlayCancel.visible = busy;
-        this._overlayCancel.label = this._cancelling ? 'Stopping…' : 'Stop';
+        this._overlayCancel.label = this._t(this._cancelling ? 'action.stopping' : 'action.stop');
         this._overlayCancel.reactive = Boolean(this._coreOwner && !this._cancelling);
         this._overlayCancel.can_focus = this._overlayCancel.reactive;
         this._setEntryAvailable(this._overlayEntry, Boolean(this._coreOwner && !busy));
@@ -1269,7 +1355,7 @@ export default class ZaikoExtension extends Extension {
             if (this._enabled && [this._overlayEntry, this._logEntry].includes(entry) && !entry.get_text())
                 entry.set_text(text);
             if (this._enabled && epoch === this._epoch)
-                this._uiError = 'Message could not be sent. Please try again.';
+                this._uiError = 'error.send';
         } finally {
             if (this._enabled && epoch === this._epoch) {
                 this._sending = false;
@@ -1291,7 +1377,7 @@ export default class ZaikoExtension extends Extension {
             await this._callCore('Cancel', new GLib.Variant('(s)', [requestId]));
         } catch (_error) {
             if (this._enabled && epoch === this._epoch)
-                this._uiError = 'Could not stop the current request.';
+                this._uiError = 'error.cancel';
         } finally {
             if (this._enabled && epoch === this._epoch) {
                 this._cancelling = false;
@@ -1307,7 +1393,7 @@ export default class ZaikoExtension extends Extension {
             await this._callCore('Quit');
         } catch (_error) {
             if (this._enabled && epoch === this._epoch) {
-                this._uiError = 'Could not close Zaiko.';
+                this._uiError = 'error.quit';
                 this._renderSnapshot();
             }
         }
@@ -1383,6 +1469,9 @@ export default class ZaikoExtension extends Extension {
         this._characterMenuAnchor?.destroy();
         this._characterMenuAnchor = null;
         this._vimMenuItem = null;
+        this._langMenuItem = null;
+        this._logMenuItem = null;
+        this._quitMenuItem = null;
         this._clearCore();
         if (this._coreWatch)
             Gio.bus_unwatch_name(this._coreWatch);

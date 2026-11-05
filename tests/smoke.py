@@ -252,6 +252,10 @@ def main():
         check((data / ".env.example").is_file(), "Public configuration example not installed")
         extension = Path(env["XDG_DATA_HOME"]) / "gnome-shell/extensions/zaiko@znnn.local"
         check((extension / "extension.js").is_file(), "GNOME extension not installed")
+        for language in ("en", "th"):
+            catalog = extension / "locales" / f"{language}.json"
+            check(catalog.is_file() and json.loads(catalog.read_text())["menu.language"] == "Lang: {language}",
+                  "Installed extension is missing its JSON language catalog")
         for folder in (data, extension):
             for path in folder.rglob("*"):
                 check(not path.is_symlink(), "Installed tree contains a source-dependent symlink")

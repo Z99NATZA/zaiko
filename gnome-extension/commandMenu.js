@@ -4,11 +4,11 @@ import Pango from 'gi://Pango';
 import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import {commandMatches, COMMAND_VISIBLE_ROWS, SLASH_COMMANDS} from './commands.js';
+import {commandMatches, COMMAND_VISIBLE_ROWS, translatedCommands} from './commands.js';
 import {clampPosition} from './protocol.js';
 
 export class CommandMenu {
-    constructor(entry, composer, workArea, submit, styleScrollbar) {
+    constructor(entry, composer, workArea, submit, styleScrollbar, translate) {
         this.entry = entry;
         this._composer = composer;
         this._workArea = workArea;
@@ -16,7 +16,7 @@ export class CommandMenu {
         this._available = false;
         this._signals = [];
         this._matches = [];
-        this._commands = SLASH_COMMANDS;
+        this._commands = translatedCommands(translate);
         this._rows = [];
         this._indicators = [];
         this._names = [];
@@ -57,6 +57,12 @@ export class CommandMenu {
 
     setAvailable(available) {
         this._available = available;
+        this.sync();
+    }
+
+    setTranslator(translate) {
+        this._commands = translatedCommands(translate);
+        this._query = null;
         this.sync();
     }
 

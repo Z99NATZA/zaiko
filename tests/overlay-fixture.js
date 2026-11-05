@@ -650,6 +650,89 @@ export default class OverlayQA extends ZaikoExtension {
         }
     }
 
+    async _checkLanguage() {
+        const snapshot = this._snapshot;
+        const drafts = [this._overlayEntry.get_text(), this._logEntry.get_text()];
+        const uiError = this._uiError;
+        const vimEnabled = this._vimEnabled;
+        try {
+            qaAssert(this._language === 'en' && this._langMenuItem.label.text === 'Lang: en',
+                'Language defaults to English and exposes the current selection');
+            this._overlayEntry.set_text('compact ภาษาไทย draft');
+            this._logEntry.set_text('log ภาษาไทย draft');
+            this._snapshot = {...snapshot, state: 'idle', request_id: null, error: null, messages: [
+                {role: 'user', content: 'ข้อความเดิม <tag> 🙂'},
+                {role: 'assistant', content: 'Original reply stays literal.'},
+            ]};
+            this._uiError = null;
+            this._renderSnapshot();
+            const messages = JSON.stringify(this._snapshot.messages);
+            const expiry = this._answerHideSource;
+            this._showLog();
+            this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), this._character.x + 100, this._character.y + 100);
+            await qaPause(40);
+            this._openCharacterMenu();
+            await qaPause(200);
+            await this._click(this._langMenuItem);
+            qaAssert(this._language === 'th' && this._characterMenu.isOpen &&
+                this._characterMenu._getMenuItems().map(item => item.label.text).join(',') ===
+                `ประวัติสนทนา,Vim: ${vimEnabled ? 'เปิด' : 'ปิด'},Lang: th,ออก`,
+                `Lang toggles to Thai, updates every menu row and keeps the menu open: ${JSON.stringify({language: this._language, open: this._characterMenu.isOpen, rows: this._characterMenu._getMenuItems().map(item => item.label.text)})}`);
+            qaAssert(this._loadLanguage() === 'th', 'The language choice persists in language.json');
+            qaAssert(this._answerHideSource === expiry && JSON.stringify(this._snapshot.messages) === messages &&
+                this._overlayEntry.get_text() === 'compact ภาษาไทย draft' && this._logEntry.get_text() === 'log ภาษาไทย draft',
+                'Switching languages preserves drafts, conversation content and reply expiry');
+            const row = this._logHistory.get_child_at_index(0);
+            const prefixBytes = new TextEncoder().encode('[ฉัน]').length;
+            qaAssert(row.text === '[ฉัน] ข้อความเดิม <tag> 🙂' &&
+                qaTextColorAt(row, prefixBytes - 1) !== qaTextColorAt(row, prefixBytes + 1),
+                'Thai speaker prefixes retain their color without coloring the message body');
+            qaAssert(row.menu._getMenuItems()[0].label.text === 'คัดลอก' &&
+                this._logEntry.menu._copyItem.label.text === 'คัดลอก' &&
+                this._overlayEntry.menu._pasteItem.label.text === 'วาง', 'Copy/Paste follows the selected UI language');
+            qaAssert(this._commandMenus.every(menu => menu._commands[0].name === '/status' &&
+                menu._commands[0].description === 'แสดงโมเดล สถานะ และสิทธิ์ปัจจุบัน'),
+                'Slash commands keep their identifiers and translate their descriptions');
+            await this._shot('language-th-menu');
+            await this._click(this._vimMenuItem);
+            qaAssert(this._vimEnabled !== vimEnabled && this._vimMenuItem.label.text ===
+                `Vim: ${this._vimEnabled ? 'เปิด' : 'ปิด'}`, 'Vim remains independently switchable in Thai');
+            await this._click(this._vimMenuItem);
+            this._snapshot.state = 'thinking';
+            this._snapshot.request_id = 'qa-language-request';
+            this._renderSnapshot();
+            const ticker = this._thinkingSource;
+            qaAssert(this._logStatus.text.startsWith('[Aiko] กำลังคิด...') && this._logCancel.label === 'หยุด',
+                'Thai translates request status and the Stop control');
+            await this._click(this._langMenuItem);
+            qaAssert(this._language === 'en' && this._characterMenu.isOpen && this._thinkingSource === ticker &&
+                this._logStatus.text.startsWith('[Aiko] Thinking...') && this._logCancel.label === 'Stop',
+                'Lang toggles back to English without restarting an active request clock');
+            this._snapshot.state = 'idle';
+            this._snapshot.request_id = null;
+            this._uiError = 'error.send';
+            this._renderSnapshot();
+            const errorExpiry = this._answerHideSource;
+            await this._click(this._langMenuItem);
+            qaAssert(this._logStatus.text === '[Aiko] ส่งข้อความไม่ได้ กรุณาลองอีกครั้ง' &&
+                this._answerHideSource === errorExpiry, 'Existing UI errors translate without extending their expiry');
+        } finally {
+            if (this._language !== 'en')
+                this._toggleLanguage();
+            if (this._vimEnabled !== vimEnabled)
+                this._toggleVim();
+            this._characterMenu.close();
+            this._snapshot = snapshot;
+            this._uiError = uiError;
+            this._overlayEntry.set_text(drafts[0]);
+            this._logEntry.set_text(drafts[1]);
+            this._historySignature = null;
+            this._renderSnapshot();
+            this._hidePanel();
+            this._hideInput();
+        }
+    }
+
     async _checkVimInputs() {
         const drafts = [this._overlayEntry.get_text(), this._logEntry.get_text()];
         const originalCall = this._callCore;
@@ -1095,6 +1178,12 @@ export default class OverlayQA extends ZaikoExtension {
             this._qaResult({ok: true, checked: 'Vim editing, physical Thai keys, o/O/Ctrl+J, busy state and lifecycle'});
             return;
         }
+        if (GLib.getenv('ZAIKO_QA_LANGUAGE_ONLY') === '1') {
+            await this._checkLanguage();
+            this.disable();
+            this._qaResult({ok: true, checked: 'th/en language menu, JSON preference, translated UI, draft/history/expiry preservation'});
+            return;
+        }
         qaAssert(!this._inputOverlay.visible && !this._panel.visible, 'No input or support panel auto-opens on core connection');
         qaAssert(!this._chat && !this._entry && !this._composer && !this._answerBubble, 'Legacy UI/composer/card actors removed');
         qaAssert(!this._answerLabel.visible, 'No empty answer placeholder');
@@ -1296,8 +1385,8 @@ export default class OverlayQA extends ZaikoExtension {
         'Floating reply is stacked below Log and the popup menu');
         await this._shot('character-context-menu');
         const items = this._characterMenu._getMenuItems();
-        qaAssert(items.length === 3 && items.map(item => item.label?.text).join(',') === 'Log,Vim: off,Quit',
-            'Character menu shows Log, the current Vim setting, and Quit');
+        qaAssert(items.length === 4 && items.map(item => item.label?.text).join(',') === 'Log,Vim: off,Lang: en,Quit',
+            'Character menu shows Log, Vim, Lang and Quit');
         qaAssert(this._characterMenu.box.get_theme_node().get_border_radius(St.Corner.TOPLEFT) === 8 &&
             qaColor(this._characterMenu.box.get_theme_node().get_background_color(), '#282c34'), 'Character menu uses the One Half Dark surface');
         const logItem = items.find(item => item.label?.text === 'Log');
@@ -1478,6 +1567,7 @@ export default class OverlayQA extends ZaikoExtension {
         this._hideInput();
         await this._checkCommandMenus();
         await this._checkVimInputs();
+        await this._checkLanguage();
         const startX = this._character.x;
         const startY = this._character.y;
         this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), startX + 100, startY + 100);
@@ -1566,6 +1656,7 @@ export default class OverlayQA extends ZaikoExtension {
             actor.connect('destroy', () => { destroyedActors++; });
         this._toggleVim();
         const grabBeforeDisable = global.stage.get_grab_actor();
+        this._toggleLanguage();
         const [characterX, characterY] = this._character.get_transformed_position();
         this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), characterX + 100, characterY + 130);
         await qaPause(30);
@@ -1583,7 +1674,9 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(outsideClicks === 2, 'Outside target works after disable');
         ZaikoExtension.prototype.enable.call(this);
         await qaPause(150);
-        qaAssert(this._vimEnabled && this._vimMenuItem.label.text === 'Vim: on', 'Re-enabling the extension restores the saved Vim preference');
+        qaAssert(this._vimEnabled && this._vimMenuItem.label.text === 'Vim: เปิด' &&
+            this._language === 'th' && this._langMenuItem.label.text === 'Lang: th',
+            'Re-enabling restores both language and Vim preferences');
         this.disable();
         outside.destroy();
         this._pointer = null;

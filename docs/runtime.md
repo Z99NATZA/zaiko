@@ -121,8 +121,8 @@ without reserving a header or changing the message area. It appears
 while the pointer is anywhere in Log, including its input and close button, and
 hides immediately on leaving. Click closes
 Log; Escape works even while the close button is hidden.
-The character's right-click menu has three compact rows: Log, Vim: off/on, and
-Quit, with no separator. It opens near the right-click position and flips or
+The character's right-click menu has four compact rows: Log, Vim: off/on,
+Lang: en/th, and Quit, with no separator. It opens near the right-click position and flips or
 shifts to stay inside the monitor's work area at screen edges. It is stacked
 above the floating reply. Input Copy/Paste and message
 Copy menus share the Log/Quit menu's surface, corners, spacing and desktop font.
@@ -161,6 +161,26 @@ submitting; Enter or clicking a row submits it once. Escape closes the picker
 and preserves the draft; the next Escape follows the normal composer/Vim behavior.
 The picker hides while busy, on focus loss, and when its composer is hidden.
 It stays within the monitor work area, using space below when needed.
+
+UI language
+----------
+
+Click Lang: en/th in the character menu to switch between English and Thai.
+Like Vim, it toggles in place and keeps the menu open. The UI updates immediately:
+menus, Copy/Paste, request status, local errors, accessible labels, speaker
+prefixes and slash-command descriptions. Command identifiers and conversation
+contents remain unchanged. Language and Vim settings are independent.
+The default is English. The choice is saved as `{"language":"en"}` or
+`{"language":"th"}` in `~/.config/zaiko/language.json` (following XDG_CONFIG_HOME).
+Invalid or unsupported preferences fall back to English.
+
+Edit `gnome-extension/locales/en.json` and `gnome-extension/locales/th.json` to
+change UI text. They are flat JSON objects with the same keys; named placeholders
+such as `{state}`, `{language}` and `{elapsed}` must match between languages.
+Missing Thai strings fall back to English. Install the edited files with
+`make install` and reload the GNOME session to load the changed catalogs.
+This setting controls the companion UI; core/provider messages retain their
+original content and response language.
 
 Input Vim
 ----------

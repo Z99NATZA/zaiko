@@ -111,21 +111,21 @@ export function latestAssistant(messages) {
     return messages.findLast(message => message.role === 'assistant')?.content ?? '';
 }
 
-export function transcriptLine(message) {
-    const prefix = message.role === 'user' ? '[Me]' : message.role === 'assistant' ? '[Aiko]' : '[Action]';
+export function transcriptLine(message, speakers = {me: 'Me', action: 'Action'}) {
+    const prefix = message.role === 'user' ? `[${speakers.me}]` : message.role === 'assistant' ? '[Aiko]' : `[${speakers.action}]`;
     const color = message.role === 'user' ? '#98c379' : message.role === 'assistant' ? '#c678dd' : null;
     return {prefix, text: `${prefix} ${message.content}`, color};
 }
 
-export function formatElapsed(seconds) {
+export function formatElapsed(seconds, units = {hour: 'h', minute: 'm', second: 's'}) {
     const elapsed = Math.max(0, Math.floor(seconds));
     const hours = Math.floor(elapsed / 3600);
     const minutes = Math.floor(elapsed % 3600 / 60);
     const parts = [];
     if (hours)
-        parts.push(`${hours}h`);
+        parts.push(`${hours}${units.hour}`);
     if (hours || minutes)
-        parts.push(`${minutes}m`);
-    parts.push(`${elapsed % 60}s`);
+        parts.push(`${minutes}${units.minute}`);
+    parts.push(`${elapsed % 60}${units.second}`);
     return parts.join(' ');
 }
