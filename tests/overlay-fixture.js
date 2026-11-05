@@ -1289,20 +1289,27 @@ export default class OverlayQA extends ZaikoExtension {
             'Right click keeps the latest answer visible without restarting its countdown');
         const retainedLogItem = this._characterMenu._getMenuItems().find(item => item.label?.text === 'Log');
         await this._click(retainedLogItem.actor);
-        qaAssert(this._panel.visible && this._answerLabel.visible && this._answerHideSource === answerTimer,
-            'Choosing Log keeps the answer visible on its original countdown');
-        this._answerLabel.clutter_text.grab_key_focus();
+        qaAssert(this._panel.visible && !this._answerLabel.visible && this._answerHideSource === answerTimer,
+            'Choosing Log hides the floating answer without restarting its countdown');
+        this._hidePanel();
+        qaAssert(this._answerLabel.visible && this._answerHideSource === answerTimer,
+            'Closing Log restores an unexpired answer on its original countdown');
+        this._showLog();
         await qaPause(Math.max(1, Math.ceil((answerShownAt + 8_200_000 - GLib.get_monotonic_time()) / 1000)));
         qaAssert(this._panel.visible && !this._answerLabel.visible && this._answerHideSource === 0, 'Message expires after eight seconds even while Log is open');
-        qaAssert(!this._ownsFocus(global.stage.get_key_focus(), [this._answerLabel]), 'Expiry releases selected text focus');
+        qaAssert(!this._ownsFocus(global.stage.get_key_focus(), [this._answerLabel]), 'Hidden answer expiry does not focus the hidden text');
         this._renderSnapshot();
         qaAssert(!this._answerLabel.visible, 'Repaint does not resurrect expired text');
         this._showLog();
         qaAssert(qaContainsText(this._logHistory, this._snapshot.messages[1].content), 'Expired answer remains in Log');
         this._hidePanel();
         qaAssert(!this._answerLabel.visible, 'Closing Log does not resurrect an expired answer');
+        this._showLog();
         this._snapshot.messages.push({...this._snapshot.messages[1]});
         this._renderSnapshot();
+        qaAssert(!this._answerLabel.visible && this._answerHideSource !== 0,
+            'A new reply stays hidden outside while Log is open');
+        this._hidePanel();
         qaAssert(this._answerLabel.visible && this._answerHideSource !== 0, 'A new identical reply gets its own display time');
         this._snapshot.messages.pop();
 
@@ -1399,7 +1406,7 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(this._logComposer.visible && !this._inputOverlay.visible, 'Log owns the active composer');
         await this._checkCaret(this._logEntry);
         await this._checkPanelClose();
-        qaAssert(this._answerLabel.visible, 'Opening Log keeps the unexpired floating message visible');
+        qaAssert(!this._answerLabel.visible, 'Opening Log hides the floating message');
         qaAssert(!this._panelHeader && !this._panelTitle, 'Conversation has no title/header row');
         qaAssert(this._panelClose.visible && this._panel.contains(this._panelClose), 'Close is an overlay inside Log');
         qaAssert(this._panelClose.width === this._panelClose.height &&
@@ -1540,6 +1547,8 @@ export default class OverlayQA extends ZaikoExtension {
         this._snapshot.state = 'thinking';
         this._snapshot.request_id = 'qa-thinking-clock';
         this._renderSnapshot();
+        qaAssert(!this._answerLabel.visible && this._logStatus.visible,
+            'Thinking status appears only in Log while it is open');
         await qaPause(1150);
         qaAssert(/^\[Aiko\] Thinking\.\.\. \([12]s\)$/.test(this._logStatus.text), 'Thinking clock advances from real elapsed seconds');
         qaAssert(this._thinkingSource !== 0 && this._answerHideSource === 0, 'Active thinking keeps its ticker without message expiry');
@@ -1551,6 +1560,7 @@ export default class OverlayQA extends ZaikoExtension {
         this._hidePanel();
         qaAssert(this._answerLabel.text === '[Aiko] Thinking... (2h 1m 30s)' && this._answerLabel.visible, 'Floating thinking uses the same elapsed time');
         this._showLog();
+        qaAssert(!this._answerLabel.visible, 'Reopening Log hides the floating thinking status');
         await this._shot('thinking-clock');
         this._snapshot.state = 'idle';
         this._snapshot.request_id = null;
@@ -1681,6 +1691,6 @@ export default class OverlayQA extends ZaikoExtension {
         outside.destroy();
         this._pointer = null;
         this._keyboard = null;
-        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, full composer interior click focus/native caret placement, inset close overlay/no reserved row/hover/immediate hide, Enter/icon/cancel/failure/drafts, native caret blinking/focus/settings/timeout/cleanup, command picker/eight rows/arrows/mouse wheel/filtering/Tab/Enter/click/Escape/Vim, One Half Dark surfaces/no theme chooser, replies remain visible through menu/Log until original 8-second expiry, lifecycle'});
+        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, full composer interior click focus/native caret placement, inset close overlay/no reserved row/hover/immediate hide, Enter/icon/cancel/failure/drafts, native caret blinking/focus/settings/timeout/cleanup, command picker/eight rows/arrows/mouse wheel/filtering/Tab/Enter/click/Escape/Vim, One Half Dark surfaces/no theme chooser, floating replies/status hidden during Log with original expiry preserved, lifecycle'});
     }
 }

@@ -739,7 +739,7 @@ export default class ZaikoExtension extends Extension {
             this._panel.sync_hover();
         this._updatePanelClose();
         this._inputOverlay.visible = show && this._inputOpen && !this._logIsOpen();
-        this._answerLabel.visible = show && this._answerHasText;
+        this._answerLabel.visible = show && this._answerHasText && !this._logIsOpen();
         for (const menu of this._commandMenus)
             menu.sync();
     }

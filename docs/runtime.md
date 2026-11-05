@@ -106,10 +106,11 @@ While Log is open, character clicks and Present focus Log input and cannot open
 the compact input. Closing Log re-enables compact input. The two drafts stay
 separate and submission failures restore only the originating draft. A shared
 request guard prevents overlapping sends from either input.
-The floating answer stays visible while Log or the character menu is open,
-until its original 8-second countdown expires. Closing them does not restore
-an expired answer. It is stacked below Log and popup menus, which can cover it
-without changing its countdown.
+Opening Log hides the floating answer and request status, including new replies
+received while Log is open. Closing Log restores the current floating text only
+if it has not expired. The original 8-second countdown continues while hidden;
+opening/closing Log does not restart it. The character menu alone keeps the
+floating text visible, stacked below popup menus.
 
 The old comparison panel is removed. Log appears only when requested. Quit is
 also available from the character menu. Escape closes the focused input or support
