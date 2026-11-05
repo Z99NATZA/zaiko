@@ -1,4 +1,6 @@
 // Appended only to a temporary copy by overlay-shell.py; no real core/provider.
+import * as Keyboard from 'resource:///org/gnome/shell/ui/status/keyboard.js';
+
 function qaPause(milliseconds) {
     return new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, milliseconds, () => {
         resolve();
@@ -408,6 +410,88 @@ export default class OverlayQA extends ZaikoExtension {
         }
     }
 
+    async _checkThaiVimKeys() {
+        const settings = new Gio.Settings({schema_id: 'org.gnome.desktop.input-sources'});
+        const sources = settings.get_value('sources');
+        const manager = Keyboard.getInputSourceManager();
+        const previous = manager.currentSource?.id;
+        const entries = [this._overlayEntry, this._logEntry];
+        const drafts = entries.map(entry => entry.get_text());
+        const physical = async (code, shift = false) => {
+            if (shift)
+                this._keyboard.notify_key(GLib.get_monotonic_time(), 42, Clutter.KeyState.PRESSED);
+            this._keyboard.notify_key(GLib.get_monotonic_time(), code, Clutter.KeyState.PRESSED);
+            this._keyboard.notify_key(GLib.get_monotonic_time(), code, Clutter.KeyState.RELEASED);
+            if (shift)
+                this._keyboard.notify_key(GLib.get_monotonic_time(), 42, Clutter.KeyState.RELEASED);
+            await qaPause(60);
+        };
+        try {
+            settings.set_value('sources', new GLib.Variant('a(ss)', [['xkb', 'us'], ['xkb', 'th']]));
+            await qaPause(120);
+            const thai = Object.values(manager.inputSources).find(source => source.id === 'th');
+            qaAssert(thai, 'The isolated session provides a real Thai keyboard layout');
+            thai.activate(false);
+            await qaPause(120);
+            for (const entry of entries) {
+                if (entry === this._overlayEntry) {
+                    this._hidePanel();
+                    this._showInput();
+                } else {
+                    this._showLog();
+                }
+                const vim = this._vimInputs.find(candidate => candidate.entry === entry);
+                entry.set_text('');
+                entry.grab_key_focus();
+                vim.leave();
+                await physical(23); // US I / Thai ร
+                qaAssert(vim._state.mode === 'insert' && entry.get_text() === '',
+                    'Physical I enters insert mode under Thai without inserting a character');
+                await physical(23);
+                await physical(30); // US A / Thai ฟ
+                qaAssert(entry.get_text() === 'รฟ', 'Insert mode keeps the active Thai layout');
+                await this._key(Clutter.KEY_Escape);
+                await physical(35); // H
+                qaAssert(entry.clutter_text.get_cursor_position() === 0, 'Physical H moves left under Thai');
+                await physical(38); // L
+                qaAssert(entry.clutter_text.get_cursor_position() === 1, 'Physical L moves right under Thai');
+                await physical(30, true); // A
+                await physical(23);
+                qaAssert(entry.get_text() === 'รฟร', 'Shift+A appends under Thai and keeps subsequent text in Thai');
+                await this._key(Clutter.KEY_Escape);
+                entry.set_text('xyz');
+                entry.clutter_text.set_cursor_position(0);
+                await physical(19); // r
+                await physical(23);
+                qaAssert(entry.get_text() === 'รyz', 'The replacement character after r follows the Thai layout');
+                await physical(19, true); // R
+                await physical(30);
+                qaAssert(entry.get_text() === 'ฟyz', 'Continuous replace also keeps Thai characters');
+                await this._key(Clutter.KEY_Escape);
+                entry.set_text('one two');
+                entry.clutter_text.set_cursor_position(0);
+                for (const code of [46, 23, 17]) // ciw
+                    await physical(code);
+                await physical(23);
+                qaAssert(entry.get_text() === 'ร two', 'Physical ciw commands work while Thai is active');
+                this._toggleVim();
+                entry.set_text('');
+                await physical(23);
+                qaAssert(entry.get_text() === 'ร', 'Disabling Vim restores ordinary Thai typing');
+                this._toggleVim();
+            }
+        } finally {
+            if (!this._vimEnabled)
+                this._toggleVim();
+            settings.set_value('sources', sources);
+            await qaPause(120);
+            Object.values(manager.inputSources).find(source => source.id === previous)?.activate(false);
+            await qaPause(100);
+            entries.forEach((entry, index) => entry.set_text(drafts[index]));
+            this._showLog();
+        }
+    }
+
     async _checkVimInputs() {
         const drafts = [this._overlayEntry.get_text(), this._logEntry.get_text()];
         const originalCall = this._callCore;
@@ -473,6 +557,7 @@ export default class OverlayQA extends ZaikoExtension {
             await this._key(Clutter.KEY_Return);
             qaAssert(calls.filter(call => call.method === 'Submit').length === 1 && calls.at(-1).args[1] === 'hello' &&
                 this._panel.visible && entry.get_text() === '', 'Vim Enter sends once and keeps Log open');
+            await this._checkThaiVimKeys();
             this._snapshot.state = 'thinking';
             this._renderSnapshot();
             await keys('iX');

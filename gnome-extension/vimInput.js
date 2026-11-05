@@ -1,6 +1,14 @@
 import Clutter from 'gi://Clutter';
 import {InputVim} from './vim.js';
 
+// Linux evdev positions, independent of the active keyboard layout.
+const NORMAL_KEYS = new Map([
+    [5, ['4', '$']], [11, ['0', ')']],
+    [17, ['w', 'W']], [19, ['r', 'R']], [23, ['i', 'I']],
+    [30, ['a', 'A']], [32, ['d', 'D']], [35, ['h', 'H']],
+    [38, ['l', 'L']], [46, ['c', 'C']], [48, ['b', 'B']],
+]);
+
 export class VimInput {
     constructor(entry, caret, submit) {
         this.entry = entry;
@@ -120,7 +128,12 @@ export class VimInput {
         ]);
         const unicode = event.get_key_unicode();
         const character = typeof unicode === 'number' ? (unicode ? String.fromCodePoint(unicode) : '') : unicode;
-        const key = special.get(symbol) ?? character;
+        // The character after r, insert mode and continuous replace mode must
+        // keep the active layout: they are text, rather than Vim commands.
+        const physical = this._state.mode === 'normal' && this._state.pending !== 'r'
+            ? NORMAL_KEYS.get(event.get_event_code()) : null;
+        const key = special.get(symbol) ?? (physical
+            ? physical[event.get_state() & Clutter.ModifierType.SHIFT_MASK ? 1 : 0] : character);
         if (!key)
             return Clutter.EVENT_PROPAGATE;
         const result = this._state.handle(this._text.text, this._text.get_cursor_position(), key);

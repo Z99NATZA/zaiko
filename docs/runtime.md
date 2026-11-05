@@ -170,6 +170,10 @@ word. i inserts before the cursor, a after it, and A at the end. ciw changes the
 current word, C changes through the end, r replaces one character, and R replaces
 continuously; Backspace restores overwritten characters in R mode. dd clears
 only the current input draft. Conversation messages remain read-only.
+Normal-mode commands follow physical US QWERTY key positions, so the I key
+enters insert mode even with the Thai layout active. Shift selects uppercase
+commands such as A and R. Insert mode, continuous replace, and the replacement
+character after r keep using the active layout for text.
 
 Escape returns to normal mode and keeps the input open. Enter still submits
 normally; busy inputs cannot be edited. Mouse clicks enter insert
