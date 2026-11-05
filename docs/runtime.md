@@ -185,6 +185,8 @@ normally; busy inputs cannot be edited. Mouse clicks enter insert
 mode with native caret placement and selection. Clicking away preserves the
 draft, clears focus/selection and returns to normal mode. Copy/Paste stays
 available. Turning Vim off restores ordinary typing and Escape behavior.
+Plain clicks on Log background or transcript text return focus to its input
+without changing the current Vim mode. Leaving Log still returns to normal mode.
 
 Fixed appearance
 ----------

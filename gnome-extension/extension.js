@@ -87,7 +87,10 @@ export default class ZaikoExtension extends Extension {
                     () => this._submit(entry), view => this._registerScrollbarParts(view)));
                 const caret = new CaretBlink(entry.clutter_text, this._interfaceSettings);
                 this._caretBlinks.push(caret);
-                const vim = new VimInput(entry, caret, () => this._submit(entry));
+                const keepsFocus = entry === this._logEntry
+                    ? focus => this._ownsFocus(focus, [this._panel, ...this._logMessageMenus().map(menu => menu.actor)])
+                    : null;
+                const vim = new VimInput(entry, caret, () => this._submit(entry), keepsFocus);
                 this._vimInputs.push(vim);
                 vim.setEnabled(this._vimEnabled);
                 vim.setAvailable(Boolean(this._coreOwner && !this._busy()));
@@ -828,7 +831,9 @@ export default class ZaikoExtension extends Extension {
             }
             const ownedFocus = this._ownsFocus(global.stage.get_key_focus(), roots);
             menu?.close();
-            if (ownedFocus)
+            // A plain Log click returns to the composer on release. Keep its
+            // focus during the press instead of briefly leaving the Log UI.
+            if (ownedFocus && !(actor === this._logComposer && this._logClick))
                 global.stage.set_key_focus(null);
         }
         if (this._inputOpen &&

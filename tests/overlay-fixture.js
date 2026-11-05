@@ -529,6 +529,47 @@ export default class OverlayQA extends ZaikoExtension {
         }
     }
 
+    async _checkLogVimFocus() {
+        const entry = this._logEntry;
+        const vim = this._vimInputs.find(candidate => candidate.entry === entry);
+        const draft = entry.get_text();
+        const label = this._wrappedLabel('[Aiko] focus test', 'zaiko-log-message');
+        this._makeMessageCopyable(label);
+        this._logHistory.add_child(label);
+        const outside = new St.Widget({reactive: true, width: 80, height: 48, x: 100, y: 100});
+        Main.uiGroup.add_child(outside);
+        try {
+            await qaPause(80);
+            for (const [key, mode] of [[null, 'normal'], ['i', 'insert'], ['R', 'replace']]) {
+                entry.set_text('focus draft');
+                entry.grab_key_focus();
+                vim.leave();
+                entry.clutter_text.set_selection(2, 2);
+                if (key)
+                    await this._key(key.codePointAt(0));
+                for (const target of [this._logScroll, label]) {
+                    await this._click(target);
+                    qaAssert(vim._state.mode === mode && entry.clutter_text.has_key_focus() &&
+                        entry.clutter_text.get_cursor_position() === 2 && entry.get_text() === 'focus draft',
+                    `Plain Log clicks preserve Vim mode, caret and draft: ${JSON.stringify({mode, actual: vim._state.mode, cursor: entry.clutter_text.get_cursor_position()})}`);
+                }
+                if (mode === 'insert') {
+                    await this._key(Clutter.KEY_x);
+                    qaAssert(entry.get_text() === 'foxcus draft',
+                        'Typing continues in insert mode immediately after a Log click');
+                }
+                await this._click(outside);
+                qaAssert(vim._state.mode === 'normal' && !entry.clutter_text.has_key_focus(),
+                    'Clicking outside Log still exits Vim insert/replace mode');
+            }
+        } finally {
+            outside.destroy();
+            label.destroy();
+            entry.set_text(draft);
+            entry.grab_key_focus();
+        }
+    }
+
     async _checkVimInputs() {
         const drafts = [this._overlayEntry.get_text(), this._logEntry.get_text()];
         const originalCall = this._callCore;
@@ -586,6 +627,7 @@ export default class OverlayQA extends ZaikoExtension {
             this._keyboard.notify_keyval(GLib.get_monotonic_time(), Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
             qaAssert(entry.get_text() === 'Zlpha new tail pasted' && controller(entry)._state.mode === 'insert',
                 'Ctrl+V enters insert mode and preserves normal clipboard pasting');
+            await this._checkLogVimFocus();
             await this._key(Clutter.KEY_Escape);
             await keys('dd');
             qaAssert(entry.get_text() === '' && JSON.stringify(this._snapshot.messages) === messages,

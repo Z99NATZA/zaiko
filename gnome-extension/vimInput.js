@@ -11,7 +11,7 @@ const NORMAL_KEYS = new Map([
 ]);
 
 export class VimInput {
-    constructor(entry, caret, submit) {
+    constructor(entry, caret, submit, keepsFocus = null) {
         this.entry = entry;
         this._text = entry.clutter_text;
         this._caret = caret;
@@ -24,10 +24,17 @@ export class VimInput {
         this._signals = [];
         const connect = (actor, name, callback) => this._signals.push([actor, actor.connect(name, callback)]);
         connect(entry, 'captured-event', (_actor, event) => this._event(event));
-        connect(this._text, 'key-focus-out', () => {
-            if (!entry.menu?.isOpen)
-                this.leave();
-        });
+        if (keepsFocus) {
+            connect(global.stage, 'notify::key-focus', () => {
+                if (!entry.menu?.isOpen && !keepsFocus(global.stage.get_key_focus()))
+                    this.leave();
+            });
+        } else {
+            connect(this._text, 'key-focus-out', () => {
+                if (!entry.menu?.isOpen)
+                    this.leave();
+            });
+        }
         connect(this._text, 'key-focus-in', () => this._normalCursor());
         connect(this._text, 'notify::cursor-position', () => {
             if (!this._updating)
