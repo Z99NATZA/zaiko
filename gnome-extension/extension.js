@@ -64,12 +64,14 @@ export default class ZaikoExtension extends Extension {
         this._snapshotRunning = false;
         this._snapshotDirty = false;
         this._signals = [];
+        this._composers = [];
         this._caretBlinks = [];
         this._vimInputs = [];
         this._commandMenus = [];
         this._vimEnabled = this._loadVimEnabled();
         this._eventSubscription = 0;
         this._scrollSource = 0;
+        this._composerLayoutSource = 0;
         this._uiError = null;
         this._snapshotError = null;
         this._historySignature = null;
@@ -355,59 +357,148 @@ export default class ZaikoExtension extends Extension {
     }
 
     _buildLogComposer() {
-        this._logComposer = new St.BoxLayout({
-            style_class: 'zaiko-log-composer', x_expand: true, height: 38,
+        const {actor, entry, scroll, cancel} = this._createComposer('zaiko-log-composer', 'zaiko-log-entry');
+        this._logComposer = actor;
+        this._logEntry = entry;
+        this._logInputScroll = scroll;
+        this._logCancel = cancel;
+        this._panel.connect('notify::allocation', () => this._queueComposerLayout());
+        this._logStatus.connect('notify::allocation', () => this._queueComposerLayout());
+        this._panelContent.add_child(actor);
+    }
+
+    _createComposer(styleClass, entryClass) {
+        const actor = new St.BoxLayout({style_class: styleClass, x_expand: true, can_focus: true});
+        actor.add_child(new St.Label({
+            text: '›', style_class: 'zaiko-input-prompt', y_align: Clutter.ActorAlign.START,
+        }));
+        const scroll = new St.ScrollView({
+            style_class: 'zaiko-scroll', x_expand: true, height: 18, overlay_scrollbars: true,
         });
-        this._logEntry = new St.Entry({
-            style_class: 'zaiko-log-entry', hint_text: 'Message Aiko…',
-            can_focus: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER,
+        scroll.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC);
+        this._registerScrollbarParts(scroll);
+        const content = new St.BoxLayout({vertical: true, x_expand: true});
+        scroll.set_child(content);
+        const entry = new St.Entry({
+            style_class: entryClass, accessible_name: 'Message',
+            can_focus: true, x_expand: true, y_align: Clutter.ActorAlign.START,
         });
-        ShellEntry.addContextMenu(this._logEntry);
-        this._styleContextMenu(this._logEntry.menu, this._logComposer);
-        this._logEntry.menu.actor.connect('captured-event', (_actor, event) => this._dismissFocusOutside(event));
-        this._logEntry.clutter_text.connect('activate', () => this._submit(this._logEntry));
-        this._logComposer.add_child(this._logEntry);
-        this._logSend = new St.Button({
-            style_class: 'zaiko-log-send', can_focus: true,
-            accessible_name: 'Send message in Log', y_align: Clutter.ActorAlign.CENTER,
+        const text = entry.clutter_text;
+        text.single_line_mode = false;
+        text.activatable = false;
+        text.line_wrap = true;
+        text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        for (const signal of ['text-changed', 'cursor-changed'])
+            text.connect(signal, () => this._queueComposerLayout());
+        for (const widget of [actor, scroll, entry])
+            widget.connect('notify::allocation', () => this._queueComposerLayout());
+        entry.connect('style-changed', () => this._queueComposerLayout());
+        text.connect('key-press-event', (_actor, event) => {
+            if (![Clutter.KEY_Return, Clutter.KEY_KP_Enter].includes(event.get_key_symbol()) ||
+                event.get_state() & Clutter.ModifierType.SHIFT_MASK)
+                return Clutter.EVENT_PROPAGATE;
+            this._submit(entry);
+            return Clutter.EVENT_STOP;
         });
-        this._logSendIcon = new St.Icon({icon_name: 'mail-send-symbolic', icon_size: 16});
-        this._logSend.set_child(this._logSendIcon);
-        this._logSend.connect('clicked', () => this._busy() ? this._cancel() : this._submit(this._logEntry));
-        this._logComposer.add_child(this._logSend);
-        this._trackComposerFocus(this._logComposer, this._logEntry, this._logSend);
-        this._panelContent.add_child(this._logComposer);
+        text.connect('activate', () => this._submit(entry));
+        ShellEntry.addContextMenu(entry);
+        this._styleContextMenu(entry.menu, actor);
+        entry.menu.actor.connect('captured-event', (_actor, event) => this._dismissFocusOutside(event));
+        content.add_child(entry);
+        actor.add_child(scroll);
+        const cancel = new St.Button({
+            style_class: 'zaiko-input-cancel', label: 'Stop', can_focus: true,
+            accessible_name: 'Cancel request', y_align: Clutter.ActorAlign.END, visible: false,
+        });
+        cancel.connect('clicked', () => this._cancel());
+        actor.add_child(cancel);
+        this._trackComposerFocus(actor, entry, cancel);
+        const composer = {actor, entry, scroll, cancel};
+        this._composers.push(composer);
+        return composer;
+    }
+
+    _resizeComposer({actor, entry, scroll}) {
+        if (!entry.mapped || entry.width <= 0)
+            return;
+        const node = entry.get_theme_node();
+        const padding = side => node.get_padding(side);
+        const width = Math.max(1, entry.width - padding(St.Side.LEFT) - padding(St.Side.RIGHT));
+        const layout = entry.clutter_text.get_layout().copy();
+        layout.set_single_paragraph_mode(false);
+        layout.set_width(Math.round(width * Pango.SCALE));
+        layout.set_text(entry.get_text() || ' ', -1);
+        const [, contentHeight] = layout.get_pixel_size();
+        // Reserve Thai upper/lower marks even in an empty or Latin-only row.
+        // Shape with the current font so fallback fonts and scaling are included.
+        const row = layout.copy();
+        row.set_width(-1);
+        row.set_text('Agที่ปู่', -1);
+        const [, rowHeight] = row.get_pixel_size();
+        const height = Math.max(contentHeight, rowHeight * layout.get_line_count());
+        const composerNode = actor.get_theme_node();
+        const chromeHeight = composerNode.get_padding(St.Side.TOP) + composerNode.get_padding(St.Side.BOTTOM);
+        let available = Math.max(1, (this._workArea()?.height ?? 400) - 16 - chromeHeight);
+        if (actor === this._logComposer) {
+            const contentNode = this._panelContent.get_theme_node();
+            const statusHeight = this._logStatus.visible ? this._logStatus.height + 12 : 0;
+            // Reserve space for the transcript, with no fixed input row limit.
+            available = this._panel.height - contentNode.get_padding(St.Side.TOP) -
+                contentNode.get_padding(St.Side.BOTTOM) - chromeHeight - statusHeight - 12 - 40 - 2;
+        }
+        scroll.height = Math.max(1, Math.min(height + padding(St.Side.TOP) + padding(St.Side.BOTTOM), available));
+    }
+
+    _queueComposerLayout() {
+        if (this._composerLayoutSource)
+            return;
+        this._composerLayoutSource = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            this._composerLayoutSource = 0;
+            if (this._enabled) {
+                for (const composer of this._composers) {
+                    this._resizeComposer(composer);
+                    this._revealComposerCursor(composer);
+                }
+                const area = this._workArea();
+                if (this._positioned && area)
+                    this._positionSurfaces(area);
+            }
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _revealComposerCursor({entry, scroll}) {
+        if (!entry.mapped)
+            return;
+        const text = entry.clutter_text;
+        const length = Array.from(text.text).length;
+        const cursor = text.get_cursor_position();
+        const [ok, , y, height] = text.position_to_coords(cursor < 0 ? length : Math.min(cursor, length));
+        if (!ok)
+            return;
+        const adjustment = scroll.get_vadjustment();
+        const top = y + entry.get_theme_node().get_padding(St.Side.TOP);
+        if (top < adjustment.value)
+            adjustment.value = Math.max(0, y);
+        else if (top + height > adjustment.value + adjustment.page_size)
+            adjustment.value = Math.max(0, Math.min(adjustment.upper - adjustment.page_size,
+                top + height - adjustment.page_size));
     }
 
     _buildCompactActors() {
-        this._inputOverlay = new St.BoxLayout({
-            style_class: 'zaiko-input-overlay',
-            width: 280, height: 38, reactive: true, visible: false,
-        });
-        this._overlayEntry = new St.Entry({
-            style_class: 'zaiko-overlay-entry', hint_text: 'Message…',
-            can_focus: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER,
-        });
-        ShellEntry.addContextMenu(this._overlayEntry);
-        this._styleContextMenu(this._overlayEntry.menu, this._inputOverlay);
-        this._overlayEntry.menu.actor.connect('captured-event', (_actor, event) => this._dismissFocusOutside(event));
-        this._overlayEntry.clutter_text.connect('activate', () => this._submit(this._overlayEntry));
-        this._inputOverlay.connect('key-press-event', (_actor, event) => {
+        const {actor, entry, scroll, cancel} = this._createComposer('zaiko-input-overlay', 'zaiko-overlay-entry');
+        this._inputOverlay = actor;
+        this._overlayEntry = entry;
+        this._overlayInputScroll = scroll;
+        this._overlayCancel = cancel;
+        actor.width = 280;
+        actor.hide();
+        actor.connect('key-press-event', (_actor, event) => {
             if (event.get_key_symbol() !== Clutter.KEY_Escape)
                 return Clutter.EVENT_PROPAGATE;
             this._hideInput(true);
             return Clutter.EVENT_STOP;
         });
-        this._inputOverlay.add_child(this._overlayEntry);
-        this._overlaySend = new St.Button({
-            style_class: 'zaiko-overlay-send', can_focus: true,
-            accessible_name: 'Send message', y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._overlaySendIcon = new St.Icon({icon_name: 'mail-send-symbolic', icon_size: 16});
-        this._overlaySend.set_child(this._overlaySendIcon);
-        this._overlaySend.connect('clicked', () => this._busy() ? this._cancel() : this._submit(this._overlayEntry));
-        this._inputOverlay.add_child(this._overlaySend);
-        this._trackComposerFocus(this._inputOverlay, this._overlayEntry, this._overlaySend);
 
         // The answer is a top-level label, with no card or container behind it.
         this._answerLabel = this._wrappedLabel('', 'zaiko-answer');
@@ -447,7 +538,9 @@ export default class ZaikoExtension extends Extension {
         this._connect(composer, 'button-press-event', (_actor, event) => {
             // Only handle the surrounding padding/gaps. Native entry clicks
             // retain caret placement/selection; send and cancel keep their action.
-            if (event.get_button() !== Clutter.BUTTON_PRIMARY || global.stage.get_event_actor(event) !== composer)
+            const source = global.stage.get_event_actor(event);
+            if (event.get_button() !== Clutter.BUTTON_PRIMARY ||
+                this._ownsFocus(source, [entry, sendButton]) || source instanceof St.ScrollBar)
                 return Clutter.EVENT_PROPAGATE;
             this._rememberFocus();
             entry.grab_key_focus();
@@ -931,10 +1024,10 @@ export default class ZaikoExtension extends Extension {
         this._logStatus.text = status ? `[Aiko] ${status}` : '';
         this._logStatus.visible = Boolean(this._logStatus.text);
         this._logStatus.set_style_class_name(`zaiko-log-status${error ? ' zaiko-log-error' : ''}`);
-        this._logSendIcon.icon_name = busy ? 'process-stop-symbolic' : 'mail-send-symbolic';
-        this._logSend.accessible_name = this._cancelling ? 'Stopping request' : busy ? 'Cancel request' : 'Send message in Log';
-        this._logSend.reactive = Boolean(this._coreOwner && !this._cancelling);
-        this._logSend.can_focus = this._logSend.reactive;
+        this._logCancel.visible = busy;
+        this._logCancel.label = this._cancelling ? 'Stopping…' : 'Stop';
+        this._logCancel.reactive = Boolean(this._coreOwner && !this._cancelling);
+        this._logCancel.can_focus = this._logCancel.reactive;
         this._setEntryAvailable(this._logEntry, Boolean(this._coreOwner && !busy));
     }
 
@@ -1129,10 +1222,10 @@ export default class ZaikoExtension extends Extension {
             this._answerLabel.add_style_class_name('zaiko-answer-error');
         else
             this._answerLabel.remove_style_class_name('zaiko-answer-error');
-        this._overlaySendIcon.icon_name = busy ? 'process-stop-symbolic' : 'mail-send-symbolic';
-        this._overlaySend.accessible_name = this._cancelling ? 'Stopping request' : busy ? 'Cancel request' : 'Send message';
-        this._overlaySend.reactive = Boolean(this._coreOwner && !this._cancelling);
-        this._overlaySend.can_focus = this._overlaySend.reactive;
+        this._overlayCancel.visible = busy;
+        this._overlayCancel.label = this._cancelling ? 'Stopping…' : 'Stop';
+        this._overlayCancel.reactive = Boolean(this._coreOwner && !this._cancelling);
+        this._overlayCancel.can_focus = this._overlayCancel.reactive;
         this._setEntryAvailable(this._overlayEntry, Boolean(this._coreOwner && !busy));
         if (this._positioned)
             this._positionCharacter(this._character.x, this._character.y);
@@ -1311,6 +1404,9 @@ export default class ZaikoExtension extends Extension {
         if (this._focusDismissSource)
             GLib.Source.remove(this._focusDismissSource);
         this._focusDismissSource = 0;
+        if (this._composerLayoutSource)
+            GLib.Source.remove(this._composerLayoutSource);
+        this._composerLayoutSource = 0;
         for (const actor of [this._panel, this._character, this._inputOverlay, this._answerLabel]) {
             if (!actor)
                 continue;
@@ -1324,8 +1420,8 @@ export default class ZaikoExtension extends Extension {
         this._logHistory = null;
         this._logComposer = null;
         this._logEntry = null;
-        this._logSend = null;
-        this._logSendIcon = null;
+        this._logInputScroll = null;
+        this._logCancel = null;
         this._logStatus = null;
         this._character = null;
         this._image = null;
@@ -1335,8 +1431,9 @@ export default class ZaikoExtension extends Extension {
         this._focusBeforeUI = null;
         this._inputOverlay = null;
         this._overlayEntry = null;
-        this._overlaySend = null;
-        this._overlaySendIcon = null;
+        this._overlayInputScroll = null;
+        this._overlayCancel = null;
+        this._composers = [];
         this._answerLabel = null;
         this._answerPreview = null;
     }

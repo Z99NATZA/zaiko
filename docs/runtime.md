@@ -50,11 +50,13 @@ Conversation
 
 Left click the character to show and focus compact input at her bottom; repeat
 clicks keep it open. Click elsewhere or press Escape to hide input, keeping its
-draft. The input is a slim translucent strip with a thin light outline and
-an outlined send icon. Drag the character to move her. Enter or its embedded
-send icon submits a message and hides input once the core accepts it. Submission
-failure keeps input open and restores the draft. Click Aiko to reopen input;
-while a request is active the icon becomes Cancel. The latest answer appears as plain
+draft. The input uses the same borderless gray composer as Log, with a leading
+› prompt and no placeholder or send icon. A single row fits one row; longer
+drafts wrap and expand upward, then scroll when the available screen space is
+full. Shift+Enter adds a newline; Enter submits the whole draft and hides input
+once the core accepts it. Drag the character to move her. Submission failure
+keeps input open and restores the draft. Click Aiko to reopen input;
+a text Stop control appears while a request is active. The latest answer appears as plain
 text above her head in the form [Aiko] message, with no bubble background or
 padding. It grows to its content and is limited to five wrapped lines including
 the prefix; longer answers are shortened only in this preview. Each displayed
@@ -84,15 +86,21 @@ color. Tool results use [Action]. Markup-like message content is literal text.
 Drag to select text within a message and press Ctrl+C to copy it. Right click a
 message and choose Copy to copy the selection, or the whole message when nothing
 is selected. This menu uses the existing One Half Dark context-menu style.
-Click elsewhere to clear a message or input selection and release its keyboard
-focus, including unused space inside Log. Log stays open and input drafts are
+Click outside Log to clear a message or input selection and release its keyboard
+focus. A plain click on a message or unused space inside Log focuses its input.
+Log stays open and input drafts are
 preserved. Using a text field's or message's own context menu keeps its selection
 available for Copy/Paste.
 Each message has 6 px horizontal and 4 px vertical mouse padding. Dragging from
 this padding starts selection at the nearest character, including beyond the
 last character. The padding stays transparent and replaces the old row spacing.
 
-The input at the bottom of Log supports Enter and its embedded send/cancel icon.
+The input at the bottom of Log is a multiline composer with a leading › prompt.
+It wraps long lines and grows with the draft, without a fixed row limit. When
+the available panel space is full, it scrolls internally and keeps the caret
+visible. Shift+Enter adds a newline, including with Vim enabled.
+Enter submits the complete draft. Both inputs have no placeholder or send
+icon; a text Stop control appears only while a request is active.
 Successful Log sends clear only its draft and keep Log open for continued chat.
 While Log is open, character clicks and Present focus Log input and cannot open
 the compact input. Closing Log re-enables compact input. The two drafts stay
@@ -163,8 +171,8 @@ current word, C changes through the end, r replaces one character, and R replace
 continuously; Backspace restores overwritten characters in R mode. dd clears
 only the current input draft. Conversation messages remain read-only.
 
-Escape returns to normal mode and keeps the input open. Enter and the send icon
-still submit normally; busy inputs cannot be edited. Mouse clicks enter insert
+Escape returns to normal mode and keeps the input open. Enter still submits
+normally; busy inputs cannot be edited. Mouse clicks enter insert
 mode with native caret placement and selection. Clicking away preserves the
 draft, clears focus/selection and returns to normal mode. Copy/Paste stays
 available. Turning Vim off restores ordinary typing and Escape behavior.
@@ -178,12 +186,14 @@ Controls, caret, selection, hover, and keyboard focus use the same neutral
 foreground tones. Close uses a gray highlight; errors use brighter, heavier text.
 Panels, controls, and menus have no box shadows. Floating replies retain their
 transparent background and text shadow. The conversation
-has a 12 px outer radius and 16 px content padding. Both composers use 38 px height,
-9 px corners, 13 px text, and a 16 px outlined send/cancel icon. A single outer
-border surrounds the input and send button; keyboard focus highlights this
-border, and the embedded controls have no separate outlines. Clicking padding
-or gaps anywhere inside this border focuses the input. Clicking text still
-positions/selects it normally, and the send/cancel button keeps its own action.
+has a 12 px outer radius and 16 px content padding. Both inputs use the same
+expanding gray surface with 3 px corners, 13 px text and a leading prompt,
+similar to a terminal composer. Each fits a single text row when the draft has
+one row, and has no border, including when focused. Neither shows placeholder
+text or a send icon. Clicking padding or gaps in either composer focuses its input. Clicking text still
+positions/selects it normally, and embedded controls keep their own actions.
+Row height reserves space for stacked Thai vowels and tone marks using the
+current font and scaling, so adding marks does not resize a single text row.
 Log prefixes
 use green #98c379 for Me and magenta #c678dd for Aiko while message bodies
 share the foreground color. Palette source: https://github.com/sonph/onehalf.

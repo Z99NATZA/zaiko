@@ -206,7 +206,7 @@ export default class OverlayQA extends ZaikoExtension {
     }
 
     async _checkComposerHitArea(entry, button) {
-        const composer = entry.get_parent();
+        const composer = entry === this._logEntry ? this._logComposer : this._inputOverlay;
         const [x, y] = composer.get_transformed_position();
         const [width, height] = composer.get_transformed_size();
         const [entryX, entryY] = entry.get_transformed_position();
@@ -219,13 +219,13 @@ export default class OverlayQA extends ZaikoExtension {
             await qaPause(50);
         };
         entry.set_text('focus area draft');
-        const [buttonX] = button.get_transformed_position();
+        const [buttonX] = button ? button.get_transformed_position() : [x + width];
         for (const [targetX, targetY] of [
             [x + 2, y + height / 2], [x + width - 2, y + height / 2],
             [x + width / 2, y + 2], [x + width / 2, y + height - 2],
             [buttonX - 2, y + height / 2],
         ]) {
-            button.grab_key_focus();
+            (button ?? composer).grab_key_focus();
             await clickAt(targetX, targetY);
             qaAssert(entry.clutter_text.has_key_focus(), 'Clicking inside each edge or gap focuses input');
             qaAssert(composer.visible && composer.has_style_pseudo_class('focus'), 'Padding clicks retain input and its focus highlight');
@@ -626,8 +626,113 @@ export default class OverlayQA extends ZaikoExtension {
         this._positionCharacter(original.x, original.y);
     }
 
+    async _checkMultilineInput(entry = this._logEntry) {
+        const compact = entry === this._overlayEntry;
+        const composer = compact ? this._inputOverlay : this._logComposer;
+        const viewport = compact ? this._overlayInputScroll : this._logInputScroll;
+        const cancel = compact ? this._overlayCancel : this._logCancel;
+        const originalCall = this._callCore;
+        const draft = entry.get_text();
+        const calls = [];
+        this._callCore = async (method, parameters) => {
+            calls.push({method, args: parameters?.deep_unpack()});
+            return [];
+        };
+        const newline = async () => {
+            this._keyboard.notify_keyval(GLib.get_monotonic_time(), Clutter.KEY_Shift_L, Clutter.KeyState.PRESSED);
+            await this._key(Clutter.KEY_Return);
+            this._keyboard.notify_keyval(GLib.get_monotonic_time(), Clutter.KEY_Shift_L, Clutter.KeyState.RELEASED);
+        };
+        try {
+            entry.set_text('');
+            entry.grab_key_focus();
+            await qaPause(80);
+            const emptyHeight = composer.height;
+            for (const value of ['a', 'ท', 'ที', 'ที่', 'ป', 'ปุ', 'ปู่', 'น้ำ', '']) {
+                entry.set_text(value);
+                await qaPause(50);
+                qaAssert(composer.height === emptyHeight,
+                    `Thai combining marks keep one-row input height stable: ${JSON.stringify({value, height: composer.height, emptyHeight})}`);
+                const [, shapedHeight] = entry.clutter_text.get_layout().get_pixel_size();
+                qaAssert(viewport.height >= shapedHeight, 'Reserved row height fits every Thai mark without clipping');
+            }
+            entry.set_text('a\nb');
+            await qaPause(60);
+            const twoRows = composer.height;
+            entry.set_text('ที่\nปู่');
+            await qaPause(60);
+            qaAssert(composer.height === twoRows, 'Thai marks keep multiline input height stable too');
+            entry.set_text('บรรทัดแรก');
+            entry.clutter_text.set_selection(-1, -1);
+            entry.grab_key_focus();
+            await qaPause(80);
+            const small = composer.height;
+            const [, lineHeight] = entry.clutter_text.get_layout().get_pixel_size();
+            qaAssert(small === emptyHeight && viewport.height >= lineHeight && small <= viewport.height + 12,
+                `Single-line input uses one row plus padding: ${JSON.stringify({small, lineHeight, viewport: viewport.height})}`);
+            qaAssert(!entry.hint_text && !cancel.visible &&
+                composer.get_theme_node().get_border_width(St.Side.LEFT) === 0,
+                'Log has no placeholder, send control or focus border');
+            await newline();
+            qaAssert(entry.get_text() === 'บรรทัดแรก\n' && !calls.length,
+                'Shift+Enter inserts a newline without sending');
+            await this._key(Clutter.KEY_a);
+            qaAssert(entry.get_text() === 'บรรทัดแรก\na' && composer.height > small,
+                'Multiline input grows and accepts typing on the second line');
+            await this._key(Clutter.KEY_Return);
+            qaAssert(calls.length === 1 && calls[0].args[1] === 'บรรทัดแรก\na' && !entry.get_text(),
+                'Enter submits the whole multiline draft exactly once');
+            if (compact)
+                this._showInput();
+            const pasted = Array.from({length: compact ? 100 : 18}, (_, index) => `บรรทัด ${index + 1} Lorem ipsum`).join('\n');
+            St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, pasted);
+            this._keyboard.notify_keyval(GLib.get_monotonic_time(), Clutter.KEY_Control_L, Clutter.KeyState.PRESSED);
+            await this._key(Clutter.KEY_v);
+            this._keyboard.notify_keyval(GLib.get_monotonic_time(), Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
+            qaAssert(entry.get_text() === pasted, 'Native paste preserves every line of a long draft');
+            entry.clutter_text.set_selection(-1, -1);
+            await qaPause(160);
+            const scroll = viewport.get_vadjustment();
+            qaAssert(scroll.upper > scroll.page_size && composer.height > this._panel.height / 2 &&
+                (compact ? composer.height <= this._workArea().height - 16 :
+                    composer.height < this._panel.height && this._logScroll.height > 0),
+                `Long drafts scroll inside a bounded composer: ${JSON.stringify({upper: scroll.upper, page: scroll.page_size, height: composer.height})}`);
+            qaAssert(scroll.value > 0, 'The last line and caret remain visible in a long draft');
+            await this._shot(compact ? 'multiline-compact-input' : 'multiline-log-input');
+            if (compact) {
+                const area = this._workArea();
+                qaAssert(composer.y >= area.y + 8 && composer.y + composer.height <= area.y + area.height - 8,
+                    'Expanded compact input stays within the work area');
+            }
+            entry.clutter_text.set_cursor_position(0);
+            await qaPause(60);
+            qaAssert(scroll.value === 0, 'Moving to the first line scrolls the input back to the top');
+            entry.set_text('Lorem ipsum '.repeat(30));
+            await qaPause(100);
+            qaAssert(entry.clutter_text.get_layout().get_line_count() > 1,
+                'Long lines wrap within the composer');
+            entry.set_text('');
+            await qaPause(80);
+            qaAssert(composer.height <= small, 'Clearing a draft shrinks the composer');
+            await this._shot(compact ? 'single-row-compact-input' : 'single-row-log-input');
+            this._toggleVim();
+            entry.set_text('/s');
+            entry.clutter_text.set_selection(-1, -1);
+            await newline();
+            qaAssert(entry.get_text() === '/s\n' && calls.length === 1,
+                'Shift+Enter works with Vim enabled and the command picker open');
+            this._toggleVim();
+        } finally {
+            if (this._vimEnabled)
+                this._toggleVim();
+            this._callCore = originalCall;
+            entry.set_text(draft);
+        }
+    }
+
     async _checkCaret(entry, button) {
         await this._checkComposerHitArea(entry, button);
+        const composer = entry === this._logEntry ? this._logComposer : this._inputOverlay;
         const settings = this._interfaceSettings;
         const text = entry.clutter_text;
         // These settings belong only to the private QA session.
@@ -637,10 +742,10 @@ export default class OverlayQA extends ZaikoExtension {
         entry.grab_key_focus();
         entry.set_text('');
         qaAssert(text.has_key_focus(), 'Entry owns text focus');
-        qaAssert(entry.get_parent().has_style_pseudo_class('focus'), 'Input focus highlights the outer composer');
+        qaAssert(composer.has_style_pseudo_class('focus'), 'Input focus highlights the outer composer');
         qaAssert(entry.get_theme_node().get_background_color().alpha === 0 &&
             entry.get_theme_node().get_border_width(St.Side.LEFT) === 0 &&
-            button.get_theme_node().get_border_width(St.Side.LEFT) === 0,
+            (!button || button.get_theme_node().get_border_width(St.Side.LEFT) === 0),
         'Input and send button share one outer surface without nested borders');
         qaAssert((await qaCaretPhases(text)).size === 2, 'Focused empty input caret visibly blinks');
         await qaPause(650);
@@ -659,8 +764,9 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(!text.get_cursor_visible(), 'Read-only input hides its insertion caret');
         text.editable = true;
         qaAssert(text.get_cursor_visible(), 'Editable input restores its focused caret');
-        button.grab_key_focus();
-        qaAssert(entry.get_parent().has_style_pseudo_class('focus'), 'Send button focus keeps the shared composer highlight');
+        (button ?? composer).grab_key_focus();
+        qaAssert(composer.has_style_pseudo_class('focus'),
+            'Keyboard focus stays within the composer');
         qaAssert(!text.has_key_focus() && !text.get_cursor_visible(), 'Focus transfer hides the caret');
         qaAssert((await qaCaretPhases(text, 250)).size === 1, 'Unfocused caret stays hidden');
         entry.grab_key_focus();
@@ -747,7 +853,8 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(this._inputOverlay.visible && !this._panel.visible, 'Present opens only input');
         qaAssert(this._inputOverlay.y + this._inputOverlay.height <= this._character.y + this._character.height + 1,
             'Input overlays the bottom of character');
-        await this._checkCaret(this._overlayEntry, this._overlaySend);
+        await this._checkCaret(this._overlayEntry);
+        await this._checkMultilineInput(this._overlayEntry);
 
         await this._click(this._character);
         qaAssert(this._inputOverlay.visible, 'Repeated character click keeps input open');
@@ -896,10 +1003,6 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(calls.filter(call => call.method === 'Submit').length === 1, 'Enter sends exactly once');
         qaAssert(calls.at(-1).args[1] === 'ส่งด้วย Enter', 'Thai Enter payload');
         qaAssert(!this._inputOverlay.visible && !this._ownsFocus(global.stage.get_key_focus()), 'Enter hides input and releases focus after successful submit');
-        await this._click(this._character);
-        this._overlayEntry.set_text('ส่งด้วย icon');
-        await this._click(this._overlaySend);
-        qaAssert(calls.filter(call => call.method === 'Submit').length === 2 && !this._inputOverlay.visible, 'Embedded icon sends once and hides input');
         this._showInput();
         let release;
         this._callCore = async (method, parameters) => {
@@ -914,8 +1017,8 @@ export default class OverlayQA extends ZaikoExtension {
         const before = calls.length;
         await this._submit();
         qaAssert(calls.length === before, 'Repeated send cannot overlap busy request');
-        await this._click(this._overlaySend);
-        qaAssert(calls.at(-1).method === 'Cancel', 'Busy icon cancels');
+        await this._click(this._overlayCancel);
+        qaAssert(calls.at(-1).method === 'Cancel', 'Busy Stop control cancels');
         release();
         await pending;
         this._callCore = async () => { throw new Error('QA simulated failure'); };
@@ -955,7 +1058,7 @@ export default class OverlayQA extends ZaikoExtension {
         await this._click(logItem.actor);
         qaAssert(this._panel.visible && !this._characterMenu.isOpen, 'Log opens only on request');
         qaAssert(this._logComposer.visible && !this._inputOverlay.visible, 'Log owns the active composer');
-        await this._checkCaret(this._logEntry, this._logSend);
+        await this._checkCaret(this._logEntry);
         await this._checkPanelClose();
         qaAssert(this._answerLabel.visible, 'Opening Log keeps the unexpired floating message visible');
         qaAssert(!this._panelHeader && !this._panelTitle, 'Conversation has no title/header row');
@@ -997,6 +1100,7 @@ export default class OverlayQA extends ZaikoExtension {
         await this._key(Clutter.KEY_Escape);
 
         await this._checkFocusDismiss(rows[1]);
+        await this._checkMultilineInput();
         this._callCore = async (method, parameters) => {
             calls.push({method, args: parameters?.deep_unpack()});
             return [];
@@ -1008,9 +1112,6 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(calls.filter(call => call.method === 'Submit').length === submitCount + 1 && calls.at(-1).args[1] === 'ส่งจาก Log ด้วย Enter', 'Log Enter sends exactly once');
         qaAssert(this._panel.visible && this._logEntry.get_text() === '' && !this._inputOverlay.visible, 'Log stays open after sending');
         qaAssert(this._logEntry.contains(global.stage.get_key_focus()), 'Log input remains focused for continued conversation');
-        this._logEntry.set_text('ส่งจาก Log ด้วย icon');
-        await this._click(this._logSend);
-        qaAssert(calls.filter(call => call.method === 'Submit').length === submitCount + 2 && this._panel.visible, 'Log icon sends and preserves the conversation box');
         qaAssert(this._overlayEntry.get_text() === 'compact draft retained', 'Log sends preserve compact draft');
 
         let releaseLog;
@@ -1027,7 +1128,8 @@ export default class OverlayQA extends ZaikoExtension {
         await this._submit(this._overlayEntry);
         await this._submit(this._logEntry);
         qaAssert(calls.length === busyCount && this._logStatus.visible, 'Both composers share the busy guard with in-Log status');
-        await this._click(this._logSend);
+        qaAssert(this._logCancel.visible && this._logCancel.label === 'Stop', 'Busy Log exposes a text Stop control');
+        await this._click(this._logCancel);
         qaAssert(calls.at(-1).method === 'Cancel', 'Log busy button cancels');
         releaseLog();
         await pendingLog;
@@ -1089,11 +1191,13 @@ export default class OverlayQA extends ZaikoExtension {
         this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), 100, 80);
         this._showInput();
         const surface = this._inputOverlay.get_theme_node().get_background_color();
-        qaAssert(qaColor(surface, '#282c34') && surface.alpha >= 229 && surface.alpha <= 230, 'Compact input uses the 90% One Half Dark surface');
-        qaAssert(this._overlaySend.get_theme_node().get_background_color().alpha === 0, 'Send icon shares the input surface');
+        qaAssert(qaColor(surface, '#3e4451') && surface.alpha >= 242 && surface.alpha <= 243, 'Compact input uses the same gray composer surface as Log');
+        qaAssert(!this._overlayCancel.visible && !this._overlayEntry.hint_text &&
+            this._inputOverlay.get_theme_node().get_border_width(St.Side.LEFT) === 0,
+        'Compact input has no placeholder, send control or focus border');
         qaAssert(this._answerLabel.get_theme_node().get_background_color().alpha === 0, 'Reply remains transparent');
         const panelSurface = this._panel.get_theme_node().get_background_color();
-        qaAssert(qaColor(panelSurface, '#282c34') && panelSurface.alpha === surface.alpha, 'Conversation uses the same One Half Dark surface as input');
+        qaAssert(qaColor(panelSurface, '#282c34') && panelSurface.alpha >= 229 && panelSurface.alpha <= 230, 'Conversation keeps its One Half Dark surface');
         this._snapshot.state = 'thinking';
         this._snapshot.request_id = 'qa-thinking-clock';
         this._renderSnapshot();

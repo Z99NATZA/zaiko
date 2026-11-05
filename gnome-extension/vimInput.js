@@ -105,6 +105,11 @@ export class VimInput {
             return Clutter.EVENT_PROPAGATE;
         }
         if ([Clutter.KEY_Return, Clutter.KEY_KP_Enter].includes(symbol)) {
+            if (!this._text.single_line_mode && event.get_state() & Clutter.ModifierType.SHIFT_MASK) {
+                this._state.reset('insert');
+                this._sync();
+                return Clutter.EVENT_PROPAGATE;
+            }
             this._submit();
             this.leave();
             return Clutter.EVENT_STOP;

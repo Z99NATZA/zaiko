@@ -50,12 +50,13 @@
 .zaiko-placeholder, .zaiko-log-status { color: #a0a6b1; font-size: 12px; }
 .zaiko-placeholder { padding: 12px 0; }
 .zaiko-log-status.zaiko-log-error { color: #dcdfe4; font-weight: 500; }
-.zaiko-log-composer, .zaiko-input-overlay {
+.zaiko-log-composer, .zaiko-log-composer:focus,
+.zaiko-input-overlay, .zaiko-input-overlay:focus {
     color: #dcdfe4;
-    background-color: rgba(40, 44, 52, 0.9);
-    border: 1px solid #3e4451;
-    border-radius: 9px;
-    padding: 3px 5px;
+    background-color: rgba(62, 68, 81, 0.95);
+    border: none;
+    border-radius: 3px;
+    padding: 6px 9px;
     spacing: 4px;
     box-shadow: none;
     text-shadow: none;
@@ -63,16 +64,14 @@
     font-size: 13px;
     font-weight: 400;
 }
-.zaiko-log-composer:focus, .zaiko-input-overlay:focus {
-    border-color: #a0a6b1;
-}
+.zaiko-input-prompt { color: #a0a6b1; }
 .zaiko-log-entry, .zaiko-log-entry:focus,
 .zaiko-overlay-entry, .zaiko-overlay-entry:focus {
     color: #dcdfe4;
     background-color: transparent;
     border: none;
-    border-radius: 6px;
-    padding: 5px 7px;
+    border-radius: 3px;
+    padding: 0 3px;
     box-shadow: none;
     caret-color: #dcdfe4;
     selection-background-color: #3e4451;
@@ -80,27 +79,20 @@
     font-size: 13px;
     font-weight: 400;
 }
-.zaiko-log-entry StLabel, .zaiko-overlay-entry StLabel { color: #a0a6b1; }
-.zaiko-log-send, .zaiko-overlay-send {
+.zaiko-input-cancel {
     color: #a0a6b1;
     background-color: transparent;
     border: none;
-    border-radius: 7px;
-    padding: 6px;
+    border-radius: 3px;
+    padding: 0 3px;
     box-shadow: none;
 }
-.zaiko-log-send:hover, .zaiko-log-send:focus,
-.zaiko-overlay-send:hover, .zaiko-overlay-send:focus {
+.zaiko-input-cancel:hover, .zaiko-input-cancel:focus {
     color: #dcdfe4;
     background-color: rgba(220, 223, 228, 0.1);
 }
-.zaiko-log-send:active, .zaiko-overlay-send:active {
-    background-color: rgba(220, 223, 228, 0.16);
-}
-.zaiko-log-send:insensitive, .zaiko-overlay-send:insensitive {
-    color: #5c6370;
-    background-color: transparent;
-}
+.zaiko-input-cancel:active { background-color: rgba(220, 223, 228, 0.16); }
+.zaiko-input-cancel:insensitive { color: #5c6370; background-color: transparent; }
 .zaiko-scroll StScrollBar { width: 6px; min-width: 6px; min-height: 6px; padding: 0; }
 .zaiko-scroll-track#trough {
     background-color: rgba(92, 99, 112, 0.16);

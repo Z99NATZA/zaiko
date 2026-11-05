@@ -59,7 +59,7 @@ exec gnome-shell --headless --virtual-monitor=1440x1000 --wayland-display=zaiko-
                                    env=env, stdout=log, stderr=subprocess.STDOUT,
                                    start_new_session=True)
         try:
-            deadline = time.monotonic() + 70
+            deadline = time.monotonic() + 90
             while time.monotonic() < deadline:
                 if result_path.exists():
                     result = json.loads(result_path.read_text())

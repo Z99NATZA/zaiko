@@ -169,6 +169,9 @@ export class CommandMenu {
                 Clutter.ModifierType.MOD1_MASK | Clutter.ModifierType.SUPER_MASK))
             return Clutter.EVENT_PROPAGATE;
         const symbol = event.get_key_symbol();
+        if (!this.entry.clutter_text.single_line_mode && event.get_state() & Clutter.ModifierType.SHIFT_MASK &&
+            [Clutter.KEY_Return, Clutter.KEY_KP_Enter].includes(symbol))
+            return Clutter.EVENT_PROPAGATE;
         if ([Clutter.KEY_Up, Clutter.KEY_Down].includes(symbol))
             this._select(this._selected + (symbol === Clutter.KEY_Down ? 1 : -1));
         else if ([Clutter.KEY_Return, Clutter.KEY_KP_Enter, Clutter.KEY_Tab].includes(symbol))
