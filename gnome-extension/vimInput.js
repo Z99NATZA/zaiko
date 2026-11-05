@@ -1,10 +1,11 @@
 import Clutter from 'gi://Clutter';
+import GLib from 'gi://GLib';
 import {InputVim} from './vim.js';
 
 // Linux evdev positions, independent of the active keyboard layout.
 const NORMAL_KEYS = new Map([
     [5, ['4', '$']], [11, ['0', ')']],
-    [17, ['w', 'W']], [19, ['r', 'R']], [23, ['i', 'I']],
+    [17, ['w', 'W']], [19, ['r', 'R']], [23, ['i', 'I']], [24, ['o', 'O']],
     [30, ['a', 'A']], [32, ['d', 'D']], [35, ['h', 'H']],
     [38, ['l', 'L']], [46, ['c', 'C']], [48, ['b', 'B']],
 ]);
@@ -19,6 +20,7 @@ export class VimInput {
         this._enabled = false;
         this._available = false;
         this._cursorSize = this._text.get_cursor_size();
+        this._cursorSource = 0;
         this._signals = [];
         const connect = (actor, name, callback) => this._signals.push([actor, actor.connect(name, callback)]);
         connect(entry, 'captured-event', (_actor, event) => this._event(event));
@@ -30,16 +32,16 @@ export class VimInput {
         connect(this._text, 'notify::cursor-position', () => {
             if (!this._updating)
                 this._state.history = [];
-            this._syncCursor();
+            this._queueCursor();
         });
         connect(this._text, 'text-changed', () => {
             if (!this._updating) {
                 this._state.pending = '';
                 this._state.history = [];
             }
-            this._syncCursor();
+            this._queueCursor();
         });
-        connect(entry, 'style-changed', () => this._syncCursor());
+        connect(entry, 'style-changed', () => this._queueCursor());
     }
 
     setEnabled(enabled) {
@@ -61,9 +63,11 @@ export class VimInput {
     _normalCursor() {
         if (!this._enabled || this._state.mode !== 'normal' || this._text.get_selection())
             return;
-        const length = Array.from(this._text.text).length;
+        const characters = Array.from(this._text.text);
+        const length = characters.length;
         const cursor = this._text.get_cursor_position();
-        const position = Math.max(0, Math.min(cursor < 0 ? length : cursor, length - 1));
+        const last = length - (characters.at(-1) === '\n' ? 0 : 1);
+        const position = Math.max(0, Math.min(cursor < 0 ? length : cursor, last));
         this._text.set_selection(position, position);
     }
 
@@ -74,13 +78,24 @@ export class VimInput {
         this._syncCursor();
     }
 
+    _queueCursor() {
+        if (this._cursorSource)
+            return;
+        // Text-change signals can arrive before Clutter updates its Pango layout.
+        this._cursorSource = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            this._cursorSource = 0;
+            this._syncCursor();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
     _syncCursor() {
         const block = this._enabled && this._available && this._state.mode !== 'insert';
         let size = this._cursorSize;
         if (block) {
             const length = Array.from(this._text.text).length;
             const cursor = this._text.get_cursor_position();
-            const position = cursor < 0 ? length : cursor;
+            const position = cursor < 0 ? length : Math.min(cursor, length);
             const [startOk, x] = this._text.position_to_coords(position);
             const [endOk, nextX] = this._text.position_to_coords(Math.min(length, position + 1));
             size = startOk && endOk ? Math.max(8, Math.round(Math.abs(nextX - x))) : 8;
@@ -93,6 +108,26 @@ export class VimInput {
     }
 
     _event(event) {
+        if (event.type() === Clutter.EventType.KEY_PRESS && !this._text.single_line_mode &&
+            event.get_state() & Clutter.ModifierType.CONTROL_MASK &&
+            !(event.get_state() & (Clutter.ModifierType.MOD1_MASK | Clutter.ModifierType.SUPER_MASK)) &&
+            (event.get_event_code() === 36 || [Clutter.KEY_j, Clutter.KEY_J].includes(event.get_key_symbol()))) {
+            if (this._available) {
+                this._state.reset('insert');
+                this._updating = true;
+                try {
+                    this._text.delete_selection();
+                    const position = this._text.get_cursor_position();
+                    const cursor = position < 0 ? Array.from(this._text.text).length : position;
+                    this._text.insert_text('\n', cursor);
+                    this._text.set_selection(cursor + 1, cursor + 1);
+                } finally {
+                    this._updating = false;
+                }
+                this._sync();
+            }
+            return Clutter.EVENT_STOP;
+        }
         if (!this._enabled || !this._available)
             return Clutter.EVENT_PROPAGATE;
         if (event.type() === Clutter.EventType.BUTTON_PRESS && event.get_button() === Clutter.BUTTON_PRIMARY) {
@@ -152,6 +187,9 @@ export class VimInput {
     }
 
     destroy() {
+        if (this._cursorSource)
+            GLib.Source.remove(this._cursorSource);
+        this._cursorSource = 0;
         for (const [actor, id] of this._signals)
             actor.disconnect(id);
         this._signals = [];

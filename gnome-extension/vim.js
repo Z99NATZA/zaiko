@@ -1,7 +1,8 @@
 // Input editing adapted from zhyprbola/components/TaskVim.js and Todo.qml.
 // Clutter positions count Unicode code points, rather than UTF-16 code units.
 const kind = character => /\s/u.test(character) ? 0 : /[\p{L}\p{M}\p{N}_]/u.test(character) ? 1 : 2;
-const normal = (characters, cursor) => Math.max(0, Math.min(cursor, characters.length - 1));
+const normal = (characters, cursor) => Math.max(0,
+    Math.min(cursor, characters.length - (characters.at(-1) === '\n' ? 0 : 1)));
 
 export class InputVim {
     constructor() {
@@ -19,7 +20,7 @@ export class InputVim {
         let cursor = position < 0 ? characters.length : position;
         const result = () => ({handled: true, text: characters.join(''), cursor});
         if (key === 'Escape') {
-            if (this.mode !== 'normal')
+            if (this.mode !== 'normal' && cursor > 0 && characters[cursor - 1] !== '\n')
                 cursor--;
             this.reset();
             cursor = normal(characters, cursor);
@@ -68,7 +69,19 @@ export class InputVim {
             }
             return result();
         }
-        if (['h', 'Left', 'BackSpace'].includes(key)) {
+        if (key === 'o' || key === 'O') {
+            if (key === 'o') {
+                while (cursor < characters.length && characters[cursor] !== '\n')
+                    cursor++;
+                characters.splice(cursor, 0, '\n');
+                cursor++;
+            } else {
+                while (cursor > 0 && characters[cursor - 1] !== '\n')
+                    cursor--;
+                characters.splice(cursor, 0, '\n');
+            }
+            this.reset('insert');
+        } else if (['h', 'Left', 'BackSpace'].includes(key)) {
             cursor = Math.max(0, cursor - 1);
         } else if (['l', 'Right', ' '].includes(key)) {
             cursor = normal(characters, cursor + 1);

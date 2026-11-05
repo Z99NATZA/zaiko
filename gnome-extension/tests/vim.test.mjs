@@ -102,3 +102,44 @@ test('pending commands cancel on Escape and dd clears only the draft', () => {
     input.keys('!');
     assert.equal(input.text, 'fres!h');
 });
+
+test('o and O open logical lines above/below a Unicode draft and enter insert mode', () => {
+    for (const [text, cursor, key, expected, position] of [
+        ['alpha\nbeta\ngamma', 8, 'o', 'alpha\nbeta\n\ngamma', 11],
+        ['alpha\nbeta\ngamma', 8, 'O', 'alpha\n\nbeta\ngamma', 6],
+        ['alpha', 2, 'o', 'alpha\n', 6],
+        ['alpha', 2, 'O', '\nalpha', 0],
+        ['', 0, 'o', '\n', 1],
+        ['', 0, 'O', '\n', 0],
+        ['a\n\nb', 2, 'o', 'a\n\n\nb', 3],
+        ['a\n\nb', 2, 'O', 'a\n\n\nb', 2],
+        ['🙂ที่\nไทย', 2, 'o', '🙂ที่\n\nไทย', 5],
+        ['🙂ที่\nไทย', 6, 'O', '🙂ที่\n\nไทย', 5],
+    ]) {
+        const input = editor(text, cursor);
+        input.key(key);
+        assert.equal(input.text, expected);
+        assert.equal(input.cursor, position);
+        assert.equal(input.vim.mode, 'insert');
+        input.key('x');
+        const inserted = Array.from(expected);
+        inserted.splice(position, 0, 'x');
+        assert.equal(input.text, inserted.join(''));
+    }
+});
+
+test('Escape keeps the cursor on a newly opened blank line, including the last line', () => {
+    const input = editor('first');
+    input.key('o');
+    input.key('Escape');
+    assert.equal(input.cursor, 6);
+    input.key('o');
+    assert.equal(input.text, 'first\n\n');
+    assert.equal(input.cursor, 7);
+    input.key('Escape');
+    input.key('O');
+    assert.equal(input.text, 'first\n\n\n');
+    assert.equal(input.cursor, 7);
+    input.key('Escape');
+    assert.equal(input.cursor, 7);
+});

@@ -170,6 +170,10 @@ word. i inserts before the cursor, a after it, and A at the end. ciw changes the
 current word, C changes through the end, r replaces one character, and R replaces
 continuously; Backspace restores overwritten characters in R mode. dd clears
 only the current input draft. Conversation messages remain read-only.
+o opens a blank line below the current logical line; O opens one above it.
+Both enter insert mode and preserve the surrounding lines. Ctrl+J inserts a
+newline at the cursor (replacing any selection) without sending, with Vim on or
+off. In Vim normal or replace mode, Ctrl+J also enters insert mode.
 Normal-mode commands follow physical US QWERTY key positions, so the I key
 enters insert mode even with the Thai layout active. Shift selects uppercase
 commands such as A and R. Insert mode, continuous replace, and the replacement

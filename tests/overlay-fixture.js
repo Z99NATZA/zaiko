@@ -426,6 +426,11 @@ export default class OverlayQA extends ZaikoExtension {
                 this._keyboard.notify_key(GLib.get_monotonic_time(), 42, Clutter.KeyState.RELEASED);
             await qaPause(60);
         };
+        const ctrlJ = async () => {
+            this._keyboard.notify_key(GLib.get_monotonic_time(), 29, Clutter.KeyState.PRESSED);
+            await physical(36);
+            this._keyboard.notify_key(GLib.get_monotonic_time(), 29, Clutter.KeyState.RELEASED);
+        };
         try {
             settings.set_value('sources', new GLib.Variant('a(ss)', [['xkb', 'us'], ['xkb', 'th']]));
             await qaPause(120);
@@ -474,10 +479,35 @@ export default class OverlayQA extends ZaikoExtension {
                     await physical(code);
                 await physical(23);
                 qaAssert(entry.get_text() === 'ร two', 'Physical ciw commands work while Thai is active');
+                await this._key(Clutter.KEY_Escape);
+                entry.set_text('one\ntwo');
+                entry.clutter_text.set_cursor_position(1);
+                await physical(24); // o
+                qaAssert(entry.get_text() === 'one\n\ntwo' && vim._state.mode === 'insert',
+                    'Physical o opens a line below under Thai');
+                await physical(23);
+                qaAssert(entry.get_text() === 'one\nร\ntwo', 'Typing after o inserts Thai on the new line');
+                await this._key(Clutter.KEY_Escape);
+                await physical(24, true); // O
+                qaAssert(entry.get_text() === 'one\n\nร\ntwo' && entry.clutter_text.get_cursor_position() === 4 &&
+                    vim._state.mode === 'insert', 'Physical O opens a line above under Thai');
+                await this._key(Clutter.KEY_Escape);
+                entry.set_text('ab');
+                entry.clutter_text.set_selection(1, 1);
+                await ctrlJ();
+                qaAssert(entry.get_text() === 'a\nb' && vim._state.mode === 'insert' && entry.mapped,
+                    `Ctrl+J inserts a newline and enters insert mode without sending under Thai: ${JSON.stringify({text: entry.get_text(), mode: vim._state.mode, cursor: entry.clutter_text.get_cursor_position(), mapped: entry.mapped})}`);
+                entry.set_text('a🙂b');
+                entry.clutter_text.set_selection(1, 2);
+                await ctrlJ();
+                qaAssert(entry.get_text() === 'a\nb' && entry.clutter_text.get_cursor_position() === 2,
+                    'Ctrl+J replaces the selection with one newline');
                 this._toggleVim();
                 entry.set_text('');
                 await physical(23);
                 qaAssert(entry.get_text() === 'ร', 'Disabling Vim restores ordinary Thai typing');
+                await ctrlJ();
+                qaAssert(entry.get_text() === 'ร\n' && entry.mapped, 'Ctrl+J inserts a newline with Vim disabled too');
                 this._toggleVim();
             }
         } finally {
@@ -928,6 +958,12 @@ export default class OverlayQA extends ZaikoExtension {
             qaAssert(menus.every(menu => menu._signals.length === 0 && !menu.actor.get_parent()),
                 'Disable disconnects and destroys command pickers');
             this._qaResult({ok: true, checked: 'command picker: eight rows, keyboard/mouse scrolling, filtering, Tab/Enter/click, focus, Escape, Vim, busy state, lifecycle'});
+            return;
+        }
+        if (GLib.getenv('ZAIKO_QA_VIM_ONLY') === '1') {
+            await this._checkVimInputs();
+            this.disable();
+            this._qaResult({ok: true, checked: 'Vim editing, physical Thai keys, o/O/Ctrl+J, busy state and lifecycle'});
             return;
         }
         qaAssert(!this._inputOverlay.visible && !this._panel.visible, 'No input or support panel auto-opens on core connection');
