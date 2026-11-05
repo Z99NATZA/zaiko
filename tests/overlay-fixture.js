@@ -124,6 +124,18 @@ export default class OverlayQA extends ZaikoExtension {
 
     async _checkMessageCopy(label) {
         const text = label.clutter_text;
+        const draft = this._logEntry.get_text();
+        this._logEntry.set_text('log click draft');
+        for (const target of [this._panel, label, text]) {
+            global.stage.set_key_focus(null);
+            await qaPause(450);
+            await this._click(target);
+            qaAssert(this._logEntry.clutter_text.has_key_focus(),
+                `A plain click in Log background or a message focuses the input: ${JSON.stringify({target: target.toString(), selection: text.get_selection(), focus: global.stage.get_key_focus()?.toString()})}`);
+            qaAssert(this._logEntry.get_text() === 'log click draft' && this._panel.visible,
+                'Log clicks preserve the draft and keep the conversation open');
+        }
+        this._logEntry.set_text(draft);
         const clipboard = St.Clipboard.get_default();
         const readClipboard = () => new Promise(resolve =>
             clipboard.get_text(St.ClipboardType.CLIPBOARD, (_clipboard, value) => resolve(value)));
@@ -234,10 +246,10 @@ export default class OverlayQA extends ZaikoExtension {
         entry.grab_key_focus();
         entry.clutter_text.set_selection(0, -1);
         await this._click(this._logScroll);
-        qaAssert(!entry.clutter_text.get_selection() && !this._ownsFocus(global.stage.get_key_focus()),
-            'Blank space inside Log clears input selection and keyboard focus');
-        qaAssert(this._panel.visible && entry.get_text() === 'focus dismissal draft' &&
-            !entry.clutter_text.get_cursor_visible(), 'Log stays open with its draft and no active caret');
+        qaAssert(!entry.clutter_text.get_selection() && entry.clutter_text.has_key_focus(),
+            'Blank space inside Log clears input selection and focuses input');
+        qaAssert(this._panel.visible && entry.get_text() === 'focus dismissal draft',
+            'Log stays open with its draft after a background click');
 
         text.grab_key_focus();
         text.set_selection(7, -1);
@@ -246,8 +258,8 @@ export default class OverlayQA extends ZaikoExtension {
             'Clicking input clears the old message selection and focuses the input');
         entry.clutter_text.set_selection(0, -1);
         await this._click(label);
-        qaAssert(!entry.clutter_text.get_selection() && text.has_key_focus(),
-            'Clicking a message clears the old input selection and transfers focus');
+        qaAssert(!entry.clutter_text.get_selection() && entry.clutter_text.has_key_focus(),
+            'Clicking a message clears the old input selection and returns focus to input');
 
         const outside = new St.Widget({reactive: true, width: 80, height: 48});
         outside.set_position(300, 100);

@@ -55,6 +55,7 @@ export default class ZaikoExtension extends Extension {
         this._thinkingSource = 0;
         this._focusDismissSource = 0;
         this._selectionDrag = null;
+        this._logClick = null;
         this._dragOrigin = null;
         this._characterGrab = null;
         this._characterGrabSignal = 0;
@@ -659,6 +660,7 @@ export default class ZaikoExtension extends Extension {
     }
 
     _hidePanel() {
+        this._logClick = null;
         this._panelOpen = false;
         this._releaseFocus(true, [this._panel]);
         this._updateVisibility();
@@ -671,6 +673,38 @@ export default class ZaikoExtension extends Extension {
         this._inputOverlay.hide();
     }
 
+    _focusLogOnClick(event) {
+        const type = event.type();
+        if (type === Clutter.EventType.BUTTON_PRESS && event.get_button() === Clutter.BUTTON_PRIMARY) {
+            this._logClick = null;
+            const source = global.stage.get_event_actor(event);
+            if (!this._panel.contains(source) ||
+                this._ownsFocus(source, [this._logComposer, this._panelClose]))
+                return;
+            for (let actor = source; actor && actor !== this._panel; actor = actor.get_parent()) {
+                if (actor instanceof St.ScrollBar)
+                    return;
+            }
+            const [x, y] = event.get_coords();
+            this._logClick = {x, y};
+        } else if (this._logClick && type === Clutter.EventType.MOTION) {
+            const [x, y] = event.get_coords();
+            if (Math.hypot(x - this._logClick.x, y - this._logClick.y) > 6)
+                this._logClick = null;
+        } else if (type === Clutter.EventType.BUTTON_RELEASE && event.get_button() === Clutter.BUTTON_PRIMARY) {
+            const click = this._logClick;
+            this._logClick = null;
+            const [x, y] = event.get_coords();
+            // Wait for release so dragging a selection retains text focus.
+            if (click && Math.hypot(x - click.x, y - click.y) <= 6 && this._panel.visible &&
+                this._panel.contains(global.stage.get_event_actor(event)) &&
+                !this._logHistory.get_children().some(label => label.clutter_text.get_selection())) {
+                this._rememberFocus();
+                this._logEntry.grab_key_focus();
+            }
+        }
+    }
+
     _dismissFocusOutside(event) {
         if (this._selectionDrag && [Clutter.EventType.MOTION, Clutter.EventType.BUTTON_RELEASE].includes(event.type())) {
             const {text, anchor} = this._selectionDrag;
@@ -678,6 +712,7 @@ export default class ZaikoExtension extends Extension {
             if (event.type() === Clutter.EventType.BUTTON_RELEASE)
                 this._selectionDrag = null;
         }
+        this._focusLogOnClick(event);
         if (![Clutter.EventType.BUTTON_PRESS, Clutter.EventType.TOUCH_BEGIN].includes(event.type()))
             return Clutter.EVENT_PROPAGATE;
         const source = global.stage.get_event_actor(event);
@@ -930,10 +965,10 @@ export default class ZaikoExtension extends Extension {
         label.reactive = true;
         label.can_focus = true;
         text.reactive = true;
-        label.connect('button-press-event', (_actor, event) => {
-            // Native text selection handles the content; let the surrounding
-            // padding start a selection too, clamping to the nearest character.
-            if (event.get_button() !== Clutter.BUTTON_PRIMARY || global.stage.get_event_actor(event) !== label)
+        label.connect('captured-event', (_actor, event) => {
+            // Track content and padding together, keeping release observable so
+            // a plain click can focus the composer while a drag selects text.
+            if (event.type() !== Clutter.EventType.BUTTON_PRESS || event.get_button() !== Clutter.BUTTON_PRIMARY)
                 return Clutter.EVENT_PROPAGATE;
             this._rememberFocus();
             text.grab_key_focus();
