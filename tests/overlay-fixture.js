@@ -710,7 +710,7 @@ export default class OverlayQA extends ZaikoExtension {
             await this._click(this._langMenuItem);
             qaAssert(this._language === 'th' && this._characterMenu.isOpen &&
                 this._characterMenu._getMenuItems().map(item => item.label.text).join(',') ===
-                `พูดคุย,Vim: ${vimEnabled ? 'เปิด' : 'ปิด'},Lang: th,ปิด`,
+                `พูดคุย,Vim: ${vimEnabled ? 'เปิด' : 'ปิด'},ภาษา: th,ปิด`,
                 `Lang toggles to Thai, updates every menu row and keeps the menu open: ${JSON.stringify({language: this._language, open: this._characterMenu.isOpen, rows: this._characterMenu._getMenuItems().map(item => item.label.text)})}`);
             qaAssert(this._loadLanguage() === 'th', 'The language choice persists in language.json');
             qaAssert(this._answerHideSource === expiry && JSON.stringify(this._snapshot.messages) === messages &&
@@ -850,6 +850,10 @@ export default class OverlayQA extends ZaikoExtension {
             await this._key(Clutter.KEY_Return);
             qaAssert(calls.filter(call => call.method === 'Submit').length === 1 && calls.at(-1).args[1] === 'hello' &&
                 this._panel.visible && entry.get_text() === '', 'Vim Enter sends once and keeps Log open');
+            await qaPause(100);
+            qaAssert(controller(entry)._state.mode === 'insert' && text.has_key_focus() && text.editable &&
+                this._logVimMode.text === '--INSERT--',
+            `Sending keeps the Vim mode and input focus: ${JSON.stringify({mode: controller(entry)._state.mode, focus: text.has_key_focus()})}`);
             await this._checkThaiVimKeys();
             this._snapshot.state = 'thinking';
             this._renderSnapshot();
@@ -1750,7 +1754,7 @@ export default class OverlayQA extends ZaikoExtension {
         ZaikoExtension.prototype.enable.call(this);
         await qaPause(150);
         qaAssert(this._vimEnabled && this._vimMenuItem.label.text === 'Vim: เปิด' &&
-            this._language === 'th' && this._langMenuItem.label.text === 'Lang: th',
+            this._language === 'th' && this._langMenuItem.label.text === 'ภาษา: th',
             'Re-enabling restores both language and Vim preferences');
         this.disable();
         outside.destroy();

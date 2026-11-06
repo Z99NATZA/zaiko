@@ -172,8 +172,10 @@ export class VimInput {
                 this._sync();
                 return Clutter.EVENT_PROPAGATE;
             }
+            // Keep the mode after sending; the compact input resets when it closes.
+            this._state.pending = '';
+            this._state.history = [];
             this._submit();
-            this.leave();
             return Clutter.EVENT_STOP;
         }
         const special = new Map([

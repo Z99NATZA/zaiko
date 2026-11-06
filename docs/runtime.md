@@ -216,7 +216,8 @@ commands such as A and R. Insert mode, continuous replace, and the replacement
 character after r keep using the active layout for text.
 
 Escape returns to normal mode and keeps the input open. Enter still submits
-normally; busy inputs cannot be edited. Mouse clicks place the caret and
+normally; in Log, the input keeps its focus and Vim mode after sending. Busy
+inputs cannot be edited. Mouse clicks place the caret and
 select text natively without changing the Vim mode: only i, a, A and the other
 insert commands enter insert mode, and in normal mode the caret stays on a
 character. Clicking away preserves the draft and clears focus/selection. The
