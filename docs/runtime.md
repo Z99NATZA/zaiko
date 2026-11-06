@@ -148,6 +148,8 @@ messages, it can be included in the history of a later model request. Commands
 share the existing request-ID, cancellation, and active-request guards.
 Leading/trailing whitespace is ignored. /status takes no arguments; other slash
 commands return a local unsupported-command reply instead of reaching the model.
+Type /exit to quit Zaiko exactly like the Quit menu; the extension handles it
+without submitting it to the core. If Quit fails, the draft is restored.
 Typing / opens a command picker above the focused compact or Log composer.
 Each row shows a command and its description; typing filters command prefixes.
 The flat list aligns to the input's width, with shared command/description

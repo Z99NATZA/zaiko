@@ -295,6 +295,8 @@ export default class OverlayQA extends ZaikoExtension {
     }
 
     async _checkCommandHighlight(entry, menu) {
+        // Filter to /status first; the checks below type within one match set.
+        await this._key(Clutter.KEY_s);
         const statusRow = menu._rows[0];
         let remapped = 0;
         const mappingSignal = statusRow.connect('notify::mapped', () => { remapped++; });
@@ -324,7 +326,7 @@ export default class OverlayQA extends ZaikoExtension {
             return GLib.SOURCE_CONTINUE;
         });
         try {
-            for (const character of 'status') {
+            for (const character of 'tatus') {
                 await this._key(character.codePointAt(0));
                 qaAssert(menu._rows[0] === statusRow && statusRow.has_style_pseudo_class('selected') &&
                     entry.clutter_text.has_key_focus(),
@@ -361,7 +363,8 @@ export default class OverlayQA extends ZaikoExtension {
             const menu = this._commandMenus.find(candidate => candidate.entry === entry);
             entry.set_text('/');
             await qaPause(180);
-            qaAssert(menu.actor.visible && menu._rows.length === 1 && menu._matches[0].name === '/status',
+            qaAssert(menu.actor.visible && menu._rows.length === 2 &&
+                menu._matches.map(command => command.name).join() === '/status,/exit',
                 'The production picker contains only supported commands');
             await this._checkCommandHighlight(entry, menu);
             this._showLog();
@@ -373,7 +376,7 @@ export default class OverlayQA extends ZaikoExtension {
             this._showInput();
             entry.set_text('/');
             // Large-list fixtures exist only in this isolated compositor test.
-            const fixtures = [menu._commands[0], ...Array.from({length: 20}, (_, index) => ({
+            const fixtures = [...menu._commands, ...Array.from({length: 20}, (_, index) => ({
                 name: `/test${String(index + 1).padStart(3, '0')}`,
                 description: 'Isolated picker test fixture',
             }))];
@@ -382,7 +385,7 @@ export default class OverlayQA extends ZaikoExtension {
                 picker.hide();
                 picker.sync();
             }
-            const retained = menu._rows[1];
+            const retained = menu._rows[fixtures.findIndex(command => command.name === '/test001')];
             entry.set_text('/test00');
             qaAssert(menu._rows[0] === retained, 'Filtering moves a surviving row instead of rebuilding it');
             entry.set_text('/');
@@ -419,7 +422,7 @@ export default class OverlayQA extends ZaikoExtension {
                 'The leading marker follows keyboard selection');
             for (let index = 0; index < 13; index++)
                 await this._key(Clutter.KEY_Down);
-            qaAssert(menu._selected === 20 && Math.abs(adjustment.value - (adjustment.upper - adjustment.page_size)) <= 1,
+            qaAssert(menu._selected === fixtures.length - 1 && Math.abs(adjustment.value - (adjustment.upper - adjustment.page_size)) <= 1,
                 'Repeated Down stops at the final command and end of the scroll range');
             for (let index = 0; index < 11; index++)
                 await this._key(Clutter.KEY_Up);
@@ -452,6 +455,13 @@ export default class OverlayQA extends ZaikoExtension {
                 'Typing narrows the picker to the matching command');
             await this._key(Clutter.KEY_Return);
             qaAssert(calls.length === 3 && calls[2].args[1] === '/status', 'Enter executes the highlighted match once');
+            log.set_text('/ex');
+            await qaPause(80);
+            qaAssert(logMenu._rows.length === 1 && logMenu._matches[0].name === '/exit', 'The picker offers /exit');
+            await this._key(Clutter.KEY_Return);
+            qaAssert(calls.length === 4 && calls[3].method === 'Quit' && calls[3].args === undefined &&
+                log.get_text() === '',
+            `/exit quits like the Quit menu instead of submitting: ${JSON.stringify(calls.slice(3))}`);
             log.set_text('/s');
             await qaPause(80);
             await this._key(Clutter.KEY_Escape);
@@ -700,7 +710,7 @@ export default class OverlayQA extends ZaikoExtension {
             await this._click(this._langMenuItem);
             qaAssert(this._language === 'th' && this._characterMenu.isOpen &&
                 this._characterMenu._getMenuItems().map(item => item.label.text).join(',') ===
-                `พูดคุย,Vim: ${vimEnabled ? 'เปิด' : 'ปิด'},Lang: th,ออก`,
+                `พูดคุย,Vim: ${vimEnabled ? 'เปิด' : 'ปิด'},Lang: th,ปิด`,
                 `Lang toggles to Thai, updates every menu row and keeps the menu open: ${JSON.stringify({language: this._language, open: this._characterMenu.isOpen, rows: this._characterMenu._getMenuItems().map(item => item.label.text)})}`);
             qaAssert(this._loadLanguage() === 'th', 'The language choice persists in language.json');
             qaAssert(this._answerHideSource === expiry && JSON.stringify(this._snapshot.messages) === messages &&

@@ -158,7 +158,7 @@ impl Runtime {
             return None;
         }
         if name != "/status" {
-            return Some("ยังไม่รองรับคำสั่งนี้ค่ะ คำสั่งที่ใช้ได้: /status".into());
+            return Some("ยังไม่รองรับคำสั่งนี้ค่ะ คำสั่งที่ใช้ได้: /status, /exit".into());
         }
         if text != "/status" {
             return Some("ใช้ /status โดยไม่ใส่อาร์กิวเมนต์ค่ะ".into());

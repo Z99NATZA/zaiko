@@ -1341,6 +1341,14 @@ export default class ZaikoExtension extends Extension {
         const text = entry.get_text().trim();
         if (!text || this._busy() || !this._coreOwner)
             return;
+        // /exit is handled here, like the Quit menu, rather than by the core.
+        if (text === '/exit') {
+            entry.set_text('');
+            if (!await this._quitCore() && this._enabled &&
+                [this._overlayEntry, this._logEntry].includes(entry) && !entry.get_text())
+                entry.set_text(text);
+            return;
+        }
         const epoch = this._epoch;
         const requestId = GLib.uuid_string_random();
         this._pendingRequestId = requestId;
@@ -1400,11 +1408,13 @@ export default class ZaikoExtension extends Extension {
         const epoch = this._epoch;
         try {
             await this._callCore('Quit');
+            return true;
         } catch (_error) {
             if (this._enabled && epoch === this._epoch) {
                 this._uiError = 'error.quit';
                 this._renderSnapshot();
             }
+            return false;
         }
     }
 

@@ -17,6 +17,7 @@
   "speaker.me": "ฉัน",
   "speaker.action": "การทำงาน",
   "command.status": "แสดงโมเดล สถานะ และสิทธิ์ปัจจุบัน",
+  "command.exit": "ปิด",
   "status.sending": "กำลังส่ง…",
   "status.thinking": "กำลังคิด... ({elapsed})",
   "status.opening": "กำลังเปิดแอป…",

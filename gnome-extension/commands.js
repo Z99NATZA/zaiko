@@ -1,5 +1,6 @@
 export const SLASH_COMMANDS = Object.freeze([
     {name: '/status', descriptionKey: 'command.status'},
+    {name: '/exit', descriptionKey: 'command.exit'},
 ]);
 
 export const COMMAND_VISIBLE_ROWS = 8;

@@ -17,6 +17,7 @@
   "speaker.me": "Me",
   "speaker.action": "Action",
   "command.status": "Show the current model, status and permissions",
+  "command.exit": "Quit Zaiko, like the Quit menu",
   "status.sending": "Sending…",
   "status.thinking": "Thinking... ({elapsed})",
   "status.opening": "Opening app…",

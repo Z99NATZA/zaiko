@@ -27,7 +27,8 @@ Reject a second active request and duplicate request IDs without executing again
 Submit recognizes /status after trimming whitespace and responds locally without
 constructing a provider client or running tools, including when configuration is
 invalid. It reports the state before reserving this request, provider/model, and
-current permission boundaries. Arguments and unknown slash commands receive local
+current permission boundaries. /exit never reaches Submit: the extension calls
+Quit instead. Arguments and unknown slash commands receive local
 usage/unsupported replies. Local replies use the normal message/state events and
 retained history; the same active-slot and request-ID guards apply.
 Only terminal and vscode are valid app aliases.
