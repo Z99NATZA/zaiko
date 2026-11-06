@@ -174,3 +174,27 @@ test('Escape keeps the cursor on a newly opened blank line, including the last l
     input.key('Escape');
     assert.equal(input.cursor, 7);
 });
+
+test('j and k move between lines and keep the wanted column', () => {
+    const input = editor('abcdef\nxy\n\nกขคงจ', 4);
+    input.key('j'); assert.equal(input.cursor, 8);
+    input.key('j'); assert.equal(input.cursor, 10);
+    input.key('j'); assert.equal(input.cursor, 15);
+    input.key('j'); assert.equal(input.cursor, 15);
+    input.key('k'); assert.equal(input.cursor, 10);
+    input.key('k'); assert.equal(input.cursor, 8);
+    input.key('k'); assert.equal(input.cursor, 4);
+    input.key('k'); assert.equal(input.cursor, 4);
+    input.key('h'); input.key('j'); assert.equal(input.cursor, 8);
+    assert.equal(input.text, 'abcdef\nxy\n\nกขคงจ');
+});
+
+test('j and k line up Thai text by visible cells, never landing on a combining mark', () => {
+    // "ที่นี่" has 6 code points but 2 visible cells; "สวัสดี" has 6 code points, 4 cells.
+    const input = editor('ที่นี่\nสวัสดี', 3);
+    input.key('j'); assert.equal(input.cursor, 8);
+    input.key('$'); input.key('k'); assert.equal(input.cursor, 3);
+    input.key('j'); assert.equal(input.cursor, 11);
+    const at = (text, cursor, key, measure) => new InputVim().handle(text, cursor, key, measure).cursor;
+    assert.equal(at('ab\nxy', 1, 'j', position => position < 3 ? position * 10 : (position - 3) * 4), 4);
+});

@@ -6,7 +6,7 @@ import {InputVim} from './vim.js';
 const NORMAL_KEYS = new Map([
     [5, ['4', '$']], [11, ['0', ')']],
     [17, ['w', 'W']], [19, ['r', 'R']], [23, ['i', 'I']], [24, ['o', 'O']],
-    [30, ['a', 'A']], [32, ['d', 'D']], [35, ['h', 'H']],
+    [30, ['a', 'A']], [32, ['d', 'D']], [35, ['h', 'H']], [36, ['j', 'J']], [37, ['k', 'K']],
     [38, ['l', 'L']], [46, ['c', 'C']], [48, ['b', 'B']],
 ]);
 
@@ -178,7 +178,8 @@ export class VimInput {
             ? physical[event.get_state() & Clutter.ModifierType.SHIFT_MASK ? 1 : 0] : character);
         if (!key)
             return Clutter.EVENT_PROPAGATE;
-        const result = this._state.handle(this._text.text, this._text.get_cursor_position(), key);
+        const result = this._state.handle(this._text.text, this._text.get_cursor_position(), key,
+            position => this._text.position_to_coords(position)[1]);
         if (!result.handled)
             return Clutter.EVENT_PROPAGATE;
         this._updating = true;
