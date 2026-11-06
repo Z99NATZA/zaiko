@@ -842,6 +842,7 @@ export default class ZaikoExtension extends Extension {
     _hidePanel() {
         this._logClick = null;
         this._panelOpen = false;
+        this._vimInputs.find(vim => vim.entry === this._logEntry)?.leave();
         this._releaseFocus(true, [this._panel]);
         this._updateVisibility();
     }

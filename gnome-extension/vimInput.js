@@ -26,8 +26,12 @@ export class VimInput {
         connect(entry, 'captured-event', (_actor, event) => this._event(event));
         if (keepsFocus) {
             connect(global.stage, 'notify::key-focus', () => {
-                if (!entry.menu?.isOpen && !keepsFocus(global.stage.get_key_focus()))
-                    this.leave();
+                // Log stays open while focus is elsewhere, so keep its mode
+                // for when the user comes back; closing Log calls leave().
+                if (!entry.menu?.isOpen && !keepsFocus(global.stage.get_key_focus())) {
+                    this._state.pending = '';
+                    this._state.history = [];
+                }
             });
         } else {
             connect(this._text, 'key-focus-out', () => {
@@ -91,6 +95,11 @@ export class VimInput {
         // Text-change signals can arrive before Clutter updates its Pango layout.
         this._cursorSource = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
             this._cursorSource = 0;
+            // A click can place the caret past the last character.
+            if (this._clicked) {
+                this._clicked = false;
+                this._normalCursor();
+            }
             this._syncCursor();
             return GLib.SOURCE_REMOVE;
         });
@@ -137,9 +146,10 @@ export class VimInput {
         }
         if (!this._enabled || !this._available)
             return Clutter.EVENT_PROPAGATE;
+        // Clicks only place the caret natively; entering insert mode needs i.
         if (event.type() === Clutter.EventType.BUTTON_PRESS && event.get_button() === Clutter.BUTTON_PRIMARY) {
-            this._state.reset('insert');
-            this._sync();
+            this._state.pending = '';
+            this._clicked = true;
             return Clutter.EVENT_PROPAGATE;
         }
         if (event.type() !== Clutter.EventType.KEY_PRESS)

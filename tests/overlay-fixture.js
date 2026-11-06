@@ -529,6 +529,23 @@ export default class OverlayQA extends ZaikoExtension {
                 entry.set_text('');
                 entry.grab_key_focus();
                 vim.leave();
+                entry.set_text('abc');
+                {
+                    const [entryX, entryY] = entry.get_transformed_position();
+                    const [entryWidth, entryHeight] = entry.get_transformed_size();
+                    this._pointer.notify_absolute_motion(GLib.get_monotonic_time(),
+                        entryX + entryWidth - 6, entryY + entryHeight / 2);
+                    await qaPause(40);
+                    this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
+                    await qaPause(50);
+                    this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
+                    await qaPause(140);
+                }
+                qaAssert(vim._state.mode === 'normal' && entry.clutter_text.get_cursor_position() === 2 &&
+                    entry.get_text() === 'abc',
+                `Clicking past the text keeps normal mode with the caret on the last character: ${JSON.stringify({mode: vim._state.mode, cursor: entry.clutter_text.get_cursor_position()})}`);
+                entry.set_text('');
+                vim.leave();
                 await physical(23); // US I / Thai ร
                 qaAssert(vim._state.mode === 'insert' && entry.get_text() === '',
                     'Physical I enters insert mode under Thai without inserting a character');
@@ -639,9 +656,16 @@ export default class OverlayQA extends ZaikoExtension {
                         'Typing continues in insert mode immediately after a Log click');
                 }
                 await this._click(outside);
-                qaAssert(vim._state.mode === 'normal' && !entry.clutter_text.has_key_focus(),
-                    'Clicking outside Log still exits Vim insert/replace mode');
+                qaAssert(vim._state.mode === mode && !entry.clutter_text.has_key_focus(),
+                    `Clicking outside Log keeps its Vim mode: ${JSON.stringify({mode, actual: vim._state.mode})}`);
+                await this._click(this._logScroll);
+                qaAssert(vim._state.mode === mode && entry.clutter_text.has_key_focus(),
+                    'Returning to Log continues in the same Vim mode');
             }
+            vim._state.reset('insert');
+            this._hidePanel();
+            this._showLog();
+            qaAssert(vim._state.mode === 'normal', 'Closing Log returns its input to normal mode');
         } finally {
             outside.destroy();
             label.destroy();
@@ -816,8 +840,12 @@ export default class OverlayQA extends ZaikoExtension {
             qaAssert(compact.get_text() === 'draft!' && controller(compact)._state.mode === 'normal' && this._inputOverlay.visible,
                 'Compact input supports append and Escape without hiding the draft');
             await this._click(compact);
+            qaAssert(controller(compact)._state.mode === 'normal' && !compact.clutter_text.editable &&
+                compact.get_text() === 'draft!',
+            'Mouse clicks keep normal mode; only insert commands such as i enter insert mode');
+            await keys('i');
             qaAssert(controller(compact)._state.mode === 'insert' && compact.clutter_text.editable,
-                'Mouse clicks retain standard caret placement and enter insert mode');
+                'i enters insert mode after a click');
             this._openCharacterMenu();
             await qaPause(200);
             const beforeToggle = compact.get_text();

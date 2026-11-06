@@ -209,12 +209,15 @@ commands such as A and R. Insert mode, continuous replace, and the replacement
 character after r keep using the active layout for text.
 
 Escape returns to normal mode and keeps the input open. Enter still submits
-normally; busy inputs cannot be edited. Mouse clicks enter insert
-mode with native caret placement and selection. Clicking away preserves the
-draft, clears focus/selection and returns to normal mode. Copy/Paste stays
-available. Turning Vim off restores ordinary typing and Escape behavior.
-Plain clicks on Log background or transcript text return focus to its input
-without changing the current Vim mode. Leaving Log still returns to normal mode.
+normally; busy inputs cannot be edited. Mouse clicks place the caret and
+select text natively without changing the Vim mode: only i, a, A and the other
+insert commands enter insert mode, and in normal mode the caret stays on a
+character. Clicking away preserves the draft and clears focus/selection. The
+compact input then closes and returns to normal mode, while Log stays open and
+keeps its Vim mode, so clicking back into Log continues in the same mode.
+Copy/Paste stays available. Turning Vim off restores ordinary typing and Escape
+behavior. Plain clicks on Log background or transcript text return focus to its
+input without changing the current Vim mode. Closing Log returns to normal mode.
 
 Fixed appearance
 ----------
