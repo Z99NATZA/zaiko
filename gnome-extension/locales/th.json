@@ -1,7 +1,7 @@
 {
   "menu.log": "พูดคุย",
   "menu.vim": "Vim: {state}",
-  "menu.language": "Lang: {language}",
+  "menu.language": "ภาษา: {language}",
   "menu.quit": "ปิด",
   "state.on": "เปิด",
   "state.off": "ปิด",
@@ -13,7 +13,7 @@
   "accessibility.close": "ปิดประวัติสนทนา",
   "accessibility.message": "ข้อความ",
   "accessibility.cancel": "หยุดคำขอ",
-  "log.empty": "ยังไม่มีการสนทนา",
+  "log.empty": "ดีค่ะ x>_<x",
   "speaker.me": "ฉัน",
   "speaker.action": "การทำงาน",
   "command.status": "แสดงโมเดล สถานะ และสิทธิ์ปัจจุบัน",

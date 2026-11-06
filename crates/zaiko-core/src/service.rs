@@ -167,14 +167,26 @@ impl Runtime {
             Ok(config) => (config.provider.name(), config.model.as_str()),
             Err(_) => ("ยังไม่พร้อม", "ยังไม่พร้อม"),
         };
-        let mut reply = format!(
-            "สถานะ: {}\nProvider: {provider}\nModel: {model}\nสิทธิ์: บัญชีผู้ใช้ปัจจุบัน (ไม่มี sandbox)\nการป้องกันไฟล์/โฟลเดอร์สำคัญ: ยังไม่มี",
-            snapshot.state,
-        );
+        let state = match snapshot.state {
+            "idle" => "● ว่าง",
+            "thinking" => "● กำลังคิด",
+            "working" => "● กำลังทำงาน",
+            "error" => "● ผิดพลาด",
+            _ => "●",
+        };
+        // Replies render after "[Aiko] ", so continuation lines are indented
+        // by its width. Thai uses a proportional fallback font even when the
+        // desktop font is monospace, so labels are not padded into columns.
+        let mut lines = vec![
+            format!("สถานะ: {state} ({})", snapshot.state),
+            format!("โมเดล: {provider} · {model}"),
+            "สิทธิ์: บัญชีผู้ใช้ปัจจุบัน · ไม่มี sandbox".to_owned(),
+            "ไฟล์/โฟลเดอร์สำคัญ: ยังไม่มีการป้องกัน".to_owned(),
+        ];
         if let Err(error) = &self.config {
-            reply.push_str(&format!("\nการตั้งค่า: {error}"));
+            lines.push(format!("การตั้งค่า: {error}"));
         }
-        Some(reply)
+        Some(lines.join("\n       "))
     }
 
     async fn accept(
@@ -651,10 +663,11 @@ mod tests {
         }));
         let state = runtime.state.lock().await;
         let reply = runtime.slash_reply("/status", &state.snapshot).unwrap();
-        assert!(reply.contains("สถานะ: idle"));
-        assert!(reply.contains("Provider: deepseek\nModel: test-model"));
-        assert!(reply.contains("ไม่มี sandbox"));
-        assert!(reply.contains("การป้องกันไฟล์/โฟลเดอร์สำคัญ: ยังไม่มี"));
+        assert_eq!(
+            reply,
+            "สถานะ: ● ว่าง (idle)\n       โมเดล: deepseek · test-model\n       \
+             สิทธิ์: บัญชีผู้ใช้ปัจจุบัน · ไม่มี sandbox\n       ไฟล์/โฟลเดอร์สำคัญ: ยังไม่มีการป้องกัน"
+        );
         assert!(!reply.contains("dummy-secret-value"));
         assert!(runtime.slash_reply("สวัสดี", &state.snapshot).is_none());
     }

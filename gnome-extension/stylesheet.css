@@ -65,6 +65,13 @@
     font-weight: 400;
 }
 .zaiko-input-prompt { color: #a0a6b1; }
+.zaiko-log-bottom { spacing: 4px; }
+.zaiko-log-footer { padding: 0 2px; spacing: 8px; font-size: 11px; font-weight: 400; }
+.zaiko-log-model { color: #a0a6b1; }
+.zaiko-vim-mode { color: #a0a6b1; font-weight: 600; }
+.zaiko-vim-insert { color: #98c379; }
+.zaiko-vim-normal { color: #c678dd; }
+.zaiko-vim-replace { color: #e06c75; }
 .zaiko-log-entry, .zaiko-log-entry:focus,
 .zaiko-overlay-entry, .zaiko-overlay-entry:focus {
     color: #dcdfe4;

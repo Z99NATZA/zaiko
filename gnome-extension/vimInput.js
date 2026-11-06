@@ -11,11 +11,12 @@ const NORMAL_KEYS = new Map([
 ]);
 
 export class VimInput {
-    constructor(entry, caret, submit, keepsFocus = null) {
+    constructor(entry, caret, submit, keepsFocus = null, onMode = null) {
         this.entry = entry;
         this._text = entry.clutter_text;
         this._caret = caret;
         this._submit = submit;
+        this._onMode = onMode;
         this._state = new InputVim();
         this._enabled = false;
         this._available = false;
@@ -86,6 +87,7 @@ export class VimInput {
         const mode = this._enabled && this._available ? this._state.mode : null;
         this._text.editable = this._available && mode !== 'normal';
         this._caret.setVimMode(mode);
+        this._onMode?.(mode);
         this._syncCursor();
     }
 

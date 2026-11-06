@@ -134,7 +134,7 @@ async fn slash_commands_work_without_provider_config_and_keep_request_guards() {
         .as_str()
         .unwrap();
     // A successful reply with no API key proves this did not enter the provider path.
-    assert!(reply.contains("สถานะ: error"));
+    assert!(reply.starts_with("สถานะ: ● ผิดพลาด (error)"));
     assert!(reply.contains("OPENAI_API_KEY"));
     assert!(reply.contains("ไม่มี sandbox"));
     assert!(result["error"].is_null());
@@ -154,7 +154,7 @@ async fn slash_commands_work_without_provider_config_and_keep_request_guards() {
     for (id, text, expected) in [
         ("status-args", "/status extra", "ไม่ใส่อาร์กิวเมนต์"),
         ("unknown-command", "/permissions", "ยังไม่รองรับคำสั่งนี้"),
-        ("status-again", "/status", "สถานะ: idle"),
+        ("status-again", "/status", "สถานะ: ● ว่าง (idle)"),
         ("removed-mock", "/s001", "ยังไม่รองรับคำสั่งนี้"),
     ] {
         proxy.call::<_, _, ()>("Submit", &(id, text)).await.unwrap();

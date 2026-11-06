@@ -94,7 +94,8 @@ export default class ZaikoExtension extends Extension {
                 const keepsFocus = entry === this._logEntry
                     ? focus => this._ownsFocus(focus, [this._panel, ...this._logMessageMenus().map(menu => menu.actor)])
                     : null;
-                const vim = new VimInput(entry, caret, () => this._submit(entry), keepsFocus);
+                const onMode = entry === this._logEntry ? mode => this._renderLogVimMode(mode) : null;
+                const vim = new VimInput(entry, caret, () => this._submit(entry), keepsFocus, onMode);
                 this._vimInputs.push(vim);
                 vim.setEnabled(this._vimEnabled);
                 vim.setAvailable(Boolean(this._coreOwner && !this._busy()));
@@ -444,9 +445,20 @@ export default class ZaikoExtension extends Extension {
         this._logEntry = entry;
         this._logInputScroll = scroll;
         this._logCancel = cancel;
+        // The footer sits close under the input, outside the panel's wider spacing.
+        const bottom = new St.BoxLayout({vertical: true, style_class: 'zaiko-log-bottom', x_expand: true});
+        bottom.add_child(actor);
+        this._logFooter = new St.BoxLayout({style_class: 'zaiko-log-footer', x_expand: true, visible: false});
+        this._logModel = new St.Label({text: '', style_class: 'zaiko-log-model', x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER});
+        this._logModel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        this._logVimMode = new St.Label({text: '', style_class: 'zaiko-vim-mode', y_align: Clutter.ActorAlign.CENTER});
+        this._logFooter.add_child(this._logModel);
+        this._logFooter.add_child(this._logVimMode);
+        bottom.add_child(this._logFooter);
         this._panel.connect('notify::allocation', () => this._queueComposerLayout());
         this._logStatus.connect('notify::allocation', () => this._queueComposerLayout());
-        this._panelContent.add_child(actor);
+        this._panelContent.add_child(bottom);
     }
 
     _createComposer(styleClass, entryClass) {
@@ -524,7 +536,8 @@ export default class ZaikoExtension extends Extension {
         let available = Math.max(1, (this._workArea()?.height ?? 400) - 16 - chromeHeight);
         if (actor === this._logComposer) {
             const contentNode = this._panelContent.get_theme_node();
-            const statusHeight = this._logStatus.visible ? this._logStatus.height + 12 : 0;
+            const statusHeight = (this._logStatus.visible ? this._logStatus.height + 12 : 0) +
+                (this._logFooter.visible ? this._logFooter.height + 4 : 0);
             // Reserve space for the transcript, with no fixed input row limit.
             available = this._panel.height - contentNode.get_padding(St.Side.TOP) -
                 contentNode.get_padding(St.Side.BOTTOM) - chromeHeight - statusHeight - 12 - 40 - 2;
@@ -1116,11 +1129,29 @@ export default class ZaikoExtension extends Extension {
         this._logStatus.text = status ? `[Aiko] ${status}` : '';
         this._logStatus.visible = Boolean(this._logStatus.text);
         this._logStatus.set_style_class_name(`zaiko-log-status${error ? ' zaiko-log-error' : ''}`);
+        this._logModel.text = this._snapshot.model ?? '';
+        this._syncLogFooter();
         this._logCancel.visible = busy;
         this._logCancel.label = this._t(this._cancelling ? 'action.stopping' : 'action.stop');
         this._logCancel.reactive = Boolean(this._coreOwner && !this._cancelling);
         this._logCancel.can_focus = this._logCancel.reactive;
         this._setEntryAvailable(this._logEntry, Boolean(this._coreOwner && !busy));
+    }
+
+    _renderLogVimMode(mode) {
+        if (!this._logVimMode)
+            return;
+        this._logVimMode.text = mode ? `--${mode.toUpperCase()}--` : '';
+        this._logVimMode.set_style_class_name(`zaiko-vim-mode${mode ? ` zaiko-vim-${mode}` : ''}`);
+        this._syncLogFooter();
+    }
+
+    _syncLogFooter() {
+        const visible = Boolean(this._logModel.text || this._logVimMode.text);
+        if (this._logFooter.visible === visible)
+            return;
+        this._logFooter.visible = visible;
+        this._queueComposerLayout();
     }
 
     _wrappedLabel(text, styleClass) {
@@ -1537,6 +1568,9 @@ export default class ZaikoExtension extends Extension {
         this._logEntry = null;
         this._logInputScroll = null;
         this._logCancel = null;
+        this._logFooter = null;
+        this._logModel = null;
+        this._logVimMode = null;
         this._logStatus = null;
         this._character = null;
         this._image = null;

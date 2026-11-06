@@ -194,6 +194,10 @@ open and the label immediately shows the current value. The choice is saved in
 ~/.config/zaiko/input-vim-enabled (following XDG_CONFIG_HOME), independently of
 zhyprbola. It applies to both the compact input and the Log input.
 
+A small footer under the Log input shows the current model on the left and,
+while Vim is on, the mode on the right: --NORMAL-- in purple (#c678dd, matching
+[Aiko]), --INSERT-- in green (#98c379, matching Me) and --REPLACE-- in red.
+
 Following zhyprbola Tasks, normal mode uses a steady block cursor. h/l or the
 left/right arrows move by character, j/k move down/up a line (keeping the
 column), 0/$ move to the start/end, and b/w move by

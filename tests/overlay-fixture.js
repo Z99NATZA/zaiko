@@ -802,7 +802,24 @@ export default class OverlayQA extends ZaikoExtension {
                 'Log Vim changes the inner word and Escape keeps the input open in normal mode');
             qaAssert(!text.editable && text.get_cursor_visible() && text.get_cursor_size() >= 8 &&
                 (await qaCaretPhases(text, 200)).size === 1, 'Normal mode has a steady block cursor and blocks plain typing');
+            this._snapshot.model = 'gpt-6.1-sol';
+            this._renderSnapshot();
+            qaAssert(this._logFooter.visible && this._logModel.text === 'gpt-6.1-sol' &&
+                this._logVimMode.text === '--NORMAL--' &&
+                qaColor(this._logVimMode.get_theme_node().get_foreground_color(), '#c678dd'),
+            'Log footer shows the model on the left and a purple --NORMAL-- on the right');
+            const [footerX] = this._logFooter.get_transformed_position();
+            const [modeX] = this._logVimMode.get_transformed_position();
+            qaAssert(modeX + this._logVimMode.width >= footerX + this._logFooter.width - 3 &&
+                this._logFooter.get_transformed_position()[1] >= this._logComposer.get_transformed_position()[1] + this._logComposer.height,
+            'Vim mode is right-aligned below the input');
             await this._shot('vim-normal-input');
+            await keys('i');
+            qaAssert(this._logVimMode.text === '--INSERT--' &&
+                qaColor(this._logVimMode.get_theme_node().get_foreground_color(), '#98c379'),
+            'Insert mode shows a green --INSERT--');
+            await this._shot('vim-insert-footer');
+            await this._key(Clutter.KEY_Escape);
             await keys('0rX');
             qaAssert(entry.get_text() === 'Xlpha new tail', 'Native key events replace a single input character');
             await keys('RZQ');
