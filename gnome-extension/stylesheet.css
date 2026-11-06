@@ -117,18 +117,19 @@
 .zaiko-scroll-thumb.vhandle:active, .zaiko-scroll-thumb.hhandle:active { background-color: #a0a6b1; }
 .zaiko-answer {
     color: #dcdfe4;
-    background-color: transparent;
-    border: none;
-    border-radius: 0;
-    padding: 0;
+    /* Same surface and border as Log; the tail in extension.js matches them. */
+    background-color: rgba(40, 44, 52, 0.9);
+    border: 1px solid #3e4451;
+    border-radius: 12px;
+    padding: 8px 12px;
     margin: 0;
     box-shadow: none;
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+    text-shadow: none;
     font-family: sans-serif;
     font-size: 14px;
     font-weight: 400;
 }
-.zaiko-answer.zaiko-answer-error { color: #dcdfe4; font-weight: 500; }
+.zaiko-answer.zaiko-answer-error { color: #e06c75; font-weight: 500; }
 .zaiko-context {
     color: #dcdfe4;
     text-shadow: none;

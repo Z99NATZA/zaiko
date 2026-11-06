@@ -19,7 +19,7 @@ test('Thai and English JSON catalogs have matching keys, strings and placeholder
 
 test('translations interpolate literal values and fall back to English or the key', () => {
     const th = createTranslator(catalogs, 'th');
-    assert.equal(th('menu.language', {language: 'th'}), 'Lang: th');
+    assert.equal(th('menu.language', {language: 'th'}), 'ภาษา: th');
     assert.equal(th('status.thinking', {elapsed: '$& <tag>'}), 'กำลังคิด... ($& <tag>)');
     assert.equal(th('status.thinking'), 'กำลังคิด... ({elapsed})');
     assert.equal(createTranslator({en: catalogs.en, th: {}}, 'th')('menu.quit'), 'Quit');

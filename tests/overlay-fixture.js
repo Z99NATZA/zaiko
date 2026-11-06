@@ -1327,9 +1327,24 @@ export default class OverlayQA extends ZaikoExtension {
         await qaPause(160);
         const shortHeight = this._answerLabel.height;
         qaAssert(this._answerLabel.visible && this._answerLabel.text === '[Aiko] สวัสดีค่ะ ไอโกะอยู่นี่นะคะ 😊', 'Plain answer contains Aiko prefix');
-        qaAssert(this._answerLabel.get_theme_node().get_background_color().alpha === 0, 'Answer has no background');
-        for (const side of [St.Side.TOP, St.Side.RIGHT, St.Side.BOTTOM, St.Side.LEFT])
-            qaAssert(this._answerLabel.get_theme_node().get_padding(side) === 0, 'Answer reserves no bubble padding');
+        const bubble = this._answerLabel.get_theme_node();
+        qaAssert(bubble.get_background_color().alpha === this._panel.get_theme_node().get_background_color().alpha &&
+            bubble.get_border_width(St.Side.TOP) === 1 && qaColor(bubble.get_border_color(St.Side.TOP), '#3e4451'),
+        'The bubble matches the Log transparency and border');
+        qaAssert(qaColor(bubble.get_background_color(), '#282c34') && bubble.get_border_radius(St.Corner.TOPLEFT) === 12 &&
+            bubble.get_padding(St.Side.LEFT) === 12 && bubble.get_padding(St.Side.TOP) === 8,
+        'Answer is a rounded One Half Dark bubble with padding');
+        qaAssert(this._answerLabel.width < 320, `Short answers shrink the bubble to their text: ${this._answerLabel.width}`);
+        const prefixColor = qaTextColorAt(this._answerLabel, 1);
+        const answerBodyColor = qaTextColorAt(this._answerLabel, 8);
+        qaAssert(prefixColor?.startsWith('#c6c6') && answerBodyColor !== prefixColor && Number.parseInt(answerBodyColor?.slice(1, 3) ?? 'ff', 16) >= 0xd0,
+            `The bubble prefix is purple and the body stays light: ${JSON.stringify({prefixColor, answerBodyColor})}`);
+        qaAssert(this._answerLabel.clutter_text.get_layout().get_line_count() === 1,
+            `A short reply fits on one line inside its bubble: ${JSON.stringify({width: this._answerLabel.width, height: this._answerLabel.height, natural: this._answerLabel.get_preferred_width(-1), textWidth: this._answerLabel.clutter_text.width, layout: this._answerLabel.clutter_text.get_layout().get_pixel_size(), lines: this._answerLabel.clutter_text.get_layout().get_line_count(), max: this._answerMaxWidth})}`);
+        qaAssert(this._answerTail.visible && this._answerTail.y === this._answerLabel.y + this._answerLabel.height - 1 &&
+            this._answerTail.y + this._answerTail.height <= this._character.y &&
+            this._answerTail.x >= this._answerLabel.x && this._answerTail.x + this._answerTail.width <= this._answerLabel.x + this._answerLabel.width,
+        'The bubble tail sits under the bubble and points at the character');
         qaAssert(this._answerLabel.y + this._answerLabel.height <= this._character.y, 'Answer above character');
         outside.hide();
         await this._shot('plain-answer-input');
@@ -1401,7 +1416,9 @@ export default class OverlayQA extends ZaikoExtension {
         await qaPause(250);
         qaAssert(this._answerLabel.get_theme_node().get_font().get_family() === 'Serif', 'Desktop font family applies to plain answers');
         qaAssert(this._answerLabel.clutter_text.get_layout().get_line_count() <= 5, 'Text scaling keeps five rendered lines');
-        qaAssert(Math.abs(this._answerLabel.height - this._answerLabel.clutter_text.get_layout().get_pixel_size()[1]) <= 1, 'Text height matches actual shaped text');
+        qaAssert(Math.abs(this._answerLabel.height - this._answerLabel.get_theme_node().get_padding(St.Side.TOP) -
+            this._answerLabel.get_theme_node().get_padding(St.Side.BOTTOM) - 2 -
+            this._answerLabel.clutter_text.get_layout().get_pixel_size()[1]) <= 1, 'Text height matches actual shaped text');
         this._interfaceSettings.set_string('font-name', 'Sans 11');
         this._interfaceSettings.set_double('text-scaling-factor', 1.0);
         await qaPause(250);
@@ -1605,7 +1622,7 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(!this._overlayCancel.visible && !this._overlayEntry.hint_text &&
             this._inputOverlay.get_theme_node().get_border_width(St.Side.LEFT) === 0,
         'Compact input has no placeholder, send control or focus border');
-        qaAssert(this._answerLabel.get_theme_node().get_background_color().alpha === 0, 'Reply remains transparent');
+        qaAssert(qaColor(this._answerLabel.get_theme_node().get_background_color(), '#282c34'), 'Reply keeps its dark bubble');
         const panelSurface = this._panel.get_theme_node().get_background_color();
         qaAssert(qaColor(panelSurface, '#282c34') && panelSurface.alpha >= 229 && panelSurface.alpha <= 230, 'Conversation keeps its One Half Dark surface');
         this._snapshot.state = 'thinking';

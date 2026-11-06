@@ -25,6 +25,8 @@ import {LANGUAGES, normalizeLanguage, createTranslator} from './i18n.js';
 
 const CHARACTER_WIDTH = 200;
 const CHARACTER_HEIGHT = 260;
+const ANSWER_TAIL_WIDTH = 16;
+const ANSWER_TAIL_HEIGHT = 8;
 const EMPTY_SNAPSHOT = {messages: [], state: 'idle', request_id: null, error: null};
 
 const ToggleMenuItem = GObject.registerClass(class ToggleMenuItem extends PopupMenu.PopupMenuItem {
@@ -324,9 +326,10 @@ export default class ZaikoExtension extends Extension {
         this._buildPanel();
         this._buildCompactActors();
         // Visibility is owned here rather than trackFullscreen.
-        for (const actor of [this._character, this._panel, this._answerLabel, this._inputOverlay])
+        for (const actor of [this._character, this._panel, this._answerLabel, this._answerTail, this._inputOverlay])
             Main.layoutManager.addChrome(actor, {affectsStruts: false, trackFullscreen: false});
         Main.uiGroup.set_child_below_sibling(this._answerLabel, this._panel);
+        Main.uiGroup.set_child_below_sibling(this._answerTail, this._panel);
         Main.uiGroup.set_child_above_sibling(this._characterMenu.actor, this._panel);
         this._renderSnapshot();
     }
@@ -598,9 +601,34 @@ export default class ZaikoExtension extends Extension {
             return Clutter.EVENT_STOP;
         });
 
-        // The answer is a top-level label, with no card or container behind it.
+        // The answer is a speech bubble sized to its text, with a small tail
+        // drawn separately so it can point at the character's head.
         this._answerLabel = this._wrappedLabel('', 'zaiko-answer');
-        this._answerLabel.width = 320;
+        this._answerMaxWidth = 320;
+        // The tail overlaps the bubble's bottom border by 1 px so the border
+        // opens into it, then draws its own two border edges.
+        this._answerTail = new St.DrawingArea({
+            width: ANSWER_TAIL_WIDTH, height: ANSWER_TAIL_HEIGHT + 1, visible: false,
+        });
+        this._answerTail.connect('repaint', area => {
+            const cr = area.get_context();
+            const [width, height] = area.get_surface_size();
+            cr.moveTo(0, 0);
+            cr.lineTo(width / 2, height - 1);
+            cr.lineTo(width, 0);
+            cr.closePath();
+            cr.setSourceRGBA(40 / 255, 44 / 255, 52 / 255, 0.9);
+            cr.fill();
+            cr.setLineWidth(1);
+            cr.moveTo(0.5, 0.5);
+            cr.lineTo(width / 2, height - 1);
+            cr.lineTo(width - 0.5, 0.5);
+            cr.setSourceRGBA(0x3e / 255, 0x44 / 255, 0x51 / 255, 1);
+            cr.stroke();
+            cr.$dispose();
+        });
+        // St replaces foreground attributes when applying CSS; recolor after it.
+        this._answerLabel.connect_after('style-changed', () => this._styleAnswerPrefix());
         this._answerLabel.reactive = true;
         this._answerLabel.visible = false;
         this._answerLabel.clip_to_allocation = true;
@@ -708,10 +736,15 @@ export default class ZaikoExtension extends Extension {
         const compact = compactPosition({
             x: this._character.x, y: this._character.y,
             width: CHARACTER_WIDTH, height: CHARACTER_HEIGHT,
-        }, {width: this._answerLabel.width, height: this._answerLabel.height},
+        }, {width: this._answerLabel.width, height: this._answerLabel.height + ANSWER_TAIL_HEIGHT - 8},
         {width: this._inputOverlay.width, height: this._inputOverlay.height}, area);
         this._inputOverlay.set_position(compact.input.x, compact.input.y);
         this._answerLabel.set_position(compact.answer.x, compact.answer.y);
+        // Point the tail at the head, kept inside the bubble's rounded corners.
+        const tailX = Math.round(Math.max(compact.answer.x + 14,
+            Math.min(compact.answer.x + this._answerLabel.width - 14 - ANSWER_TAIL_WIDTH,
+                this._character.x + (CHARACTER_WIDTH - ANSWER_TAIL_WIDTH) / 2)));
+        this._answerTail.set_position(tailX, compact.answer.y + this._answerLabel.height - 1);
         for (const menu of this._commandMenus)
             menu.layout();
     }
@@ -723,7 +756,7 @@ export default class ZaikoExtension extends Extension {
         this._panel.set_size(Math.min(360, Math.max(1, area.width - 16)),
             Math.min(400, Math.max(1, area.height - 16)));
         this._inputOverlay.width = Math.min(280, Math.max(1, area.width - 16));
-        this._answerLabel.width = Math.min(320, Math.max(1, area.width - 16));
+        this._answerMaxWidth = Math.min(320, Math.max(1, area.width - 16));
         this._renderCompact();
         if (!this._positioned) {
             this._positionCharacter(area.x + area.width - CHARACTER_WIDTH - 24,
@@ -753,6 +786,7 @@ export default class ZaikoExtension extends Extension {
         this._updatePanelClose();
         this._inputOverlay.visible = show && this._inputOpen && !this._logIsOpen();
         this._answerLabel.visible = show && this._answerHasText && !this._logIsOpen();
+        this._answerTail.visible = this._answerLabel.visible;
         for (const menu of this._commandMenus)
             menu.sync();
     }
@@ -1138,6 +1172,28 @@ export default class ZaikoExtension extends Extension {
         this._setEntryAvailable(this._logEntry, Boolean(this._coreOwner && !busy));
     }
 
+    _answerPrefixAttributes(attributes, text) {
+        if (!text.startsWith('[Aiko]'))
+            return attributes;
+        const end = new TextEncoder().encode('[Aiko]').length;
+        for (const attribute of [Pango.attr_foreground_new(0xc6 * 257, 0x78 * 257, 0xdd * 257),
+            Pango.attr_weight_new(Pango.Weight.BOLD)]) {
+            attribute.start_index = 0;
+            attribute.end_index = end;
+            attributes.change(attribute);
+        }
+        return attributes;
+    }
+
+    _styleAnswerPrefix() {
+        const text = this._answerLabel?.clutter_text;
+        if (!text)
+            return;
+        // Keep St's own attributes (the body color) and override only the prefix.
+        const attributes = text.get_attributes()?.copy() ?? Pango.AttrList.new();
+        text.set_attributes(this._answerPrefixAttributes(attributes, text.text));
+    }
+
     _renderLogVimMode(mode) {
         if (!this._logVimMode)
             return;
@@ -1315,9 +1371,13 @@ export default class ZaikoExtension extends Extension {
         const error = this._uiError || this._snapshotError || this._snapshot.error ||
             (this._snapshot.state === 'error' ? 'error.generic' : null);
         const text = error ? this._t(error) : this._requestStatus() || latestAssistant(this._snapshot.messages);
-        const contentWidth = Math.max(1, this._answerLabel.width);
+        const node = this._answerLabel.get_theme_node();
+        const inset = side => node.get_padding(side) + node.get_border_width(side);
+        const padX = inset(St.Side.LEFT) + inset(St.Side.RIGHT);
+        const padY = inset(St.Side.TOP) + inset(St.Side.BOTTOM);
+        const contentWidth = Math.max(1, this._answerMaxWidth - padX);
         const layout = this._answerLabel.clutter_text.get_layout().copy();
-        layout.set_font_description(this._answerLabel.get_theme_node().get_font());
+        layout.set_font_description(node.get_font());
         layout.set_single_paragraph_mode(false);
         const display = text ? `[Aiko] ${text}` : '';
         // Repaints, font changes and reopening input must not prolong a message.
@@ -1346,10 +1406,18 @@ export default class ZaikoExtension extends Extension {
             this._answerHideSource = 0;
             this._answerExpired = true;
         }
+        // Shape the preview with the bold prefix it will be shown with.
+        layout.set_attributes(this._answerPrefixAttributes(Pango.AttrList.new(), display));
         this._answerPreview = answerPreview(layout, display, contentWidth);
         this._answerLabel.text = this._answerPreview.text;
         this._answerLabel.accessible_name = display;
-        this._answerLabel.set_size(contentWidth, this._answerPreview.height);
+        this._styleAnswerPrefix();
+        // Shrink short replies to the text's natural width. Measure the inner
+        // text: the label itself reports the fixed size set last time.
+        const answerText = this._answerLabel.clutter_text;
+        const textWidth = Math.ceil(Math.min(contentWidth, answerText.get_preferred_width(-1)[1]));
+        const textHeight = Math.ceil(answerText.get_preferred_height(textWidth)[1]);
+        this._answerLabel.set_size(textWidth + padX, textHeight + padY);
         this._answerHasText = Boolean(text) && !this._answerExpired;
         if (error)
             this._answerLabel.add_style_class_name('zaiko-answer-error');
@@ -1553,7 +1621,7 @@ export default class ZaikoExtension extends Extension {
         if (this._composerLayoutSource)
             GLib.Source.remove(this._composerLayoutSource);
         this._composerLayoutSource = 0;
-        for (const actor of [this._panel, this._character, this._inputOverlay, this._answerLabel]) {
+        for (const actor of [this._panel, this._character, this._inputOverlay, this._answerLabel, this._answerTail]) {
             if (!actor)
                 continue;
             Main.layoutManager.removeChrome(actor);
@@ -1584,6 +1652,7 @@ export default class ZaikoExtension extends Extension {
         this._overlayCancel = null;
         this._composers = [];
         this._answerLabel = null;
+        this._answerTail = null;
         this._answerPreview = null;
     }
 }

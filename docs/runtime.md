@@ -56,9 +56,12 @@ drafts wrap and expand upward, then scroll when the available screen space is
 full. Shift+Enter adds a newline; Enter submits the whole draft and hides input
 once the core accepts it. Drag the character to move her. Submission failure
 keeps input open and restores the draft. Click Aiko to reopen input;
-a text Stop control appears while a request is active. The latest answer appears as plain
-text above her head in the form [Aiko] message, with no bubble background or
-padding. It grows to its content and is limited to five wrapped lines including
+a text Stop control appears while a request is active. The latest answer appears above her head
+as [Aiko] message in a speech bubble: the Log's translucent One Half Dark
+surface and 1 px border, 12 px
+corners, 8/12 px padding, a purple bold [Aiko] prefix, and a small tail pointing
+at her head. Errors use red text. The bubble shrinks to short replies, grows up
+to 320 px wide, and is limited to five wrapped lines including
 the prefix; longer answers are shortened only in this preview. Each displayed
 completed message or error disappears after 8 seconds. Repainting,
 changing the desktop font, reopening input, or using the character menu
@@ -235,8 +238,8 @@ Zaiko uses a fixed One Half Dark palette: #282c34 surfaces at 90% opacity,
 Controls, caret, selection, hover, and keyboard focus use the same neutral
 foreground tones. Close uses a gray highlight; errors use brighter, heavier text.
 The slash picker marks its selected row with a green bar and dark text.
-Panels, controls, and menus have no box shadows. Floating replies retain their
-transparent background and text shadow. The conversation
+Panels, controls, and menus have no box shadows. Floating replies use a dark
+speech bubble without a text shadow. The conversation
 has a 12 px outer radius and 16 px content padding. Both inputs use the same
 expanding gray surface with 3 px corners, 13 px text and a leading prompt,
 similar to a terminal composer. Each fits a single text row when the draft has
