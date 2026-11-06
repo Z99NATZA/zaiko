@@ -691,8 +691,8 @@ export default class OverlayQA extends ZaikoExtension {
             this._uiError = null;
             this._renderSnapshot();
             const messages = JSON.stringify(this._snapshot.messages);
-            const expiry = this._answerHideSource;
             this._showLog();
+            const expiry = this._answerHideSource;
             this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), this._character.x + 100, this._character.y + 100);
             await qaPause(40);
             this._openCharacterMenu();
@@ -700,7 +700,7 @@ export default class OverlayQA extends ZaikoExtension {
             await this._click(this._langMenuItem);
             qaAssert(this._language === 'th' && this._characterMenu.isOpen &&
                 this._characterMenu._getMenuItems().map(item => item.label.text).join(',') ===
-                `ประวัติสนทนา,Vim: ${vimEnabled ? 'เปิด' : 'ปิด'},Lang: th,ออก`,
+                `พูดคุย,Vim: ${vimEnabled ? 'เปิด' : 'ปิด'},Lang: th,ออก`,
                 `Lang toggles to Thai, updates every menu row and keeps the menu open: ${JSON.stringify({language: this._language, open: this._characterMenu.isOpen, rows: this._characterMenu._getMenuItems().map(item => item.label.text)})}`);
             qaAssert(this._loadLanguage() === 'th', 'The language choice persists in language.json');
             qaAssert(this._answerHideSource === expiry && JSON.stringify(this._snapshot.messages) === messages &&
@@ -1293,7 +1293,6 @@ export default class OverlayQA extends ZaikoExtension {
             {role: 'assistant', content: 'สวัสดีค่ะ ไอโกะอยู่นี่นะคะ 😊'},
         ];
         this._renderSnapshot();
-        const answerShownAt = GLib.get_monotonic_time();
         await qaPause(160);
         const shortHeight = this._answerLabel.height;
         qaAssert(this._answerLabel.visible && this._answerLabel.text === '[Aiko] สวัสดีค่ะ ไอโกะอยู่นี่นะคะ 😊', 'Plain answer contains Aiko prefix');
@@ -1317,28 +1316,28 @@ export default class OverlayQA extends ZaikoExtension {
             'Right click keeps the latest answer visible without restarting its countdown');
         const retainedLogItem = this._characterMenu._getMenuItems().find(item => item.label?.text === 'Log');
         await this._click(retainedLogItem.actor);
-        qaAssert(this._panel.visible && !this._answerLabel.visible && this._answerHideSource === answerTimer,
-            'Choosing Log hides the floating answer without restarting its countdown');
+        qaAssert(this._panel.visible && !this._answerLabel.visible && this._answerHideSource === 0,
+            'Choosing Log hides and dismisses the floating answer');
+        qaAssert(!this._ownsFocus(global.stage.get_key_focus(), [this._answerLabel]), 'Dismissed answer does not keep focus');
         this._hidePanel();
-        qaAssert(this._answerLabel.visible && this._answerHideSource === answerTimer,
-            'Closing Log restores an unexpired answer on its original countdown');
-        this._showLog();
-        await qaPause(Math.max(1, Math.ceil((answerShownAt + 8_200_000 - GLib.get_monotonic_time()) / 1000)));
-        qaAssert(this._panel.visible && !this._answerLabel.visible && this._answerHideSource === 0, 'Message expires after eight seconds even while Log is open');
-        qaAssert(!this._ownsFocus(global.stage.get_key_focus(), [this._answerLabel]), 'Hidden answer expiry does not focus the hidden text');
+        qaAssert(!this._answerLabel.visible, 'Closing Log does not bring back an answer already seen in Log');
         this._renderSnapshot();
-        qaAssert(!this._answerLabel.visible, 'Repaint does not resurrect expired text');
+        qaAssert(!this._answerLabel.visible, 'Repaint does not resurrect a dismissed answer');
         this._showLog();
-        qaAssert(qaContainsText(this._logHistory, this._snapshot.messages[1].content), 'Expired answer remains in Log');
+        qaAssert(qaContainsText(this._logHistory, this._snapshot.messages[1].content), 'Dismissed answer remains in Log');
         this._hidePanel();
-        qaAssert(!this._answerLabel.visible, 'Closing Log does not resurrect an expired answer');
         this._showLog();
         this._snapshot.messages.push({...this._snapshot.messages[1]});
         this._renderSnapshot();
-        qaAssert(!this._answerLabel.visible && this._answerHideSource !== 0,
+        qaAssert(!this._answerLabel.visible && this._answerHideSource === 0,
             'A new reply stays hidden outside while Log is open');
         this._hidePanel();
-        qaAssert(this._answerLabel.visible && this._answerHideSource !== 0, 'A new identical reply gets its own display time');
+        qaAssert(!this._answerLabel.visible, 'A reply received while Log was open does not pop up after closing');
+        this._snapshot.messages.push({...this._snapshot.messages[1]});
+        this._renderSnapshot();
+        qaAssert(this._answerLabel.visible && this._answerHideSource !== 0,
+            'A new reply after Log closes gets its own display time');
+        this._snapshot.messages.pop();
         this._snapshot.messages.pop();
 
         for (const text of [
@@ -1357,7 +1356,13 @@ export default class OverlayQA extends ZaikoExtension {
             await qaPause(60);
             qaAssert(qaContainsText(this._logHistory, text), 'Read-only Log retains full answer');
             this._hidePanel();
+            qaAssert(!this._answerLabel.visible, 'A long reply seen in Log stays dismissed outside');
         }
+        // Show the last long reply again as a new message, outside Log.
+        this._snapshot.messages[1].content += ' ';
+        this._renderSnapshot();
+        await qaPause(120);
+        qaAssert(this._answerLabel.visible, 'A new reply outside Log is shown');
         qaAssert(this._answerLabel.height > shortHeight, 'Answer grows to actual content height');
         await this._shot('five-row-plain-answer');
         this._interfaceSettings.set_string('font-name', 'Serif 11');
@@ -1556,7 +1561,7 @@ export default class OverlayQA extends ZaikoExtension {
         outside.show();
         await this._click(this._panelClose);
         qaAssert(!this._panel.visible && !this._panelClose.visible, 'Inset close dismisses panel and itself');
-        qaAssert(this._answerLabel.visible, 'Closing Log keeps an answer still within its display time visible');
+        qaAssert(!this._answerLabel.visible, 'Closing Log does not bring back a reply already seen in Log');
         await this._click(this._character);
         qaAssert(this._inputOverlay.visible && this._overlayEntry.get_text() === 'compact draft retained', 'Closing Log re-enables compact input with its draft');
         this._showLog();
@@ -1621,6 +1626,11 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(this._character.x < startX && !this._inputOpen, 'Drag does not open hidden input');
         await this._checkFastCharacterDrag();
         await this._checkCharacterMenuPosition();
+        // Earlier Log checks dismissed the floating reply; show a fresh one.
+        this._hidePanel();
+        this._snapshot.messages = [...this._snapshot.messages, {role: 'assistant', content: 'Top edge reply'}];
+        this._renderSnapshot();
+        qaAssert(this._answerLabel.visible, 'A fresh reply is visible for edge layout checks');
         this._positionCharacter(-999, -999);
         await qaPause(120);
         qaAssert(this._answerLabel.y + this._answerLabel.height <= this._character.y, 'Top edge preserves answer above head');
@@ -1719,6 +1729,6 @@ export default class OverlayQA extends ZaikoExtension {
         outside.destroy();
         this._pointer = null;
         this._keyboard = null;
-        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, full composer interior click focus/native caret placement, inset close overlay/no reserved row/hover/immediate hide, Enter/icon/cancel/failure/drafts, native caret blinking/focus/settings/timeout/cleanup, command picker/eight rows/arrows/mouse wheel/filtering/Tab/Enter/click/Escape/Vim, One Half Dark surfaces/no theme chooser, floating replies/status hidden during Log with original expiry preserved, lifecycle'});
+        this._qaResult({ok: true, checked: 'flat left transcript/prefix-only colors/literal text, Log chat and exclusive input, full composer interior click focus/native caret placement, inset close overlay/no reserved row/hover/immediate hide, Enter/icon/cancel/failure/drafts, native caret blinking/focus/settings/timeout/cleanup, command picker/eight rows/arrows/mouse wheel/filtering/Tab/Enter/click/Escape/Vim, One Half Dark surfaces/no theme chooser, floating replies dismissed by Log, status hidden during Log, lifecycle'});
     }
 }

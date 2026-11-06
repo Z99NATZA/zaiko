@@ -1,8 +1,8 @@
 {
-  "menu.log": "ประวัติสนทนา",
+  "menu.log": "พูดคุย",
   "menu.vim": "Vim: {state}",
   "menu.language": "Lang: {language}",
-  "menu.quit": "ออก",
+  "menu.quit": "ปิด",
   "state.on": "เปิด",
   "state.off": "ปิด",
   "action.copy": "คัดลอก",

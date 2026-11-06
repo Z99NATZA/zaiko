@@ -780,7 +780,7 @@ export default class ZaikoExtension extends Extension {
         this._hideInput(false);
         this._panelOpen = true;
         this._renderLogState();
-        this._updateVisibility();
+        this._renderCompact();
         if (this._panel.visible)
             this._logEntry.grab_key_focus();
     }
@@ -1306,6 +1306,14 @@ export default class ZaikoExtension extends Extension {
                     return GLib.SOURCE_REMOVE;
                 });
             }
+        }
+        // Log shows the full conversation, so a reply or error seen there
+        // should not return outside after Log closes. Active status stays.
+        if (this._logIsOpen() && display && (!busy || error)) {
+            if (this._answerHideSource)
+                GLib.Source.remove(this._answerHideSource);
+            this._answerHideSource = 0;
+            this._answerExpired = true;
         }
         this._answerPreview = answerPreview(layout, display, contentWidth);
         this._answerLabel.text = this._answerPreview.text;

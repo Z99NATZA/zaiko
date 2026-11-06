@@ -61,8 +61,8 @@ text above her head in the form [Aiko] message, with no bubble background or
 padding. It grows to its content and is limited to five wrapped lines including
 the prefix; longer answers are shortened only in this preview. Each displayed
 completed message or error disappears after 8 seconds. Repainting,
-changing the desktop font, reopening input, or using the character menu or Log
-does not hide the answer or restart that countdown. The full
+changing the desktop font, reopening input, or using the character menu
+does not hide the answer or restart that countdown; opening Log dismisses it. The full
 conversation stays in Log.
 
 Character dragging captures the pointer from the initial press until release,
@@ -106,11 +106,12 @@ While Log is open, character clicks and Present focus Log input and cannot open
 the compact input. Closing Log re-enables compact input. The two drafts stay
 separate and submission failures restore only the originating draft. A shared
 request guard prevents overlapping sends from either input.
-Opening Log hides the floating answer and request status, including new replies
-received while Log is open. Closing Log restores the current floating text only
-if it has not expired. The original 8-second countdown continues while hidden;
-opening/closing Log does not restart it. The character menu alone keeps the
-floating text visible, stacked below popup menus.
+Opening Log hides the floating answer and request status. A reply or error
+shown while Log is open has been seen there, so it is dismissed and does not
+return outside after Log closes; this includes new replies received while Log
+is open. A request status that is still active (sending or thinking) shows
+again after Log closes. The character menu alone keeps the floating text
+visible, stacked below popup menus.
 
 The old comparison panel is removed. Log appears only when requested. Quit is
 also available from the character menu. Escape closes the focused input or support
