@@ -23,7 +23,7 @@ file for subsequent changes, then run zaiko restart.
 Installation
 ----------
 
-make install adds the core, launcher, character assets, and GNOME extension.
+make install adds the core, launcher, live 3D character renderer, and GNOME extension.
 The default command location is ~/.local/bin/zaiko; it must be on PATH.
 GNOME may need a logout/login to discover a new extension or load updated code.
 Zaiko does not enable globally disabled user extensions.
@@ -344,9 +344,11 @@ History is not persisted after stop/restart.
 ```bash
 # ---------- bash ---------- #
 
-# Install the extension first, then start the development core without opening
-# input. Click the character when ready to type.
+# Install the extension first, then build and open the development companion.
 make run
+
+# To start the character without opening input:
+python3 scripts/launcher.py --no-present
 
 # Rust tests, desktop protocol tests, and isolated installer/D-Bus smoke.
 make test

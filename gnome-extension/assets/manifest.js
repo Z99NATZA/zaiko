@@ -1,11 +1,13 @@
-// Source PNGs are copied unchanged from wfchat. Bounds exclude nearly transparent
-// background pixels and align the visible figure without modifying the artwork.
+// Kept for the layout geometry contract; Aiko itself is rendered from a live
+// 3D triangle mesh by character3d.js and does not load portrait assets.
+const VIEW_BOUNDS = [0, 0, 200, 260];
+
 export const EXPRESSIONS = Object.freeze({
-    neutral: {file: 'aiko-neutral.png', width: 1086, height: 1448, bounds: [65, 60, 1034, 1405]},
-    happy: {file: 'aiko-happy.png', width: 1254, height: 1254, bounds: [187, 88, 1052, 1084]},
-    shy: {file: 'aiko-shy.png', width: 1122, height: 1402, bounds: [95, 60, 1009, 1347]},
-    sad: {file: 'aiko-sad.png', width: 1122, height: 1402, bounds: [87, 58, 1044, 1357]},
-    surprised: {file: 'aiko-surprised.png', width: 1254, height: 1254, bounds: [132, 40, 1109, 1254]},
+    neutral: {width: 200, height: 260, bounds: VIEW_BOUNDS},
+    happy: {width: 200, height: 260, bounds: VIEW_BOUNDS},
+    shy: {width: 200, height: 260, bounds: VIEW_BOUNDS},
+    sad: {width: 200, height: 260, bounds: VIEW_BOUNDS},
+    surprised: {width: 200, height: 260, bounds: VIEW_BOUNDS},
 });
 
 export function imageGeometry(expression, width, height) {

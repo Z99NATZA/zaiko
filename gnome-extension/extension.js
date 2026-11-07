@@ -1,5 +1,8 @@
+import Cairo from 'cairo';
 import Clutter from 'gi://Clutter';
+import Gdk from 'gi://Gdk?version=4.0';
 import Gio from 'gi://Gio';
+import GdkPixbuf from 'gi://GdkPixbuf?version=2.0';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Pango from 'gi://Pango';
@@ -16,7 +19,7 @@ import {
     panelPosition, clampPosition, compactPosition, expressionFor, isBusy, latestAssistant, parseEvent, parseSnapshot,
     transcriptLine, formatElapsed,
 } from './protocol.js';
-import {EXPRESSIONS, imageGeometry} from './assets/manifest.js';
+import {AikoModel} from './character3d.js';
 import {answerPreview} from './answerPreview.js';
 import {CaretBlink} from './caret.js';
 import {VimInput} from './vimInput.js';
@@ -310,8 +313,10 @@ export default class ZaikoExtension extends Extension {
             accessible_name: this._t('accessibility.character'),
             visible: false,
         });
-        this._image = new St.Widget({reactive: false});
+        this._image = new St.DrawingArea({reactive: false, width: CHARACTER_WIDTH, height: CHARACTER_HEIGHT});
         this._character.add_child(this._image);
+        const modelFile = this.dir.get_child('assets').get_child('models').get_child('aiko').get_child('aiko.glb');
+        this._model = new AikoModel(this._image, GLib, Cairo, Gdk, GdkPixbuf, modelFile);
         this._setExpression('neutral');
         // Grab from the initial press, before a fast motion can leave the actor.
         // Grabbed events use the bubble phase, as in GNOME Shell's own DND.
@@ -700,12 +705,7 @@ export default class ZaikoExtension extends Extension {
         if (this._expression === name)
             return;
         this._expression = name;
-        const expression = EXPRESSIONS[name] ?? EXPRESSIONS.neutral;
-        const geometry = imageGeometry(expression, CHARACTER_WIDTH, CHARACTER_HEIGHT);
-        const uri = this.dir.get_child('assets').get_child('aiko').get_child(expression.file).get_uri();
-        this._image.set_style(`background-image: url("${uri}"); background-size: contain;`);
-        this._image.set_size(geometry.width, geometry.height);
-        this._image.set_position(geometry.x, geometry.y);
+        this._model?.setExpression(name);
     }
 
     _workArea() {
@@ -1579,6 +1579,8 @@ export default class ZaikoExtension extends Extension {
 
     disable() {
         this._enabled = false;
+        this._model?.destroy();
+        this._model = null;
         this._endCharacterDrag();
         this._selectionDrag = null;
         this._releaseFocus(false);

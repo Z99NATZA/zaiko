@@ -6,7 +6,7 @@
 Desktop companion
 ==========
 
-A small 2D AI character for Linux, with compact input at her bottom, answers
+A small 3D chibi AI character for Linux, with compact input at her bottom, answers
 above her head, and a full conversation Log available through right click.
 Click the character to type and click elsewhere to hide input. Replies are
 plain text; the old comparison panel is removed.
@@ -69,8 +69,9 @@ Workspace and references
 Project: /home/znnn/my_code/zaiko
 
 zter and zhyprbola provide examples of desktop tools already used on this machine.
-The Aiko images in wfchat provide character assets and visual references.
-Use copies of the existing images as the initial Zaiko asset set.
+Aiko's desktop character is authored in Blender as a rigged 3D model, exported
+to gnome-extension/assets/models/aiko/aiko.glb, and rendered live in the Shell
+actor with expression changes driven by chat state.
 The confirmed terminal is zter. The note tool is deferred from the MVP.
 
 Configuration

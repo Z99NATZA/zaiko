@@ -8,7 +8,7 @@ install:
 
 run:
 	cargo build --locked
-	python3 scripts/launcher.py --no-present
+	python3 scripts/launcher.py
 
 test:
 	cargo test --workspace --locked
