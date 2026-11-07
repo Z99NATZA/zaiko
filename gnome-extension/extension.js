@@ -72,6 +72,7 @@ export default class ZaikoExtension extends Extension {
         this._vimInputs = [];
         this._commandMenus = [];
         this._vimEnabled = this._loadVimEnabled();
+        this._vimModeState = {mode: 'normal'};
         this._catalogs = this._loadCatalogs();
         this._language = this._loadLanguage();
         this._translate = createTranslator(this._catalogs, this._language);
@@ -97,7 +98,7 @@ export default class ZaikoExtension extends Extension {
                     ? focus => this._ownsFocus(focus, [this._panel, ...this._logMessageMenus().map(menu => menu.actor)])
                     : null;
                 const onMode = entry === this._logEntry ? mode => this._renderLogVimMode(mode) : null;
-                const vim = new VimInput(entry, caret, () => this._submit(entry), keepsFocus, onMode);
+                const vim = new VimInput(entry, caret, () => this._submit(entry), keepsFocus, onMode, this._vimModeState);
                 this._vimInputs.push(vim);
                 vim.setEnabled(this._vimEnabled);
                 vim.setAvailable(Boolean(this._coreOwner && !this._busy()));
