@@ -17,6 +17,7 @@ import {
     transcriptLine, formatElapsed,
 } from './protocol.js';
 import {EXPRESSIONS, imageGeometry} from './assets/manifest.js';
+import {CharacterWindow} from './characterWindow.js';
 import {answerPreview} from './answerPreview.js';
 import {CaretBlink} from './caret.js';
 import {VimInput} from './vimInput.js';
@@ -84,6 +85,7 @@ export default class ZaikoExtension extends Extension {
         this._historySignature = null;
         this._sessionCancellable = null;
         this._overviewShowing = Main.overview.visible;
+        this._characterWindow = null;
 
         try {
             this._buildActors();
@@ -332,6 +334,7 @@ export default class ZaikoExtension extends Extension {
         Main.uiGroup.set_child_below_sibling(this._answerLabel, this._panel);
         Main.uiGroup.set_child_below_sibling(this._answerTail, this._panel);
         Main.uiGroup.set_child_above_sibling(this._characterMenu.actor, this._panel);
+        this._startCharacterWindow();
         this._renderSnapshot();
     }
 
@@ -696,10 +699,40 @@ export default class ZaikoExtension extends Extension {
         }
     }
 
+    // The Live2D window draws the character when its files are installed
+    // (scripts/fetch_live2d.py); the portrait PNGs stay as the fallback.
+    _startCharacterWindow() {
+        if (!CharacterWindow.available(this.dir))
+            return;
+        const character = new CharacterWindow(this.dir, CHARACTER_WIDTH, CHARACTER_HEIGHT, {
+            onReady: () => {
+                if (this._image)
+                    this._image.visible = false;
+            },
+            onExit: () => {
+                if (this._characterWindow !== character)
+                    return;
+                this._characterWindow.destroy();
+                this._characterWindow = null;
+                if (this._image)
+                    this._image.visible = true;
+            },
+        });
+        try {
+            character.setExpression(this._expression ?? 'neutral');
+            character.start();
+            this._characterWindow = character;
+        } catch (error) {
+            character.destroy();
+            console.warn(`Zaiko: Live2D character unavailable: ${error.message}`);
+        }
+    }
+
     _setExpression(name) {
         if (this._expression === name)
             return;
         this._expression = name;
+        this._characterWindow?.setExpression(name);
         const expression = EXPRESSIONS[name] ?? EXPRESSIONS.neutral;
         const geometry = imageGeometry(expression, CHARACTER_WIDTH, CHARACTER_HEIGHT);
         const uri = this.dir.get_child('assets').get_child('aiko').get_child(expression.file).get_uri();
@@ -725,6 +758,7 @@ export default class ZaikoExtension extends Extension {
             width: area.width, height: area.height - reserve};
         const position = clampPosition(x, y, CHARACTER_WIDTH, CHARACTER_HEIGHT, bounds);
         this._character.set_position(position.x, position.y);
+        this._characterWindow?.setPosition(position.x, position.y);
         this._positionSurfaces(area);
     }
 
@@ -781,6 +815,7 @@ export default class ZaikoExtension extends Extension {
             this._characterMenu?.close();
         }
         this._character.visible = show;
+        this._characterWindow?.setVisible(show);
         this._panel.visible = show && this._panelOpen;
         if (this._panel.visible)
             this._panel.sync_hover();
@@ -1388,6 +1423,8 @@ export default class ZaikoExtension extends Extension {
         if (key !== this._answerDisplayKey) {
             this._clearAnswerTimeout();
             this._answerDisplayKey = key;
+            if (display && !error && !busy)
+                this._characterWindow?.speak(text.length);
             if (display && this._coreOwner && !busy) {
                 this._answerHideSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 8000, () => {
                     this._answerHideSource = 0;
@@ -1579,6 +1616,8 @@ export default class ZaikoExtension extends Extension {
 
     disable() {
         this._enabled = false;
+        this._characterWindow?.destroy();
+        this._characterWindow = null;
         this._endCharacterDrag();
         this._selectionDrag = null;
         this._releaseFocus(false);

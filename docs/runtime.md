@@ -27,6 +27,15 @@ make install adds the core, launcher, character assets, and GNOME extension.
 The default command location is ~/.local/bin/zaiko; it must be on PATH.
 GNOME may need a logout/login to discover a new extension or load updated code.
 Zaiko does not enable globally disabled user extensions.
+
+Live2D character (optional)
+----------
+
+python3 scripts/fetch_live2d.py downloads the Live2D Cubism Core, pixi.js,
+pixi-live2d-display, and the free Mao sample model into
+gnome-extension/assets/live2d/, which git ignores. Running it accepts their
+licenses (listed in the script). Run make install afterwards. Without these
+files the character uses the Aiko portrait PNGs.
 ```
 
 ## Behavior
@@ -36,6 +45,13 @@ Desktop
 ==========
 
 The GNOME 50 extension renders a 200 x 260 character on the primary monitor.
+With the Live2D files installed, the extension starts gnome-extension/character/
+as its own Wayland client: a transparent GTK + WebKit window that draws the
+model on the GPU with its idle motion and physics. The extension keeps that
+window above other windows, on every workspace, out of Alt+Tab and the
+Overview, and under the character actor, which still handles clicks and drags.
+Moods map to the model's expressions, and the mouth moves while a new reply
+appears. If the window exits, the portrait PNGs return.
 The companion follows workspaces and hides in Overview, fullscreen, and lock.
 It reserves no desktop space. Keyboard handling stays in focused UI or an active
 character drag.

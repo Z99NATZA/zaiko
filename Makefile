@@ -32,3 +32,6 @@ check:
 	node --check gnome-extension/caret.js
 	node --check gnome-extension/vim.js
 	node --check gnome-extension/vimInput.js
+	node --check gnome-extension/characterWindow.js
+	node --check gnome-extension/character/main.js
+	node --check gnome-extension/character/web/app.js
