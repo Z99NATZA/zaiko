@@ -11,13 +11,15 @@ const NORMAL_KEYS = new Map([
 ]);
 
 export class VimInput {
-    constructor(entry, caret, submit, keepsFocus = null, onMode = null) {
+    constructor(entry, caret, submit, keepsFocus = null, onMode = null, modeState = null) {
         this.entry = entry;
         this._text = entry.clutter_text;
         this._caret = caret;
         this._submit = submit;
         this._onMode = onMode;
+        this._modeState = modeState;
         this._state = new InputVim();
+        this._state.mode = this._modeState?.mode ?? this._state.mode;
         this._enabled = false;
         this._available = false;
         this._cursorSize = this._text.get_cursor_size();
@@ -40,7 +42,11 @@ export class VimInput {
                     this.leave();
             });
         }
-        connect(this._text, 'key-focus-in', () => this._normalCursor());
+        connect(this._text, 'key-focus-in', () => {
+            this._state.mode = this._modeState?.mode ?? this._state.mode;
+            this._normalCursor();
+            this._sync();
+        });
         connect(this._text, 'notify::cursor-position', () => {
             if (!this._updating)
                 this._state.history = [];
@@ -67,9 +73,16 @@ export class VimInput {
     }
 
     leave() {
-        this._state.reset();
+        this._state.mode = this._modeState?.mode ?? this._state.mode;
+        this._state.reset(this._state.mode);
+        this._rememberMode();
         this._normalCursor();
         this._sync();
+    }
+
+    _rememberMode() {
+        if (this._modeState)
+            this._modeState.mode = this._state.mode;
     }
 
     _normalCursor() {
@@ -126,12 +139,15 @@ export class VimInput {
     }
 
     _event(event) {
+        if (event.type() === Clutter.EventType.KEY_PRESS)
+            this._state.mode = this._modeState?.mode ?? this._state.mode;
         if (event.type() === Clutter.EventType.KEY_PRESS && !this._text.single_line_mode &&
             event.get_state() & Clutter.ModifierType.CONTROL_MASK &&
             !(event.get_state() & (Clutter.ModifierType.MOD1_MASK | Clutter.ModifierType.SUPER_MASK)) &&
             (event.get_event_code() === 36 || [Clutter.KEY_j, Clutter.KEY_J].includes(event.get_key_symbol()))) {
             if (this._available) {
                 this._state.reset('insert');
+                this._rememberMode();
                 this._updating = true;
                 try {
                     this._text.delete_selection();
@@ -156,12 +172,14 @@ export class VimInput {
         }
         if (event.type() !== Clutter.EventType.KEY_PRESS)
             return Clutter.EVENT_PROPAGATE;
+        this._state.mode = this._modeState?.mode ?? this._state.mode;
         const symbol = event.get_key_symbol();
         if (event.get_state() & (Clutter.ModifierType.CONTROL_MASK |
             Clutter.ModifierType.MOD1_MASK | Clutter.ModifierType.SUPER_MASK)) {
             if ((event.get_state() & Clutter.ModifierType.CONTROL_MASK) &&
                 [Clutter.KEY_v, Clutter.KEY_V, Clutter.KEY_x, Clutter.KEY_X].includes(symbol)) {
                 this._state.reset('insert');
+                this._rememberMode();
                 this._sync();
             }
             return Clutter.EVENT_PROPAGATE;
@@ -169,10 +187,11 @@ export class VimInput {
         if ([Clutter.KEY_Return, Clutter.KEY_KP_Enter].includes(symbol)) {
             if (!this._text.single_line_mode && event.get_state() & Clutter.ModifierType.SHIFT_MASK) {
                 this._state.reset('insert');
+                this._rememberMode();
                 this._sync();
                 return Clutter.EVENT_PROPAGATE;
             }
-            // Keep the mode after sending; the compact input resets when it closes.
+            // Keep the mode after sending.
             this._state.pending = '';
             this._state.history = [];
             this._submit();
@@ -204,6 +223,7 @@ export class VimInput {
         } finally {
             this._updating = false;
         }
+        this._rememberMode();
         this._sync();
         return Clutter.EVENT_STOP;
     }
