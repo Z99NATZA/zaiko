@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {APP_IDS, panelPosition, clampPosition, expressionFor, isBusy, parseEvent, parseSnapshot} from '../protocol.js';
-import {EXPRESSIONS, imageGeometry} from '../assets/manifest.js';
+import {existsSync} from 'node:fs';
+import {EXPRESSIONS, FRAME, imageGeometry, pickFrame} from '../assets/manifest.js';
 
 test('snapshot preserves Thai conversation and ignores unrelated fields', () => {
     const snapshot = parseSnapshot(JSON.stringify({
@@ -36,16 +37,35 @@ test('events accept present and reject malformed or unknown updates', () => {
     assert.throws(() => parseEvent('not JSON'));
 });
 
-test('all expression geometry shares the same bottom anchor without editing PNGs', () => {
-    for (const expression of Object.values(EXPRESSIONS)) {
-        const geometry = imageGeometry(expression, 200, 260);
-        const scale = geometry.width / expression.width;
-        const [left, top, right, bottom] = expression.bounds;
-        assert.ok(geometry.x + left * scale >= 3.99);
-        assert.ok(geometry.x + right * scale <= 196.01);
-        assert.ok(geometry.y + top * scale >= 3.99);
-        assert.ok(Math.abs(geometry.y + bottom * scale - 256) < 0.001);
+test('every mood has frames on disk and moods follow the companion state', () => {
+    for (const frames of Object.values(EXPRESSIONS)) {
+        assert.ok(frames.length > 0);
+        for (const frame of frames)
+            assert.ok(existsSync(new URL(`../assets/aiko/${frame}`, import.meta.url)), frame);
     }
-    assert.equal(expressionFor({state: 'error', messages: []}), 'sad');
-    assert.equal(expressionFor({state: 'working', messages: []}), 'surprised');
+    assert.equal(expressionFor({state: 'error', messages: []}), 'error');
+    assert.equal(expressionFor({state: 'thinking', messages: []}), 'thinking');
+    assert.equal(expressionFor({state: 'working', messages: []}), 'working');
+    assert.equal(expressionFor({state: 'idle', messages: [{role: 'assistant', content: 'hi'}]}), 'happy');
+    assert.equal(expressionFor({state: 'idle', messages: []}), 'neutral');
+});
+
+test('a new pick avoids repeating the previous frame when the mood has others', () => {
+    for (const [mood, frames] of Object.entries(EXPRESSIONS)) {
+        for (const value of [0, 0.5, 0.999999]) {
+            const frame = pickFrame(mood, frames[0], () => value);
+            assert.ok(frames.includes(frame));
+            if (frames.length > 1)
+                assert.notEqual(frame, frames[0]);
+        }
+    }
+    assert.ok(EXPRESSIONS.neutral.includes(pickFrame('unknown')));
+});
+
+test('frames keep their aspect and rest on the character bottom edge', () => {
+    const geometry = imageGeometry(240, 188);
+    assert.ok(Math.abs(geometry.width / geometry.height - FRAME.width / FRAME.height) < 1e-9);
+    assert.ok(geometry.x >= 3.99 && geometry.x + geometry.width <= 236.01);
+    assert.ok(geometry.y >= 3.99);
+    assert.ok(Math.abs(geometry.y + geometry.height - 188) < 1e-9);
 });

@@ -92,7 +92,9 @@ def main():
         if item.is_file():
             atomic_copy(item, extension / item.relative_to(PROJECT / "gnome-extension"))
     # Remove only retired Zaiko-owned code; user configuration is preserved.
-    for obsolete in ("themes.js", "themeSettings.js", "tests/themes.test.mjs", "tests/theme-settings.mjs"):
+    retired_art = [f"assets/aiko/aiko-{mood}.png" for mood in ("happy", "neutral", "sad", "shy", "surprised")]
+    for obsolete in ("themes.js", "themeSettings.js", "tests/themes.test.mjs", "tests/theme-settings.mjs",
+                     *retired_art):
         (extension / obsolete).unlink(missing_ok=True)
     config_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:

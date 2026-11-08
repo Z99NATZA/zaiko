@@ -70,12 +70,8 @@ export function isBusy(snapshot) {
 }
 
 export function expressionFor(snapshot) {
-    if (snapshot.state === 'error')
-        return 'sad';
-    if (snapshot.state === 'thinking')
-        return 'shy';
-    if (snapshot.state === 'working')
-        return 'surprised';
+    if (['error', 'thinking', 'working'].includes(snapshot.state))
+        return snapshot.state;
     return snapshot.messages.at(-1)?.role === 'assistant' ? 'happy' : 'neutral';
 }
 

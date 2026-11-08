@@ -1,20 +1,29 @@
-// Source PNGs are copied unchanged from wfchat. Bounds exclude nearly transparent
-// background pixels and align the visible figure without modifying the artwork.
+// Frames are cut from a chibi sticker sheet by scripts/slice_sheet.py. Every PNG
+// shares one canvas with the body centred and resting on the bottom edge, so all
+// frames draw at the same scale and anchor.
+export const FRAME = Object.freeze({width: 381, height: 290});
+
+// Each mood picks one of its frames at random when the mood changes.
 export const EXPRESSIONS = Object.freeze({
-    neutral: {file: 'aiko-neutral.png', width: 1086, height: 1448, bounds: [65, 60, 1034, 1405]},
-    happy: {file: 'aiko-happy.png', width: 1254, height: 1254, bounds: [187, 88, 1052, 1084]},
-    shy: {file: 'aiko-shy.png', width: 1122, height: 1402, bounds: [95, 60, 1009, 1347]},
-    sad: {file: 'aiko-sad.png', width: 1122, height: 1402, bounds: [87, 58, 1044, 1357]},
-    surprised: {file: 'aiko-surprised.png', width: 1254, height: 1254, bounds: [132, 40, 1109, 1254]},
+    neutral: ['idle.png', 'coffee.png', 'peek.png', 'sleepy.png'],
+    thinking: ['question.png', 'ponder.png'],
+    working: ['working.png'],
+    happy: ['cheer.png', 'wink.png', 'cool.png', 'love.png', 'shy.png'],
+    error: ['cry.png', 'panic.png', 'shocked.png', 'pout.png'],
 });
 
-export function imageGeometry(expression, width, height) {
-    const [left, top, right, bottom] = expression.bounds;
-    const scale = Math.min((width - 8) / (right - left), (height - 8) / (bottom - top));
+export function pickFrame(mood, previous = null, random = Math.random) {
+    const frames = EXPRESSIONS[mood] ?? EXPRESSIONS.neutral;
+    const choices = frames.length > 1 ? frames.filter(frame => frame !== previous) : frames;
+    return choices[Math.min(choices.length - 1, Math.floor(random() * choices.length))];
+}
+
+export function imageGeometry(width, height) {
+    const scale = Math.min((width - 8) / FRAME.width, (height - 4) / FRAME.height);
     return {
-        width: expression.width * scale,
-        height: expression.height * scale,
-        x: (width - (right - left) * scale) / 2 - left * scale,
-        y: height - 4 - bottom * scale,
+        width: FRAME.width * scale,
+        height: FRAME.height * scale,
+        x: (width - FRAME.width * scale) / 2,
+        y: height - FRAME.height * scale,
     };
 }

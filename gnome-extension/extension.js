@@ -16,15 +16,15 @@ import {
     panelPosition, clampPosition, compactPosition, expressionFor, isBusy, latestAssistant, parseEvent, parseSnapshot,
     transcriptLine, formatElapsed,
 } from './protocol.js';
-import {EXPRESSIONS, imageGeometry} from './assets/manifest.js';
+import {imageGeometry, pickFrame} from './assets/manifest.js';
 import {answerPreview} from './answerPreview.js';
 import {CaretBlink} from './caret.js';
 import {VimInput} from './vimInput.js';
 import {CommandMenu} from './commandMenu.js';
 import {LANGUAGES, normalizeLanguage, createTranslator} from './i18n.js';
 
-const CHARACTER_WIDTH = 200;
-const CHARACTER_HEIGHT = 260;
+const CHARACTER_WIDTH = 240;
+const CHARACTER_HEIGHT = 188;
 const ANSWER_TAIL_WIDTH = 16;
 const ANSWER_TAIL_HEIGHT = 8;
 const EMPTY_SNAPSHOT = {messages: [], state: 'idle', request_id: null, error: null};
@@ -696,13 +696,13 @@ export default class ZaikoExtension extends Extension {
         }
     }
 
-    _setExpression(name) {
-        if (this._expression === name)
+    _setExpression(mood) {
+        if (this._expression === mood)
             return;
-        this._expression = name;
-        const expression = EXPRESSIONS[name] ?? EXPRESSIONS.neutral;
-        const geometry = imageGeometry(expression, CHARACTER_WIDTH, CHARACTER_HEIGHT);
-        const uri = this.dir.get_child('assets').get_child('aiko').get_child(expression.file).get_uri();
+        this._expression = mood;
+        this._frame = pickFrame(mood, this._frame);
+        const geometry = imageGeometry(CHARACTER_WIDTH, CHARACTER_HEIGHT);
+        const uri = this.dir.get_child('assets').get_child('aiko').get_child(this._frame).get_uri();
         this._image.set_style(`background-image: url("${uri}"); background-size: contain;`);
         this._image.set_size(geometry.width, geometry.height);
         this._image.set_position(geometry.x, geometry.y);
@@ -1644,6 +1644,7 @@ export default class ZaikoExtension extends Extension {
         this._character = null;
         this._image = null;
         this._expression = null;
+        this._frame = null;
         this._positioned = false;
         this._dragOrigin = null;
         this._focusBeforeUI = null;

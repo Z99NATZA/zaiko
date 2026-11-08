@@ -35,7 +35,10 @@ Zaiko does not enable globally disabled user extensions.
 Desktop
 ==========
 
-The GNOME 50 extension renders a 200 x 260 character on the primary monitor.
+The GNOME 50 extension renders a 240 x 188 character on the primary monitor.
+Her expression follows the companion state (idle, thinking, working, replied,
+error); each change picks a random frame for that state from assets/aiko.
+scripts/slice_sheet.py cuts those frames from a transparent sticker sheet.
 The companion follows workspaces and hides in Overview, fullscreen, and lock.
 It reserves no desktop space. Keyboard handling stays in focused UI or an active
 character drag.
