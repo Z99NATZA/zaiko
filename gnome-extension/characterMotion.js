@@ -7,19 +7,26 @@ const BREATH = Object.freeze({
     busy: {duration: 700, stretch: 0.016},
 });
 const BREATH_NAME = 'zaiko-breath';
+// While a reply types out she bobs down behind her bottom edge and back.
+const TALK = Object.freeze({duration: 170, depth: 0.03});
+const TALK_NAME = 'zaiko-talk';
 
-// Gentle idle breathing plus a short pop when the frame changes. Both follow
-// GNOME's animation setting and stop while the character is hidden.
+// Gentle idle breathing, a short pop when the frame changes and a bob while
+// talking. All follow GNOME's animation setting and stop while hidden.
 export class CharacterMotion {
     constructor(body, image) {
         this._body = body;
         this._image = image;
         this._active = false;
         this._busy = false;
+        this._talking = false;
         body.set_pivot_point(0.5, 1);
         image.set_pivot_point(0.5, 1);
         this._settings = St.Settings.get();
-        this._settingsId = this._settings.connect('notify::enable-animations', () => this._breathe());
+        this._settingsId = this._settings.connect('notify::enable-animations', () => {
+            this._breathe();
+            this._talk();
+        });
     }
 
     setActive(active) {
@@ -27,6 +34,14 @@ export class CharacterMotion {
             return;
         this._active = active;
         this._breathe();
+        this._talk();
+    }
+
+    setTalking(talking) {
+        if (this._talking === talking)
+            return;
+        this._talking = talking;
+        this._talk();
     }
 
     setBusy(busy) {
@@ -49,11 +64,27 @@ export class CharacterMotion {
     destroy() {
         this._settings.disconnect(this._settingsId);
         this._body.remove_transition(BREATH_NAME);
+        this._body.remove_transition(TALK_NAME);
+        this._body.remove_transition('translation-y');
         this._image.remove_all_transitions();
     }
 
     _animating() {
         return this._active && this._settings.enable_animations;
+    }
+
+    _talk() {
+        this._body.remove_transition(TALK_NAME);
+        if (!this._talking || !this._animating()) {
+            // Settle back smoothly; ease() is fine for a short, finite move.
+            if (this._body.translation_y && this._animating())
+                this._body.ease({translation_y: 0, duration: 120, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+            else
+                this._body.translation_y = 0;
+            return;
+        }
+        this._body.remove_transition('translation-y');
+        this._loop(TALK_NAME, 'translation-y', 0, Math.round(this._body.height * TALK.depth), TALK.duration);
     }
 
     _breathe() {
@@ -64,19 +95,24 @@ export class CharacterMotion {
             this._image.set({scale_x: 1, scale_y: 1, opacity: 255});
             return;
         }
-        // A plain transition, not actor.ease(): an endless ease would keep GNOME
-        // Shell marked busy and block fullscreen unredirection while it runs.
         const {duration, stretch} = this._busy ? BREATH.busy : BREATH.calm;
-        const breath = new Clutter.PropertyTransition({
-            property_name: 'scale-y',
-            interval: new Clutter.Interval({value_type: this._body.find_property('scale-y').value_type}),
+        this._loop(BREATH_NAME, 'scale-y', 1, 1 + stretch, duration);
+    }
+
+    // An endless back-and-forth on the body. A plain transition, not
+    // actor.ease(): an endless ease would keep GNOME Shell marked busy and
+    // block fullscreen unredirection while it runs.
+    _loop(name, property, from, to, duration) {
+        const loop = new Clutter.PropertyTransition({
+            property_name: property,
+            interval: new Clutter.Interval({value_type: this._body.find_property(property).value_type}),
             duration,
             repeat_count: -1,
             auto_reverse: true,
             progress_mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
         });
-        breath.set_from(1);
-        breath.set_to(1 + stretch);
-        this._body.add_transition(BREATH_NAME, breath);
+        loop.set_from(from);
+        loop.set_to(to);
+        this._body.add_transition(name, loop);
     }
 }

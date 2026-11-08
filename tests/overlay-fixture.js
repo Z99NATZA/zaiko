@@ -783,12 +783,15 @@ export default class OverlayQA extends ZaikoExtension {
             this._renderSnapshot();
             const row = this._logHistory.get_child_at_index(1);
             const size = [this._answerLabel.width, this._answerLabel.height];
+            const talk = () => this._body.get_transition('zaiko-talk');
+            const depths = [];
             const parts = graphemes(`[Aiko] ${reply}`);
             const prefixes = parts.map((_, count) => parts.slice(0, count).join('')).concat(parts.join(''));
             const seen = [];
             for (let tick = 0; tick < 8 && this._reveal; tick++) {
                 await qaPause(90);
                 seen.push([this._answerLabel.text, row.text]);
+                depths.push([this._body.translation_y, Boolean(talk()?.is_playing() || !this._reveal)]);
             }
             qaAssert(seen.length > 3 && seen.every(([answer, log]) =>
                 prefixes.includes(answer) &&
@@ -797,9 +800,13 @@ export default class OverlayQA extends ZaikoExtension {
             `A new reply types out by whole characters in the bubble and Log: ${JSON.stringify(seen)}`);
             qaAssert(this._answerLabel.width === size[0] && this._answerLabel.height === size[1] && !this._answerHideSource,
                 'The bubble keeps its final size while typing, and the hide timer waits');
+            qaAssert(depths.some(([depth]) => depth > 1) && depths.every(([depth, playing]) => playing &&
+                depth >= 0 && depth <= Math.round(this._body.height * 0.03) + 0.5),
+            `She bobs down behind her bottom edge while the reply types: ${JSON.stringify(depths)}`);
             await qaPause(2600);
             qaAssert(!this._reveal && this._answerLabel.text === `[Aiko] ${reply}` && row.text === `[Aiko] ${reply}`,
                 'Typing finishes with the full reply');
+            qaAssert(!talk() && this._body.translation_y === 0, 'She stops bobbing and settles when typing ends');
             this._knownReplies = null;
             this._snapshot = {...this._snapshot, messages: [...this._snapshot.messages, {role: 'assistant', content: 'history'}]};
             this._noticeNewReply();

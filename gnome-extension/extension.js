@@ -1544,6 +1544,7 @@ export default class ZaikoExtension extends Extension {
             return;
         this._reveal = {index, content: messages[index].content, typewriter: new Typewriter(messages[index].content),
             label: null, prefix: '', applyPrefix: null};
+        this._motion?.setTalking(true);
         this._revealSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, TICK_MS, () => {
             if (this._reveal.typewriter.advance()) {
                 this._revealSource = 0;
@@ -1576,6 +1577,7 @@ export default class ZaikoExtension extends Extension {
         this._revealSource = 0;
         const reveal = this._reveal;
         this._reveal = null;
+        this._motion?.setTalking(false);
         if (!reveal || !render)
             return;
         if (reveal.label) {

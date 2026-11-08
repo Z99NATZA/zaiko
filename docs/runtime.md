@@ -76,7 +76,9 @@ at a time (Thai vowels and tone marks stay with their letter), at about 50
 characters a second and within 2.5 seconds for long replies. The bubble takes
 its final size first so it does not move while typing. Replies already present
 when Zaiko connects, and all replies when GNOME animations are off, appear at
-once; sending a new message finishes any typing immediately. Each displayed
+once; sending a new message finishes any typing immediately. While a reply
+types she bobs quickly up and down, dipping about 3% of her height behind her
+bottom edge, and settles when the text is complete. Each displayed
 completed message or error disappears 8 seconds after typing ends. Repainting,
 changing the desktop font, reopening input, or using the character menu
 does not hide the answer or restart that countdown; opening Log dismisses it. The full
