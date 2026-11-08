@@ -27,3 +27,24 @@ export function imageGeometry(width, height) {
         y: height - FRAME.height * scale,
     };
 }
+
+// Character sizes 1-5 cycle from the character menu; 3 is the default.
+export const CHARACTER_SIZES = Object.freeze([1, 2, 3, 4, 5]);
+export const DEFAULT_CHARACTER_SIZE = 3;
+const SIZE_WIDTHS = Object.freeze({1: 208, 2: 260, 3: 312, 4: 390, 5: 468});
+
+export function normalizeCharacterSize(value) {
+    const size = Number(String(value ?? '').trim());
+    return CHARACTER_SIZES.includes(size) ? size : DEFAULT_CHARACTER_SIZE;
+}
+
+export function nextCharacterSize(size) {
+    const index = CHARACTER_SIZES.indexOf(normalizeCharacterSize(size));
+    return CHARACTER_SIZES[(index + 1) % CHARACTER_SIZES.length];
+}
+
+// The character box fits a frame with the margins imageGeometry keeps.
+export function characterBox(size) {
+    const width = SIZE_WIDTHS[normalizeCharacterSize(size)];
+    return {width, height: Math.round((width - 8) * FRAME.height / FRAME.width) + 4};
+}

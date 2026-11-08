@@ -35,7 +35,8 @@ Zaiko does not enable globally disabled user extensions.
 Desktop
 ==========
 
-The GNOME 50 extension renders a 240 x 188 character on the primary monitor.
+The GNOME 50 extension renders the character on the primary monitor at the
+size chosen with CharSize (see Character size).
 Her expression follows the companion state (idle, thinking, working, replied,
 error); each change picks a random frame for that state from assets/aiko.
 scripts/slice_sheet.py cuts those frames from a transparent sticker sheet.
@@ -129,9 +130,12 @@ without reserving a header or changing the message area. It appears
 while the pointer is anywhere in Log, including its input and close button, and
 hides immediately on leaving. Click closes
 Log; Escape works even while the close button is hidden.
-The character's right-click menu has four compact rows: Log, Vim: off/on,
-Lang: en/th, and Quit, with no separator. It opens near the right-click position and flips or
-shifts to stay inside the monitor's work area at screen edges. It is stacked
+The character's right-click menu has five compact rows: Log, CharSize: 1-5,
+Lang: en/th, Vim: off/on, and Quit, with no separator. Log is always first and
+Quit always last; the rows between are sorted A-Z by their English names and
+keep that order in Thai. New rows follow the same rule. It opens near the
+right-click position and flips or shifts to stay inside the monitor's work area
+at screen edges. It is stacked
 above the floating reply. Input Copy/Paste and message
 Copy menus share the Log/Quit menu's surface, corners, spacing and desktop font.
 Input menus retain GNOME's Copy/Paste actions and disabled states, without
@@ -191,6 +195,17 @@ Missing Thai strings fall back to English. Install the edited files with
 `make install` and reload the GNOME session to load the changed catalogs.
 This setting controls the companion UI; core/provider messages retain their
 original content and response language.
+
+Character size
+----------
+
+Click the CharSize: 1-5 menu row to cycle the character size
+1 → 2 → 3 → 4 → 5 → 1. Like Vim, it changes in place, keeps the menu open and
+the label shows the current value. The sizes are 208 x 156 (1), 260 x 196 (2),
+312 x 235 (3, the default), 390 x 295 (4) and 468 x 354 (5). She grows or
+shrinks around her bottom centre, still clamped to the work area. The choice is
+saved in ~/.config/zaiko/character-size (following XDG_CONFIG_HOME); a missing
+or invalid value means 3.
 
 Input Vim
 ----------

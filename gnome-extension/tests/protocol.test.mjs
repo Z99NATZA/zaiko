@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {APP_IDS, panelPosition, clampPosition, expressionFor, isBusy, parseEvent, parseSnapshot} from '../protocol.js';
 import {existsSync} from 'node:fs';
-import {EXPRESSIONS, FRAME, imageGeometry, pickFrame} from '../assets/manifest.js';
+import {CHARACTER_SIZES, EXPRESSIONS, FRAME, characterBox, imageGeometry, nextCharacterSize,
+    normalizeCharacterSize, pickFrame} from '../assets/manifest.js';
 
 test('snapshot preserves Thai conversation and ignores unrelated fields', () => {
     const snapshot = parseSnapshot(JSON.stringify({
@@ -62,10 +63,24 @@ test('a new pick avoids repeating the previous frame when the mood has others', 
     assert.ok(EXPRESSIONS.neutral.includes(pickFrame('unknown')));
 });
 
-test('frames keep their aspect and rest on the character bottom edge', () => {
-    const geometry = imageGeometry(240, 188);
-    assert.ok(Math.abs(geometry.width / geometry.height - FRAME.width / FRAME.height) < 1e-9);
-    assert.ok(geometry.x >= 3.99 && geometry.x + geometry.width <= 236.01);
-    assert.ok(geometry.y >= 3.99);
-    assert.ok(Math.abs(geometry.y + geometry.height - 188) < 1e-9);
+test('frames keep their aspect and rest on the bottom edge at every character size', () => {
+    for (const size of CHARACTER_SIZES) {
+        const box = characterBox(size);
+        const geometry = imageGeometry(box.width, box.height);
+        assert.ok(Math.abs(geometry.width / geometry.height - FRAME.width / FRAME.height) < 1e-9);
+        assert.ok(geometry.x >= 3.99 && geometry.x + geometry.width <= box.width - 3.99);
+        assert.ok(geometry.y >= 3.99);
+        assert.ok(Math.abs(geometry.y + geometry.height - box.height) < 1e-9);
+    }
+    for (let size = 1; size < CHARACTER_SIZES.length; size++)
+        assert.ok(characterBox(size).width < characterBox(size + 1).width);
+});
+
+test('character size cycles 1 to 5 and falls back to 3', () => {
+    assert.deepEqual([1, 2, 3, 4, 5].map(nextCharacterSize), [2, 3, 4, 5, 1]);
+    assert.equal(normalizeCharacterSize('5\n'), 5);
+    for (const value of [null, undefined, '', '0', '6', '2.5', 'big'])
+        assert.equal(normalizeCharacterSize(value), 3);
+    assert.equal(nextCharacterSize('junk'), 4);
+    assert.deepEqual(characterBox(3), {width: 312, height: 235});
 });

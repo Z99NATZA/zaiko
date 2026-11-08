@@ -2,6 +2,7 @@
   "menu.log": "Log",
   "menu.vim": "Vim: {state}",
   "menu.language": "Lang: {language}",
+  "menu.size": "CharSize: {size}",
   "menu.quit": "Quit",
   "state.on": "on",
   "state.off": "off",

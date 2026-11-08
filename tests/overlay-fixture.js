@@ -710,7 +710,7 @@ export default class OverlayQA extends ZaikoExtension {
             await this._click(this._langMenuItem);
             qaAssert(this._language === 'th' && this._characterMenu.isOpen &&
                 this._characterMenu._getMenuItems().map(item => item.label.text).join(',') ===
-                `พูดคุย,Vim: ${vimEnabled ? 'เปิด' : 'ปิด'},ภาษา: th,ปิด`,
+                `พูดคุย,ขนาด: ${this._characterSize},ภาษา: th,Vim: ${vimEnabled ? 'เปิด' : 'ปิด'},ปิด`,
                 `Lang toggles to Thai, updates every menu row and keeps the menu open: ${JSON.stringify({language: this._language, open: this._characterMenu.isOpen, rows: this._characterMenu._getMenuItems().map(item => item.label.text)})}`);
             qaAssert(this._loadLanguage() === 'th', 'The language choice persists in language.json');
             qaAssert(this._answerHideSource === expiry && JSON.stringify(this._snapshot.messages) === messages &&
@@ -764,6 +764,43 @@ export default class OverlayQA extends ZaikoExtension {
             this._renderSnapshot();
             this._hidePanel();
             this._hideInput();
+        }
+    }
+
+    async _checkCharacterSize() {
+        const size = this._characterSize;
+        try {
+            qaAssert(size === 3 && this._character.width === 312 && this._sizeMenuItem.label.text === 'CharSize: 3',
+                'Character size defaults to 3');
+            this._positionCharacter(500, 400);
+            await qaPause(60);
+            this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), this._character.x + 100, this._character.y + 100);
+            await qaPause(40);
+            this._openCharacterMenu();
+            await qaPause(200);
+            const rows = this._characterMenu._getMenuItems().map(item => item.label.text).join(',');
+            qaAssert(rows === `Log,CharSize: 3,Lang: en,Vim: ${this._vimEnabled ? 'on' : 'off'},Quit`,
+                `Log is first, Quit is last and the rows between are sorted A-Z: ${rows}`);
+            const anchor = () => [this._character.x + this._character.width / 2, this._character.y + this._character.height];
+            const start = anchor();
+            const seen = [];
+            for (let step = 0; step < 6; step++) {
+                await this._click(this._sizeMenuItem);
+                await qaPause(60);
+                seen.push({size: this._characterSize, width: this._character.width, height: this._character.height,
+                    image: this._image.width, label: this._sizeMenuItem.label.text, open: this._characterMenu.isOpen,
+                    saved: this._loadCharacterSize(), anchor: anchor()});
+            }
+            qaAssert(seen.map(row => row.size).join() === '4,5,1,2,3,4' &&
+                seen.map(row => row.width).join() === '390,468,208,260,312,390' &&
+                seen.every(row => row.label === `CharSize: ${row.size}` && row.open && row.saved === row.size &&
+                    row.image > row.width * 0.9 && Math.abs(row.anchor[0] - start[0]) <= 1 &&
+                    Math.abs(row.anchor[1] - start[1]) <= 1),
+                `CharSize cycles 1-5, keeps the menu open, saves the choice and keeps her bottom centre: ${JSON.stringify(seen)}`);
+        } finally {
+            while (this._characterSize !== size)
+                this._cycleCharacterSize();
+            this._characterMenu.close();
         }
     }
 
@@ -1473,8 +1510,9 @@ export default class OverlayQA extends ZaikoExtension {
         'Floating reply is stacked below Log and the popup menu');
         await this._shot('character-context-menu');
         const items = this._characterMenu._getMenuItems();
-        qaAssert(items.length === 4 && items.map(item => item.label?.text).join(',') === 'Log,Vim: off,Lang: en,Quit',
-            'Character menu shows Log, Vim, Lang and Quit');
+        qaAssert(items.length === 5 &&
+            items.map(item => item.label?.text).join(',') === 'Log,CharSize: 3,Lang: en,Vim: off,Quit',
+            'Character menu shows Log first, Quit last and CharSize, Lang, Vim sorted between');
         qaAssert(this._characterMenu.box.get_theme_node().get_border_radius(St.Corner.TOPLEFT) === 8 &&
             qaColor(this._characterMenu.box.get_theme_node().get_background_color(), '#282c34'), 'Character menu uses the One Half Dark surface');
         const logItem = items.find(item => item.label?.text === 'Log');
@@ -1659,6 +1697,7 @@ export default class OverlayQA extends ZaikoExtension {
         await this._checkCommandMenus();
         await this._checkVimInputs();
         await this._checkLanguage();
+        await this._checkCharacterSize();
         const startX = this._character.x;
         const startY = this._character.y;
         this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), startX + 100, startY + 100);

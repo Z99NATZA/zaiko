@@ -2,6 +2,7 @@
   "menu.log": "พูดคุย",
   "menu.vim": "Vim: {state}",
   "menu.language": "ภาษา: {language}",
+  "menu.size": "ขนาด: {size}",
   "menu.quit": "ปิด",
   "state.on": "เปิด",
   "state.off": "ปิด",

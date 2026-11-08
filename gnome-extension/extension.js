@@ -16,15 +16,13 @@ import {
     panelPosition, clampPosition, compactPosition, expressionFor, isBusy, latestAssistant, parseEvent, parseSnapshot,
     transcriptLine, formatElapsed,
 } from './protocol.js';
-import {imageGeometry, pickFrame} from './assets/manifest.js';
+import {characterBox, imageGeometry, nextCharacterSize, normalizeCharacterSize, pickFrame} from './assets/manifest.js';
 import {answerPreview} from './answerPreview.js';
 import {CaretBlink} from './caret.js';
 import {VimInput} from './vimInput.js';
 import {CommandMenu} from './commandMenu.js';
 import {LANGUAGES, normalizeLanguage, createTranslator} from './i18n.js';
 
-const CHARACTER_WIDTH = 240;
-const CHARACTER_HEIGHT = 188;
 const ANSWER_TAIL_WIDTH = 16;
 const ANSWER_TAIL_HEIGHT = 8;
 const EMPTY_SNAPSHOT = {messages: [], state: 'idle', request_id: null, error: null};
@@ -72,6 +70,8 @@ export default class ZaikoExtension extends Extension {
         this._vimInputs = [];
         this._commandMenus = [];
         this._vimEnabled = this._loadVimEnabled();
+        this._characterSize = this._loadCharacterSize();
+        this._characterBox = characterBox(this._characterSize);
         this._vimModeState = {mode: 'normal'};
         this._catalogs = this._loadCatalogs();
         this._language = this._loadLanguage();
@@ -205,6 +205,7 @@ export default class ZaikoExtension extends Extension {
         this._language = language;
         this._translate = createTranslator(this._catalogs, language);
         this._logMenuItem.label.text = this._t('menu.log');
+        this._sizeMenuItem.label.text = this._sizeLabel();
         this._vimMenuItem.label.text = this._vimLabel();
         this._langMenuItem.label.text = this._t('menu.language', {language});
         this._quitMenuItem.label.text = this._t('menu.quit');
@@ -256,6 +257,44 @@ export default class ZaikoExtension extends Extension {
             vim.setEnabled(enabled);
     }
 
+    _sizeLabel() {
+        return this._t('menu.size', {size: this._characterSize});
+    }
+
+    _loadCharacterSize() {
+        this._sizePreferencePath = GLib.build_filenamev([GLib.get_user_config_dir(), 'zaiko', 'character-size']);
+        if (!GLib.file_test(this._sizePreferencePath, GLib.FileTest.EXISTS))
+            return normalizeCharacterSize(null);
+        try {
+            const [, contents] = GLib.file_get_contents(this._sizePreferencePath);
+            return normalizeCharacterSize(new TextDecoder().decode(contents));
+        } catch (error) {
+            console.warn(`Zaiko: could not read character size preference: ${error.message}`);
+            return normalizeCharacterSize(null);
+        }
+    }
+
+    _cycleCharacterSize() {
+        const size = nextCharacterSize(this._characterSize);
+        try {
+            if (GLib.mkdir_with_parents(GLib.path_get_dirname(this._sizePreferencePath), 0o700) !== 0)
+                throw new Error('Could not create configuration directory');
+            GLib.file_set_contents(this._sizePreferencePath, `${size}\n`);
+        } catch (error) {
+            console.warn(`Zaiko: could not save character size preference: ${error.message}`);
+            return;
+        }
+        const previous = this._characterBox;
+        this._characterSize = size;
+        this._characterBox = characterBox(size);
+        this._sizeMenuItem.label.text = this._sizeLabel();
+        this._character.set_size(this._characterBox.width, this._characterBox.height);
+        this._drawFrame();
+        // Grow or shrink around her bottom centre; positioning still clamps.
+        this._positionCharacter(this._character.x + (previous.width - this._characterBox.width) / 2,
+            this._character.y + previous.height - this._characterBox.height);
+    }
+
     _setEntryAvailable(entry, available) {
         this._commandMenus.find(menu => menu.entry === entry)?.setAvailable(available);
         const vim = this._vimInputs.find(controller => controller.entry === entry);
@@ -303,8 +342,8 @@ export default class ZaikoExtension extends Extension {
     _buildActors() {
         this._character = new St.Widget({
             style_class: 'zaiko-character',
-            width: CHARACTER_WIDTH,
-            height: CHARACTER_HEIGHT,
+            width: this._characterBox.width,
+            height: this._characterBox.height,
             reactive: true,
             clip_to_allocation: true,
             accessible_name: this._t('accessibility.character'),
@@ -647,10 +686,14 @@ export default class ZaikoExtension extends Extension {
         this._characterMenu = new PopupMenu.PopupMenu(this._character, 0, St.Side.TOP);
         this._styleContextMenu(this._characterMenu, this._characterMenuAnchor);
         this._logMenuItem = this._characterMenu.addAction(this._t('menu.log'), () => this._showLog());
-        this._vimMenuItem = new ToggleMenuItem(this._vimLabel(), () => this._toggleVim());
-        this._characterMenu.addMenuItem(this._vimMenuItem);
+        // Log stays first and Quit last; the rows between are sorted A-Z by
+        // their English names, in every language.
+        this._sizeMenuItem = new ToggleMenuItem(this._sizeLabel(), () => this._cycleCharacterSize());
+        this._characterMenu.addMenuItem(this._sizeMenuItem);
         this._langMenuItem = new ToggleMenuItem(this._t('menu.language', {language: this._language}), () => this._toggleLanguage());
         this._characterMenu.addMenuItem(this._langMenuItem);
+        this._vimMenuItem = new ToggleMenuItem(this._vimLabel(), () => this._toggleVim());
+        this._characterMenu.addMenuItem(this._vimMenuItem);
         this._quitMenuItem = this._characterMenu.addAction(this._t('menu.quit'), () => this._quitCore());
         Main.uiGroup.add_child(this._characterMenu.actor);
         this._characterMenu.actor.hide();
@@ -701,7 +744,11 @@ export default class ZaikoExtension extends Extension {
             return;
         this._expression = mood;
         this._frame = pickFrame(mood, this._frame);
-        const geometry = imageGeometry(CHARACTER_WIDTH, CHARACTER_HEIGHT);
+        this._drawFrame();
+    }
+
+    _drawFrame() {
+        const geometry = imageGeometry(this._characterBox.width, this._characterBox.height);
         const uri = this.dir.get_child('assets').get_child('aiko').get_child(this._frame).get_uri();
         this._image.set_style(`background-image: url("${uri}"); background-size: contain;`);
         this._image.set_size(geometry.width, geometry.height);
@@ -720,10 +767,10 @@ export default class ZaikoExtension extends Extension {
         // Keep answers above the head while dragging, including near the top.
         // Tiny work areas can exhaust this reserve; compactPosition still clamps.
         const reserve = this._answerHasText
-            ? Math.min(this._answerLabel.height + 8, Math.max(0, area.height - CHARACTER_HEIGHT - 16)) : 0;
+            ? Math.min(this._answerLabel.height + 8, Math.max(0, area.height - this._characterBox.height - 16)) : 0;
         const bounds = {x: area.x, y: area.y + reserve,
             width: area.width, height: area.height - reserve};
-        const position = clampPosition(x, y, CHARACTER_WIDTH, CHARACTER_HEIGHT, bounds);
+        const position = clampPosition(x, y, this._characterBox.width, this._characterBox.height, bounds);
         this._character.set_position(position.x, position.y);
         this._positionSurfaces(area);
     }
@@ -731,12 +778,12 @@ export default class ZaikoExtension extends Extension {
     _positionSurfaces(area) {
         const position = panelPosition({
             x: this._character.x, y: this._character.y,
-            width: CHARACTER_WIDTH, height: CHARACTER_HEIGHT,
+            width: this._characterBox.width, height: this._characterBox.height,
         }, {width: this._panel.width, height: this._panel.height}, area);
         this._panel.set_position(position.x, position.y);
         const compact = compactPosition({
             x: this._character.x, y: this._character.y,
-            width: CHARACTER_WIDTH, height: CHARACTER_HEIGHT,
+            width: this._characterBox.width, height: this._characterBox.height,
         }, {width: this._answerLabel.width, height: this._answerLabel.height + ANSWER_TAIL_HEIGHT - 8},
         {width: this._inputOverlay.width, height: this._inputOverlay.height}, area);
         this._inputOverlay.set_position(compact.input.x, compact.input.y);
@@ -744,7 +791,7 @@ export default class ZaikoExtension extends Extension {
         // Point the tail at the head, kept inside the bubble's rounded corners.
         const tailX = Math.round(Math.max(compact.answer.x + 14,
             Math.min(compact.answer.x + this._answerLabel.width - 14 - ANSWER_TAIL_WIDTH,
-                this._character.x + (CHARACTER_WIDTH - ANSWER_TAIL_WIDTH) / 2)));
+                this._character.x + (this._characterBox.width - ANSWER_TAIL_WIDTH) / 2)));
         this._answerTail.set_position(tailX, compact.answer.y + this._answerLabel.height - 1);
         for (const menu of this._commandMenus)
             menu.layout();
@@ -760,8 +807,8 @@ export default class ZaikoExtension extends Extension {
         this._answerMaxWidth = Math.min(320, Math.max(1, area.width - 16));
         this._renderCompact();
         if (!this._positioned) {
-            this._positionCharacter(area.x + area.width - CHARACTER_WIDTH - 24,
-                area.y + area.height - CHARACTER_HEIGHT - 16);
+            this._positionCharacter(area.x + area.width - this._characterBox.width - 24,
+                area.y + area.height - this._characterBox.height - 16);
             this._positioned = true;
         } else {
             this._positionCharacter(this._character.x, this._character.y);
@@ -1587,6 +1634,7 @@ export default class ZaikoExtension extends Extension {
         this._characterMenuManager = null;
         this._characterMenuAnchor?.destroy();
         this._characterMenuAnchor = null;
+        this._sizeMenuItem = null;
         this._vimMenuItem = null;
         this._langMenuItem = null;
         this._logMenuItem = null;
