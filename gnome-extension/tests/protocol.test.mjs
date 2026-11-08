@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {APP_IDS, panelPosition, clampPosition, expressionFor, isBusy, parseEvent, parseSnapshot} from '../protocol.js';
 import {existsSync} from 'node:fs';
-import {CHARACTER_SIZES, EXPRESSIONS, FRAME, characterBox, imageGeometry, nextCharacterSize,
+import {CHARACTER_SIZES, EXPRESSIONS, FRAME, characterBox, frameCycleDelay, imageGeometry, nextCharacterSize,
     normalizeCharacterSize, pickFrame} from '../assets/manifest.js';
 
 test('snapshot preserves Thai conversation and ignores unrelated fields', () => {
@@ -74,6 +74,13 @@ test('frames keep their aspect and rest on the bottom edge at every character si
     }
     for (let size = 1; size < CHARACTER_SIZES.length; size++)
         assert.ok(characterBox(size).width < characterBox(size + 1).width);
+});
+
+test('frames rotate quickly while thinking, slowly otherwise, and never with one frame', () => {
+    assert.deepEqual([0, 0.5, 0.999].map(value => frameCycleDelay('thinking', () => value)), [4, 5, 6]);
+    for (const mood of ['neutral', 'happy', 'error'])
+        assert.deepEqual([0, 0.5, 1].map(value => frameCycleDelay(mood, () => value)), [20, 30, 40]);
+    assert.equal(frameCycleDelay('working', () => 0.5), 0);
 });
 
 test('character size cycles 1 to 5 and falls back to 3', () => {

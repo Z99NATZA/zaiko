@@ -39,6 +39,10 @@ The GNOME 50 extension renders the character on the primary monitor at the
 size chosen with CharSize (see Character size).
 Her expression follows the companion state (idle, thinking, working, replied,
 error); each change picks a random frame for that state from assets/aiko.
+While a state lasts she switches to another of its frames every 20-40 s
+(4-6 s while thinking). Each new frame pops in briefly, and she breathes with a
+slight stretch from her bottom edge, faster while thinking or working. Breathing
+pauses while she is hidden, and all motion follows GNOME's animation setting.
 scripts/slice_sheet.py cuts those frames from a transparent sticker sheet.
 The companion follows workspaces and hides in Overview, fullscreen, and lock.
 It reserves no desktop space. Keyboard handling stays in focused UI or an active

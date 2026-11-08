@@ -16,7 +16,9 @@ import {
     panelPosition, clampPosition, compactPosition, expressionFor, isBusy, latestAssistant, parseEvent, parseSnapshot,
     transcriptLine, formatElapsed,
 } from './protocol.js';
-import {characterBox, imageGeometry, nextCharacterSize, normalizeCharacterSize, pickFrame} from './assets/manifest.js';
+import {characterBox, frameCycleDelay, imageGeometry, nextCharacterSize, normalizeCharacterSize, pickFrame}
+    from './assets/manifest.js';
+import {CharacterMotion} from './characterMotion.js';
 import {answerPreview} from './answerPreview.js';
 import {CaretBlink} from './caret.js';
 import {VimInput} from './vimInput.js';
@@ -54,6 +56,7 @@ export default class ZaikoExtension extends Extension {
         this._thinkingStartedUs = 0;
         this._thinkingRequestId = null;
         this._thinkingSource = 0;
+        this._frameCycleSource = 0;
         this._focusDismissSource = 0;
         this._selectionDrag = null;
         this._logClick = null;
@@ -349,8 +352,12 @@ export default class ZaikoExtension extends Extension {
             accessible_name: this._t('accessibility.character'),
             visible: false,
         });
+        // The body breathes; the image inside it pops when the frame changes.
+        this._body = new St.Widget({reactive: false});
         this._image = new St.Widget({reactive: false});
-        this._character.add_child(this._image);
+        this._body.add_child(this._image);
+        this._character.add_child(this._body);
+        this._motion = new CharacterMotion(this._body, this._image);
         this._setExpression('neutral');
         // Grab from the initial press, before a fast motion can leave the actor.
         // Grabbed events use the bubble phase, as in GNOME Shell's own DND.
@@ -743,12 +750,31 @@ export default class ZaikoExtension extends Extension {
         if (this._expression === mood)
             return;
         this._expression = mood;
-        this._frame = pickFrame(mood, this._frame);
+        this._motion?.setBusy(mood === 'thinking' || mood === 'working');
+        this._showNextFrame();
+    }
+
+    // Show another frame of the current mood, then schedule the next change.
+    _showNextFrame() {
+        if (this._frameCycleSource)
+            GLib.Source.remove(this._frameCycleSource);
+        this._frameCycleSource = 0;
+        this._frame = pickFrame(this._expression, this._frame);
         this._drawFrame();
+        this._motion?.pop();
+        const delay = frameCycleDelay(this._expression);
+        if (delay && this._motion) {
+            this._frameCycleSource = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, delay, () => {
+                this._frameCycleSource = 0;
+                this._showNextFrame();
+                return GLib.SOURCE_REMOVE;
+            });
+        }
     }
 
     _drawFrame() {
         const geometry = imageGeometry(this._characterBox.width, this._characterBox.height);
+        this._body.set_size(this._characterBox.width, this._characterBox.height);
         const uri = this.dir.get_child('assets').get_child('aiko').get_child(this._frame).get_uri();
         this._image.set_style(`background-image: url("${uri}"); background-size: contain;`);
         this._image.set_size(geometry.width, geometry.height);
@@ -828,6 +854,7 @@ export default class ZaikoExtension extends Extension {
             this._characterMenu?.close();
         }
         this._character.visible = show;
+        this._motion?.setActive(show);
         this._panel.visible = show && this._panelOpen;
         if (this._panel.visible)
             this._panel.sync_hover();
@@ -1670,6 +1697,11 @@ export default class ZaikoExtension extends Extension {
         if (this._composerLayoutSource)
             GLib.Source.remove(this._composerLayoutSource);
         this._composerLayoutSource = 0;
+        if (this._frameCycleSource)
+            GLib.Source.remove(this._frameCycleSource);
+        this._frameCycleSource = 0;
+        this._motion?.destroy();
+        this._motion = null;
         for (const actor of [this._panel, this._character, this._inputOverlay, this._answerLabel, this._answerTail]) {
             if (!actor)
                 continue;
@@ -1691,6 +1723,7 @@ export default class ZaikoExtension extends Extension {
         this._logStatus = null;
         this._character = null;
         this._image = null;
+        this._body = null;
         this._expression = null;
         this._frame = null;
         this._positioned = false;

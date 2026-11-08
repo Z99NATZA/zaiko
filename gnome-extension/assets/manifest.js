@@ -18,6 +18,14 @@ export function pickFrame(mood, previous = null, random = Math.random) {
     return choices[Math.min(choices.length - 1, Math.floor(random() * choices.length))];
 }
 
+// Seconds before showing another frame of the same mood; 0 keeps the frame.
+export function frameCycleDelay(mood, random = Math.random) {
+    if ((EXPRESSIONS[mood] ?? EXPRESSIONS.neutral).length < 2)
+        return 0;
+    const [min, max] = mood === 'thinking' ? [4, 6] : [20, 40];
+    return Math.round(min + random() * (max - min));
+}
+
 export function imageGeometry(width, height) {
     const scale = Math.min((width - 8) / FRAME.width, (height - 4) / FRAME.height);
     return {

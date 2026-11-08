@@ -1,5 +1,6 @@
 // Appended only to a temporary copy by overlay-shell.py; no real core/provider.
 import * as Keyboard from 'resource:///org/gnome/shell/ui/status/keyboard.js';
+import {EXPRESSIONS} from './assets/manifest.js';
 
 function qaPause(milliseconds) {
     return new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, milliseconds, () => {
@@ -764,6 +765,37 @@ export default class OverlayQA extends ZaikoExtension {
             this._renderSnapshot();
             this._hidePanel();
             this._hideInput();
+        }
+    }
+
+    async _checkMotion() {
+        const snapshot = this._snapshot;
+        const breath = () => this._body.get_transition('zaiko-breath');
+        try {
+            qaAssert(St.Settings.get().enable_animations && this._character.visible && breath()?.is_playing() &&
+                breath().get_repeat_count() === -1, 'The visible character breathes in an endless loop');
+            const calm = breath().duration;
+            this._snapshot = {...snapshot, state: 'thinking', request_id: 'qa-motion', error: null};
+            this._renderSnapshot();
+            const frame = this._frame;
+            qaAssert(breath().duration < calm && this._image.get_transition('scale-x') &&
+                EXPRESSIONS.thinking.includes(frame) && this._frameCycleSource,
+                'Thinking breathes faster, pops in a thinking frame and schedules the next one');
+            await qaPause(400);
+            qaAssert(this._image.scale_x === 1 && this._image.opacity === 255, 'The frame pop settles at full size');
+            this._showNextFrame();
+            qaAssert(this._frame !== frame && EXPRESSIONS.thinking.includes(this._frame),
+                'Frame rotation picks another frame of the same mood');
+            this._character.visible = false;
+            this._motion.setActive(false);
+            qaAssert(!breath() && this._body.scale_y === 1, 'Hiding the character stops breathing');
+            this._motion.setActive(true);
+            this._character.visible = true;
+            qaAssert(breath()?.is_playing(), 'Showing the character resumes breathing');
+        } finally {
+            this._snapshot = snapshot;
+            this._renderSnapshot();
+            this._updateVisibility();
         }
     }
 
@@ -1698,6 +1730,7 @@ export default class OverlayQA extends ZaikoExtension {
         await this._checkVimInputs();
         await this._checkLanguage();
         await this._checkCharacterSize();
+        await this._checkMotion();
         const startX = this._character.x;
         const startY = this._character.y;
         this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), startX + 100, startY + 100);
