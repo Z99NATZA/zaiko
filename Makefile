@@ -31,5 +31,6 @@ check:
 	node --check gnome-extension/answerPreview.js
 	node --check gnome-extension/caret.js
 	node --check gnome-extension/characterMotion.js
+	node --check gnome-extension/typewriter.js
 	node --check gnome-extension/vim.js
 	node --check gnome-extension/vimInput.js

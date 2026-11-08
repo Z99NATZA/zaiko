@@ -19,6 +19,7 @@ import {
 import {characterBox, frameCycleDelay, imageGeometry, nextCharacterSize, normalizeCharacterSize, pickFrame}
     from './assets/manifest.js';
 import {CharacterMotion} from './characterMotion.js';
+import {TICK_MS, Typewriter, firstGraphemes, graphemes} from './typewriter.js';
 import {answerPreview} from './answerPreview.js';
 import {CaretBlink} from './caret.js';
 import {VimInput} from './vimInput.js';
@@ -57,6 +58,9 @@ export default class ZaikoExtension extends Extension {
         this._thinkingRequestId = null;
         this._thinkingSource = 0;
         this._frameCycleSource = 0;
+        this._reveal = null;
+        this._revealSource = 0;
+        this._knownReplies = null;
         this._focusDismissSource = 0;
         this._selectionDrag = null;
         this._logClick = null;
@@ -1110,6 +1114,8 @@ export default class ZaikoExtension extends Extension {
         this._pendingRequestId = null;
         this._snapshot = {...EMPTY_SNAPSHOT};
         this._historySignature = null;
+        this._finishReveal(false);
+        this._knownReplies = null;
     }
 
     _coreVanished() {
@@ -1158,6 +1164,7 @@ export default class ZaikoExtension extends Extension {
             const [payload] = await this._callCore('GetSnapshot');
             this._snapshot = parseSnapshot(payload);
             this._snapshotError = null;
+            this._noticeNewReply();
             this._renderSnapshot();
         } catch (_error) {
             if (this._enabled && epoch === this._epoch) {
@@ -1193,15 +1200,16 @@ export default class ZaikoExtension extends Extension {
             const placeholder = this._wrappedLabel(this._t('log.empty'), 'zaiko-placeholder');
             this._logHistory.add_child(placeholder);
         }
-        for (const message of this._snapshot.messages) {
+        for (const [index, message] of this._snapshot.messages.entries()) {
             const {prefix, text, color} = transcriptLine(message, {
                 me: this._t('speaker.me'), action: this._t('speaker.action'),
             });
             const label = this._wrappedLabel(text, 'zaiko-log-message');
             this._makeMessageCopyable(label);
             label.clutter_text.set_line_alignment(Pango.Alignment.LEFT);
+            let applyPrefix = null;
             if (color) {
-                const applyPrefix = () => {
+                applyPrefix = () => {
                     const channels = [1, 3, 5].map(offset => Number.parseInt(color.slice(offset, offset + 2), 16) * 257);
                     const attribute = Pango.attr_foreground_new(...channels);
                     attribute.start_index = 0;
@@ -1216,8 +1224,17 @@ export default class ZaikoExtension extends Extension {
                 label.connect_after('style-changed', applyPrefix);
                 applyPrefix();
             }
+            if (this._reveal?.index === index) {
+                Object.assign(this._reveal, {label, prefix, applyPrefix});
+                label.text = `${prefix} ${this._reveal.typewriter.text}`;
+                applyPrefix?.();
+            }
             this._logHistory.add_child(label);
         }
+        this._queueLogScroll();
+    }
+
+    _queueLogScroll() {
         if (this._scrollSource)
             GLib.Source.remove(this._scrollSource);
         this._scrollSource = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
@@ -1445,7 +1462,10 @@ export default class ZaikoExtension extends Extension {
         const busy = this._busy();
         const error = this._uiError || this._snapshotError || this._snapshot.error ||
             (this._snapshot.state === 'error' ? 'error.generic' : null);
-        const text = error ? this._t(error) : this._requestStatus() || latestAssistant(this._snapshot.messages);
+        const status = error ? null : this._requestStatus();
+        const text = error ? this._t(error) : status || latestAssistant(this._snapshot.messages);
+        // While a new reply types out, the hide timer waits for it to finish.
+        const revealing = Boolean(this._reveal && !error && !status);
         const node = this._answerLabel.get_theme_node();
         const inset = side => node.get_padding(side) + node.get_border_width(side);
         const padX = inset(St.Side.LEFT) + inset(St.Side.RIGHT);
@@ -1458,7 +1478,7 @@ export default class ZaikoExtension extends Extension {
         // Repaints, font changes and reopening input must not prolong a message.
         // The count also distinguishes a new reply with exactly the same text.
         const key = JSON.stringify([busy ? (error || (this._sending ? 'sending' : this._snapshot.state)) : error || display,
-            this._snapshot.messages.filter(message => message.role === 'assistant').length]);
+            this._snapshot.messages.filter(message => message.role === 'assistant').length, revealing]);
         if (key !== this._answerDisplayKey) {
             this._clearAnswerTimeout();
             this._answerDisplayKey = key;
@@ -1493,6 +1513,8 @@ export default class ZaikoExtension extends Extension {
         const textWidth = Math.ceil(Math.min(contentWidth, answerText.get_preferred_width(-1)[1]));
         const textHeight = Math.ceil(answerText.get_preferred_height(textWidth)[1]);
         this._answerLabel.set_size(textWidth + padX, textHeight + padY);
+        this._answerRevealing = revealing;
+        this._showRevealInAnswer();
         this._answerHasText = Boolean(text) && !this._answerExpired;
         if (error)
             this._answerLabel.add_style_class_name('zaiko-answer-error');
@@ -1506,6 +1528,61 @@ export default class ZaikoExtension extends Extension {
         if (this._positioned)
             this._positionCharacter(this._character.x, this._character.y);
         this._updateVisibility();
+    }
+
+    // A reply that arrives while Zaiko runs types out; history loads at once.
+    _noticeNewReply() {
+        const messages = this._snapshot.messages;
+        const replies = messages.filter(message => message.role === 'assistant').length;
+        const known = this._knownReplies;
+        this._knownReplies = replies;
+        if (known === null || replies <= known)
+            return;
+        const index = messages.findLastIndex(message => message.role === 'assistant');
+        this._finishReveal();
+        if (!St.Settings.get().enable_animations || !messages[index].content)
+            return;
+        this._reveal = {index, content: messages[index].content, typewriter: new Typewriter(messages[index].content),
+            label: null, prefix: '', applyPrefix: null};
+        this._revealSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, TICK_MS, () => {
+            if (this._reveal.typewriter.advance()) {
+                this._revealSource = 0;
+                this._finishReveal();
+                return GLib.SOURCE_REMOVE;
+            }
+            const {label, prefix, applyPrefix, typewriter} = this._reveal;
+            if (label) {
+                label.text = `${prefix} ${typewriter.text}`;
+                applyPrefix?.();
+                this._queueLogScroll();
+            }
+            this._showRevealInAnswer();
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    _showRevealInAnswer() {
+        if (!this._reveal || !this._answerRevealing)
+            return;
+        const count = graphemes('[Aiko] ').length + this._reveal.typewriter.count;
+        this._answerLabel.text = firstGraphemes(this._answerPreview.text, count);
+        this._styleAnswerPrefix();
+    }
+
+    // Show the whole reply now. Pass false when its actors are going away.
+    _finishReveal(render = true) {
+        if (this._revealSource)
+            GLib.Source.remove(this._revealSource);
+        this._revealSource = 0;
+        const reveal = this._reveal;
+        this._reveal = null;
+        if (!reveal || !render)
+            return;
+        if (reveal.label) {
+            reveal.label.text = `${reveal.prefix} ${reveal.content}`;
+            reveal.applyPrefix?.();
+        }
+        this._renderCompact();
     }
 
     async _submit(entry = this._overlayEntry) {
@@ -1523,6 +1600,7 @@ export default class ZaikoExtension extends Extension {
                 entry.set_text(text);
             return;
         }
+        this._finishReveal();
         const epoch = this._epoch;
         const requestId = GLib.uuid_string_random();
         this._pendingRequestId = requestId;

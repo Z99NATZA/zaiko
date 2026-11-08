@@ -768,6 +768,52 @@ export default class OverlayQA extends ZaikoExtension {
         }
     }
 
+    async _checkTypewriter() {
+        const snapshot = this._snapshot;
+        const reply = 'ได้เลยค่ะ กำลังเปิดเทอร์มินัลให้นะ 🙂';
+        try {
+            this._snapshot = {...snapshot, state: 'idle', request_id: null, error: null,
+                messages: [{role: 'user', content: 'open terminal'}]};
+            this._knownReplies = 0;
+            this._noticeNewReply();
+            this._renderSnapshot();
+            this._showLog();
+            this._snapshot = {...this._snapshot, messages: [...this._snapshot.messages, {role: 'assistant', content: reply}]};
+            this._noticeNewReply();
+            this._renderSnapshot();
+            const row = this._logHistory.get_child_at_index(1);
+            const size = [this._answerLabel.width, this._answerLabel.height];
+            const parts = graphemes(`[Aiko] ${reply}`);
+            const prefixes = parts.map((_, count) => parts.slice(0, count).join('')).concat(parts.join(''));
+            const seen = [];
+            for (let tick = 0; tick < 8 && this._reveal; tick++) {
+                await qaPause(90);
+                seen.push([this._answerLabel.text, row.text]);
+            }
+            qaAssert(seen.length > 3 && seen.every(([answer, log]) =>
+                prefixes.includes(answer) &&
+                log.startsWith('[Aiko] ') && reply.startsWith(log.slice(7))) &&
+                seen.at(-1)[0].length > seen[0][0].length && seen[0][0] !== parts.join(''),
+            `A new reply types out by whole characters in the bubble and Log: ${JSON.stringify(seen)}`);
+            qaAssert(this._answerLabel.width === size[0] && this._answerLabel.height === size[1] && !this._answerHideSource,
+                'The bubble keeps its final size while typing, and the hide timer waits');
+            await qaPause(2600);
+            qaAssert(!this._reveal && this._answerLabel.text === `[Aiko] ${reply}` && row.text === `[Aiko] ${reply}`,
+                'Typing finishes with the full reply');
+            this._knownReplies = null;
+            this._snapshot = {...this._snapshot, messages: [...this._snapshot.messages, {role: 'assistant', content: 'history'}]};
+            this._noticeNewReply();
+            qaAssert(!this._reveal, 'Replies already there when Zaiko connects appear at once');
+        } finally {
+            this._finishReveal();
+            this._hidePanel();
+            this._snapshot = snapshot;
+            this._historySignature = null;
+            this._knownReplies = null;
+            this._renderSnapshot();
+        }
+    }
+
     async _checkMotion() {
         const snapshot = this._snapshot;
         const breath = () => this._body.get_transition('zaiko-breath');
@@ -1731,6 +1777,7 @@ export default class OverlayQA extends ZaikoExtension {
         await this._checkLanguage();
         await this._checkCharacterSize();
         await this._checkMotion();
+        await this._checkTypewriter();
         const startX = this._character.x;
         const startY = this._character.y;
         this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), startX + 100, startY + 100);
