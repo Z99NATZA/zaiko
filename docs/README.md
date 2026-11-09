@@ -79,7 +79,8 @@ Configuration
 The local .env is ready for OpenAI and DeepSeek API keys and is excluded from Git.
 .env.example has the same four variables with empty keys and can be committed.
 See the main README for the setup command, which preserves an existing .env.
-Provider/model selection uses environment configuration at startup.
+Provider/model selection uses environment configuration at startup; /model can
+switch the model for the current session.
 The installed runtime reads the user-local configuration copied at first install.
 
 Current UI iteration

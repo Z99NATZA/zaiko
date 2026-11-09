@@ -8,7 +8,7 @@ use zbus::{Connection, Proxy, fdo, object_server::SignalEmitter};
 
 use crate::{
     command::{self, CommandRequest},
-    config::Config,
+    config::{self, Config},
     provider::{App, Client, LaunchMode, Message, Tools},
 };
 
@@ -27,6 +27,7 @@ struct Snapshot {
     error: Option<String>,
     provider: String,
     model: String,
+    models: Vec<String>,
 }
 
 struct Active {
@@ -135,6 +136,10 @@ impl Runtime {
                         .map(|c| c.provider.name().to_owned())
                         .unwrap_or_default(),
                     model: config.as_ref().map(|c| c.model.clone()).unwrap_or_default(),
+                    models: config
+                        .as_ref()
+                        .map(|c| c.models.clone())
+                        .unwrap_or_default(),
                 },
                 active: None,
                 seen: HashSet::new(),
@@ -152,19 +157,60 @@ impl Runtime {
         }
     }
 
-    fn slash_reply(&self, text: &str, snapshot: &Snapshot) -> Option<String> {
+    /// Returns a local reply and, for /model, the model to switch to once the
+    /// request is accepted.
+    fn slash_reply(&self, text: &str, snapshot: &Snapshot) -> Option<(String, Option<String>)> {
         let name = text.split_whitespace().next()?;
         if !name.starts_with('/') {
             return None;
         }
-        if name != "/status" {
-            return Some("ยังไม่รองรับคำสั่งนี้ค่ะ คำสั่งที่ใช้ได้: /status, /exit".into());
+        match name {
+            "/status" if text == "/status" => Some((self.status_reply(snapshot), None)),
+            "/status" => Some(("ใช้ /status โดยไม่ใส่อาร์กิวเมนต์ค่ะ".into(), None)),
+            "/model" => Some(self.model_reply(text, snapshot)),
+            _ => Some((
+                "ยังไม่รองรับคำสั่งนี้ค่ะ คำสั่งที่ใช้ได้: /status, /model, /exit".into(),
+                None,
+            )),
         }
-        if text != "/status" {
-            return Some("ใช้ /status โดยไม่ใส่อาร์กิวเมนต์ค่ะ".into());
+    }
+
+    fn model_reply(&self, text: &str, snapshot: &Snapshot) -> (String, Option<String>) {
+        let args: Vec<&str> = text.split_whitespace().skip(1).collect();
+        let config = match &self.config {
+            Ok(config) => config,
+            Err(error) => return (format!("ยังสลับโมเดลไม่ได้ค่ะ การตั้งค่า: {error}"), None),
+        };
+        let provider = config.provider.name();
+        let current = &snapshot.model;
+        match args.as_slice() {
+            [] => (
+                format!(
+                    "โมเดล: {provider} · {current}\n       \
+                     ใช้ /model <model-id> เพื่อสลับโมเดลในเซสชันนี้ค่ะ"
+                ),
+                None,
+            ),
+            // Never accept the API key as a model ID: snapshots are not redacted.
+            [model] if !config::valid_model(model) || self.clean(model) != *model => (
+                "model ID ไม่ถูกต้องค่ะ ใช้ได้เฉพาะตัวอักษร ตัวเลข และ . _ / - : ไม่เกิน 128 ตัว".into(),
+                None,
+            ),
+            [model] if model == current => (format!("ใช้ {provider} · {model} อยู่แล้วค่ะ"), None),
+            [model] => (
+                format!(
+                    "สลับโมเดลเป็น {provider} · {model} แล้วค่ะ\n       \
+                     ใช้เฉพาะเซสชันนี้ รีสตาร์ตแล้วจะกลับไปใช้ค่าจาก .env"
+                ),
+                Some((*model).to_owned()),
+            ),
+            _ => ("ใช้ /model หรือ /model <model-id> ค่ะ".into(), None),
         }
+    }
+
+    fn status_reply(&self, snapshot: &Snapshot) -> String {
         let (provider, model) = match &self.config {
-            Ok(config) => (config.provider.name(), config.model.as_str()),
+            Ok(config) => (config.provider.name(), snapshot.model.as_str()),
             Err(_) => ("ยังไม่พร้อม", "ยังไม่พร้อม"),
         };
         let state = match snapshot.state {
@@ -186,7 +232,7 @@ impl Runtime {
         if let Err(error) = &self.config {
             lines.push(format!("การตั้งค่า: {error}"));
         }
-        Some(lines.join("\n       "))
+        lines.join("\n       ")
     }
 
     async fn accept(
@@ -202,7 +248,7 @@ impl Runtime {
                 "Text must contain 1–8192 UTF-8 bytes.".to_owned(),
             ));
         }
-        let (cancel, history, local_reply) = {
+        let (cancel, history, model, local_reply) = {
             let mut state = self.state.lock().await;
             // Capture the state before reserving this request changes it to thinking.
             // Desktop actions do not enter the slash-command path.
@@ -213,6 +259,19 @@ impl Runtime {
             };
             let safe_text = self.clean(text);
             let (cancel, history) = state.reserve(id, safe_text.clone())?;
+            // Switch only after the request is accepted, so a rejected /model
+            // (busy or duplicate ID) changes nothing.
+            let local_reply = local_reply.map(|(reply, model)| {
+                if let Some(model) = model {
+                    // Keep a typed, unlisted model selectable in the picker.
+                    if !state.snapshot.models.contains(&model) {
+                        state.snapshot.models.push(model.clone());
+                    }
+                    state.snapshot.model = model;
+                }
+                reply
+            });
+            let model = state.snapshot.model.clone();
             emit(
                 connection,
                 json!({"type":"message","request_id":id,"role":"user","content":safe_text}),
@@ -223,7 +282,7 @@ impl Runtime {
                 json!({"type":"state","request_id":id,"state":"thinking"}),
             )
             .await;
-            (cancel, history, local_reply)
+            (cancel, history, model, local_reply)
         };
         let runtime = self.clone();
         let connection = connection.clone();
@@ -250,7 +309,9 @@ impl Runtime {
                             .to_owned())
                     }
                 } else {
-                    let client = Client::new(runtime.config.clone()?)?;
+                    let mut config = runtime.config.clone()?;
+                    config.model = model;
+                    let client = Client::new(config)?;
                     client.chat(&history, &mut tools).await.map(Some)
                 }
             };
@@ -659,10 +720,12 @@ mod tests {
         let runtime = Runtime::new(Ok(Config {
             provider: crate::config::Provider::DeepSeek,
             model: "test-model".into(),
+            models: vec!["test-model".into()],
             api_key: "dummy-secret-value".into(),
         }));
         let state = runtime.state.lock().await;
-        let reply = runtime.slash_reply("/status", &state.snapshot).unwrap();
+        let (reply, model) = runtime.slash_reply("/status", &state.snapshot).unwrap();
+        assert!(model.is_none());
         assert_eq!(
             reply,
             "สถานะ: ● ว่าง (idle)\n       โมเดล: deepseek · test-model\n       \
@@ -670,6 +733,40 @@ mod tests {
         );
         assert!(!reply.contains("dummy-secret-value"));
         assert!(runtime.slash_reply("สวัสดี", &state.snapshot).is_none());
+    }
+
+    #[tokio::test]
+    async fn model_command_switches_only_valid_non_secret_ids() {
+        let runtime = Runtime::new(Ok(Config {
+            provider: crate::config::Provider::OpenAi,
+            model: "gpt-6.1-sol".into(),
+            models: vec!["gpt-6.1-sol".into()],
+            api_key: "dummy-secret-value".into(),
+        }));
+        let state = runtime.state.lock().await;
+        let reply = |text| runtime.slash_reply(text, &state.snapshot).unwrap();
+        let (show, none) = reply("/model");
+        assert!(show.starts_with("โมเดล: openai · gpt-6.1-sol"));
+        assert!(none.is_none());
+        assert_eq!(
+            reply("/model  gpt-6.1-mini ").1.as_deref(),
+            Some("gpt-6.1-mini")
+        );
+        assert!(reply("/model gpt-6.1-sol").1.is_none());
+        for invalid in ["/model bad$id", "/model dummy-secret-value", "/model a b"] {
+            let (text, model) = reply(invalid);
+            assert!(model.is_none());
+            assert!(!text.contains("dummy-secret-value"));
+        }
+        let broken = Runtime::new(Err("Missing test config".into()));
+        let state = broken.state.lock().await;
+        assert!(
+            broken
+                .slash_reply("/model x", &state.snapshot)
+                .unwrap()
+                .1
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -691,6 +788,7 @@ mod tests {
         let runtime = Runtime::new(Ok(Config {
             provider: crate::config::Provider::OpenAi,
             model: "gpt-6.1-sol".into(),
+            models: vec!["gpt-6.1-sol".into()],
             api_key: "dummy-secret-value".into(),
         }));
         let mut state = runtime.state.lock().await;

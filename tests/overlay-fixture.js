@@ -364,8 +364,8 @@ export default class OverlayQA extends ZaikoExtension {
             const menu = this._commandMenus.find(candidate => candidate.entry === entry);
             entry.set_text('/');
             await qaPause(180);
-            qaAssert(menu.actor.visible && menu._rows.length === 2 &&
-                menu._matches.map(command => command.name).join() === '/status,/exit',
+            qaAssert(menu.actor.visible && menu._rows.length === 3 &&
+                menu._matches.map(command => command.name).join() === '/status,/model,/exit',
                 'The production picker contains only supported commands');
             await this._checkCommandHighlight(entry, menu);
             this._showLog();
@@ -456,13 +456,32 @@ export default class OverlayQA extends ZaikoExtension {
                 'Typing narrows the picker to the matching command');
             await this._key(Clutter.KEY_Return);
             qaAssert(calls.length === 3 && calls[2].args[1] === '/status', 'Enter executes the highlighted match once');
+            const savedModels = [this._snapshot.model, this._snapshot.models];
+            this._snapshot.model = 'gpt-6.1-sol';
+            this._snapshot.models = ['gpt-6.1-sol', 'gpt-6.1-mini'];
+            this._renderSnapshot();
+            log.set_text('/mo');
+            await qaPause(80);
+            await this._key(Clutter.KEY_Return);
+            await qaPause(80);
+            qaAssert(calls.length === 3 && log.get_text() === '/model ' && logMenu.actor.visible &&
+                logMenu._matches.map(match => match.name).join() === 'gpt-6.1-sol,gpt-6.1-mini' &&
+                logMenu._rows.every(row => row.get_child().get_children().length === 2) && logMenu._selected === 0,
+            `Enter on /model opens a names-only model list without submitting: ${JSON.stringify({text: log.get_text(), matches: logMenu._matches.map(match => match.name), calls: calls.length})}`);
+            await this._shot('command-menu-models');
+            await this._key(Clutter.KEY_Down);
+            await this._key(Clutter.KEY_Return);
+            qaAssert(calls.length === 4 && calls[3].args[1] === '/model gpt-6.1-mini',
+                `Enter on a model submits /model with that ID once: ${JSON.stringify(calls.slice(3))}`);
+            [this._snapshot.model, this._snapshot.models] = savedModels;
+            this._renderSnapshot();
             log.set_text('/ex');
             await qaPause(80);
             qaAssert(logMenu._rows.length === 1 && logMenu._matches[0].name === '/exit', 'The picker offers /exit');
             await this._key(Clutter.KEY_Return);
-            qaAssert(calls.length === 4 && calls[3].method === 'Quit' && calls[3].args === undefined &&
+            qaAssert(calls.length === 5 && calls[4].method === 'Quit' && calls[4].args === undefined &&
                 log.get_text() === '',
-            `/exit quits like the Quit menu instead of submitting: ${JSON.stringify(calls.slice(3))}`);
+            `/exit quits like the Quit menu instead of submitting: ${JSON.stringify(calls.slice(4))}`);
             log.set_text('/s');
             await qaPause(80);
             await this._key(Clutter.KEY_Escape);

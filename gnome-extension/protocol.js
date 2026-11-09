@@ -55,6 +55,8 @@ export function parseSnapshot(payload) {
         error: typeof snapshot.error === 'string' ? snapshot.error : null,
         provider: typeof snapshot.provider === 'string' ? snapshot.provider : '',
         model: typeof snapshot.model === 'string' ? snapshot.model : '',
+        models: Array.isArray(snapshot.models)
+            ? snapshot.models.filter(model => typeof model === 'string') : [],
     };
 }
 

@@ -18,6 +18,7 @@
   "speaker.me": "ฉัน",
   "speaker.action": "การทำงาน",
   "command.status": "แสดงโมเดล สถานะ และสิทธิ์ปัจจุบัน",
+  "command.model": "ดูหรือสลับโมเดลในเซสชันนี้: /model <model-id>",
   "command.exit": "ปิด",
   "status.sending": "กำลังส่ง…",
   "status.thinking": "กำลังคิด... ({elapsed})",

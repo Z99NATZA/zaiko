@@ -28,7 +28,7 @@ import {LANGUAGES, normalizeLanguage, createTranslator} from './i18n.js';
 
 const ANSWER_TAIL_WIDTH = 16;
 const ANSWER_TAIL_HEIGHT = 8;
-const EMPTY_SNAPSHOT = {messages: [], state: 'idle', request_id: null, error: null};
+const EMPTY_SNAPSHOT = {messages: [], state: 'idle', request_id: null, error: null, model: '', models: []};
 
 const ToggleMenuItem = GObject.registerClass(class ToggleMenuItem extends PopupMenu.PopupMenuItem {
     _init(label, toggle) {
@@ -1256,6 +1256,8 @@ export default class ZaikoExtension extends Extension {
         this._logStatus.visible = Boolean(this._logStatus.text);
         this._logStatus.set_style_class_name(`zaiko-log-status${error ? ' zaiko-log-error' : ''}`);
         this._logModel.text = this._snapshot.model ?? '';
+        for (const menu of this._commandMenus)
+            menu.setModels(this._snapshot.models ?? [], this._snapshot.model ?? '');
         this._syncLogFooter();
         this._logCancel.visible = busy;
         this._logCancel.label = this._t(this._cancelling ? 'action.stopping' : 'action.stop');

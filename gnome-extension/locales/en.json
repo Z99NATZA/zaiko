@@ -18,6 +18,7 @@
   "speaker.me": "Me",
   "speaker.action": "Action",
   "command.status": "Show the current model, status and permissions",
+  "command.model": "Show or switch the model for this session: /model <model-id>",
   "command.exit": "Quit Zaiko, like the Quit menu",
   "status.sending": "Sending…",
   "status.thinking": "Thinking... ({elapsed})",

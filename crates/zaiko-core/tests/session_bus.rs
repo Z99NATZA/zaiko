@@ -154,6 +154,7 @@ async fn slash_commands_work_without_provider_config_and_keep_request_guards() {
     for (id, text, expected) in [
         ("status-args", "/status extra", "ไม่ใส่อาร์กิวเมนต์"),
         ("unknown-command", "/permissions", "ยังไม่รองรับคำสั่งนี้"),
+        ("model-unready", "/model gpt-6.1-mini", "ยังสลับโมเดลไม่ได้"),
         ("status-again", "/status", "สถานะ: ● ว่าง (idle)"),
         ("removed-mock", "/s001", "ยังไม่รองรับคำสั่งนี้"),
     ] {
@@ -202,6 +203,83 @@ async fn slash_commands_work_without_provider_config_and_keep_request_guards() {
         .await
         .unwrap();
     idle(&proxy).await;
+    proxy.call::<_, _, ()>("Quit", &()).await.unwrap();
+}
+
+#[tokio::test]
+async fn model_command_switches_the_session_model_without_contacting_the_provider() {
+    let bus = Bus::start();
+    // A dummy key makes the config valid; /model must still stay local.
+    let _core = Process(
+        Command::new(env!("CARGO_BIN_EXE_zaiko-core"))
+            .args(["--config", "/dev/null"])
+            .env_clear()
+            .env("DBUS_SESSION_BUS_ADDRESS", &bus.address)
+            .env("ZAIKO_LLM_MODEL", "gpt-6.1-sol")
+            .env("OPENAI_API_KEY", "dummy-model-secret")
+            .env("ZAIKO_LLM_MODELS", "gpt-6.1-mini,gpt-6.1-nano")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let connection = bus.connection().await;
+    let proxy = ready(&connection).await;
+    assert_eq!(snapshot(&proxy).await["model"], "gpt-6.1-sol");
+    assert_eq!(
+        snapshot(&proxy).await["models"],
+        serde_json::json!(["gpt-6.1-sol", "gpt-6.1-mini", "gpt-6.1-nano"])
+    );
+
+    for (id, text, model, expected) in [
+        (
+            "model-show",
+            "/model",
+            "gpt-6.1-sol",
+            "โมเดล: openai · gpt-6.1-sol",
+        ),
+        (
+            "model-switch",
+            " /model gpt-6.1-mini ",
+            "gpt-6.1-mini",
+            "สลับโมเดลเป็น openai · gpt-6.1-mini",
+        ),
+        (
+            "model-bad",
+            "/model bad$id",
+            "gpt-6.1-mini",
+            "model ID ไม่ถูกต้อง",
+        ),
+        (
+            "model-secret",
+            "/model dummy-model-secret",
+            "gpt-6.1-mini",
+            "model ID ไม่ถูกต้อง",
+        ),
+        (
+            "model-status",
+            "/status",
+            "gpt-6.1-mini",
+            "โมเดล: openai · gpt-6.1-mini",
+        ),
+    ] {
+        proxy.call::<_, _, ()>("Submit", &(id, text)).await.unwrap();
+        let result = idle(&proxy).await;
+        assert_eq!(result["model"], model);
+        assert!(
+            result["messages"].as_array().unwrap().last().unwrap()["content"]
+                .as_str()
+                .unwrap()
+                .contains(expected)
+        );
+        assert!(!result.to_string().contains("dummy-model-secret"));
+    }
+    // An unlisted model chosen by ID joins the picker list.
+    proxy
+        .call::<_, _, ()>("Submit", &("model-custom", "/model gpt-custom"))
+        .await
+        .unwrap();
+    assert_eq!(idle(&proxy).await["models"].as_array().unwrap().len(), 4);
     proxy.call::<_, _, ()>("Quit", &()).await.unwrap();
 }
 

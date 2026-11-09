@@ -91,3 +91,8 @@ test('character size cycles 1 to 5 and falls back to 3', () => {
     assert.equal(nextCharacterSize('junk'), 4);
     assert.deepEqual(characterBox(3), {width: 312, height: 235});
 });
+
+test('snapshot keeps only string model names', () => {
+    assert.deepEqual(parseSnapshot('{"messages":[],"state":"idle","models":["a",1,"b"]}').models, ['a', 'b']);
+    assert.deepEqual(parseSnapshot('{"messages":[],"state":"idle"}').models, []);
+});

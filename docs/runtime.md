@@ -14,6 +14,8 @@ Configuration
 
 Select openai or deepseek with ZAIKO_LLM_PROVIDER and its model ID with
 ZAIKO_LLM_MODEL. The example selects openai / gpt-6.1-sol.
+Optionally list more model IDs for the /model picker in ZAIKO_LLM_MODELS,
+separated by commas (up to 64, same ID rules). ZAIKO_LLM_MODEL is always first.
 Only the selected provider's API key is required.
 
 The installer copies the project .env to ~/.config/zaiko/.env on first install.
@@ -168,6 +170,16 @@ is reported without requiring an API key or contacting the provider.
 The reply appears in the existing answer preview and Log. Like other retained
 messages, it can be included in the history of a later model request. Commands
 share the existing request-ID, cancellation, and active-request guards.
+Type /model to see the active provider/model, or /model <model-id> to switch
+the model for the rest of this session. The provider and its API key stay the
+same; restarting Zaiko returns to ZAIKO_LLM_MODEL. The Log footer and /status
+show the switched model. The ID uses the same rules as ZAIKO_LLM_MODEL and is
+not checked against the provider until the next model request. A switched ID
+that is not in ZAIKO_LLM_MODELS joins the picker list for this session.
+In the command picker, Enter, Tab or clicking /model opens a list of model IDs
+(names only) instead of submitting; it opens on the active model, typing after
+"/model " filters by substring, and Enter or clicking submits /model <model-id>.
+Without a model list (invalid configuration), /model submits as before.
 Leading/trailing whitespace is ignored. /status takes no arguments; other slash
 commands return a local unsupported-command reply instead of reaching the model.
 Type /exit to quit Zaiko exactly like the Quit menu; the extension handles it

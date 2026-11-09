@@ -574,6 +574,7 @@ mod tests {
             Config {
                 provider: Provider::OpenAi,
                 model: "gpt-6.1-sol".into(),
+                models: vec!["gpt-6.1-sol".into()],
                 api_key: "dummy-test-key".into(),
             },
             url,
@@ -617,6 +618,7 @@ mod tests {
             Config {
                 provider: Provider::DeepSeek,
                 model: "deepseek-chat".into(),
+                models: vec!["deepseek-chat".into()],
                 api_key: "dummy-test-key".into(),
             },
             url,
@@ -644,6 +646,7 @@ mod tests {
             Config {
                 provider: Provider::DeepSeek,
                 model: "deepseek-chat".into(),
+                models: vec!["deepseek-chat".into()],
                 api_key: "dummy-test-key".into(),
             },
             url,
@@ -667,6 +670,7 @@ mod tests {
             Config {
                 provider: Provider::OpenAi,
                 model: "gpt-6.1-sol".into(),
+                models: vec!["gpt-6.1-sol".into()],
                 api_key: "dummy-test-key".into(),
             },
             url,
@@ -721,6 +725,7 @@ mod tests {
             Config {
                 provider: Provider::DeepSeek,
                 model: "deepseek-chat".into(),
+                models: vec!["deepseek-chat".into()],
                 api_key: "dummy-test-key".into(),
             },
             url,

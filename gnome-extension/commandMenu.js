@@ -4,7 +4,7 @@ import Pango from 'gi://Pango';
 import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import {commandMatches, COMMAND_VISIBLE_ROWS, translatedCommands} from './commands.js';
+import {commandMatches, COMMAND_VISIBLE_ROWS, MODEL_COMMAND, translatedCommands} from './commands.js';
 import {clampPosition} from './protocol.js';
 
 export class CommandMenu {
@@ -17,6 +17,8 @@ export class CommandMenu {
         this._signals = [];
         this._matches = [];
         this._commands = translatedCommands(translate);
+        this._models = [];
+        this._currentModel = '';
         this._rows = [];
         this._indicators = [];
         this._names = [];
@@ -60,6 +62,15 @@ export class CommandMenu {
         this.sync();
     }
 
+    setModels(models, current) {
+        if (models.join('\n') === this._models.join('\n') && current === this._currentModel)
+            return;
+        this._models = [...models];
+        this._currentModel = current;
+        this._query = null;
+        this.sync();
+    }
+
     setTranslator(translate) {
         this._commands = translatedCommands(translate);
         this._query = null;
@@ -73,7 +84,7 @@ export class CommandMenu {
             this.hide();
             return;
         }
-        const matches = commandMatches(text, this._commands);
+        const matches = commandMatches(text, this._commands, this._models);
         if (!matches.length) {
             this.hide();
             return;
@@ -101,9 +112,11 @@ export class CommandMenu {
             this._items = items;
             this._rows = [...items.values()].map(item => item.button);
             this._indicators = [...items.values()].map(item => item.indicator);
-            this._names = [...items.values()].map(item => item.name);
+            this._names = [...items.values()].filter(item => item.description).map(item => item.name);
             this._scroll.get_vadjustment().value = 0;
-            this._select(0, false);
+            // The model list opens on the active model.
+            const current = matches.findIndex(match => match.model && match.name === this._currentModel);
+            this._select(Math.max(0, current), current > 0);
         }
         this._open = true;
         this.layout();
@@ -112,18 +125,24 @@ export class CommandMenu {
     _createRow(command) {
         const button = new St.Button({
             style_class: 'zaiko-command-row', x_expand: true, can_focus: false,
-            accessible_name: `${command.name}: ${command.description}`,
+            accessible_name: command.description ? `${command.name}: ${command.description}` : command.name,
         });
         const row = new St.BoxLayout({x_expand: true, style_class: 'zaiko-command-columns'});
         const indicator = new St.Label({text: '›', style_class: 'zaiko-command-indicator', opacity: 0});
-        const name = new St.Label({text: command.name, style_class: 'zaiko-command-name'});
-        name.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        const description = new St.Label({
-            text: command.description, style_class: 'zaiko-command-description', x_expand: true,
+        // Model rows have no description, so their name takes the full width.
+        const name = new St.Label({
+            text: command.name, style_class: 'zaiko-command-name', x_expand: !command.description,
         });
-        description.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        for (const label of [indicator, name, description])
-            row.add_child(label);
+        name.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        row.add_child(indicator);
+        row.add_child(name);
+        if (command.description) {
+            const description = new St.Label({
+                text: command.description, style_class: 'zaiko-command-description', x_expand: true,
+            });
+            description.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            row.add_child(description);
+        }
         button.set_child(row);
         const item = {button, indicator, name, description: command.description, index: 0};
         // Read the current index because filtering can move a retained row.
@@ -240,10 +259,18 @@ export class CommandMenu {
 
     _activate(submit) {
         const command = this._matches[this._selected];
-        this.entry.set_text(command.name);
+        // /model continues to the model list instead of submitting.
+        if (command.name === MODEL_COMMAND && !command.model && this._models.length) {
+            this.entry.set_text(`${MODEL_COMMAND} `);
+            this.entry.clutter_text.set_selection(-1, -1);
+            this.entry.grab_key_focus();
+            return;
+        }
+        const text = command.model ? `${MODEL_COMMAND} ${command.name}` : command.name;
+        this.entry.set_text(text);
         this.entry.clutter_text.set_selection(-1, -1);
         this.entry.grab_key_focus();
-        this._dismissedText = command.name;
+        this._dismissedText = text;
         this.hide();
         if (submit)
             this._submit();

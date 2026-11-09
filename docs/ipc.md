@@ -27,7 +27,13 @@ Reject a second active request and duplicate request IDs without executing again
 Submit recognizes /status after trimming whitespace and responds locally without
 constructing a provider client or running tools, including when configuration is
 invalid. It reports the state before reserving this request, provider/model, and
-current permission boundaries. /exit never reaches Submit: the extension calls
+current permission boundaries. It also recognizes /model: without arguments it
+reports the active provider/model; /model <model-id> switches the model used by
+later provider requests for this core session only (same provider and key; a
+restart returns to configuration). Invalid IDs, IDs equal to the API key, and
+switches while configuration is invalid are rejected without changing the model.
+A rejected request (active slot or duplicate ID) never switches the model.
+/exit never reaches Submit: the extension calls
 Quit instead. Arguments and unknown slash commands receive local
 usage/unsupported replies. Local replies use the normal message/state events and
 retained history; the same active-slot and request-ID guards apply.
@@ -48,6 +54,9 @@ Payload is JSON with type and optional request_id, state, content, role, message
 Types: state, message, error, present. States: idle, thinking, working, error.
 All user-visible conversation and request state can be recovered from GetSnapshot.
 Snapshot JSON: messages [{role, content}], state, request_id, error, provider, model.
+model is the active session model, including a /model switch. models lists
+picker choices: ZAIKO_LLM_MODEL, then ZAIKO_LLM_MODELS, then IDs switched to
+in this session; empty when configuration is invalid.
 The selected provider API key and provider HTTP bodies are never included.
 Commands and compact command results are retained as assistant messages.
 
