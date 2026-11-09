@@ -218,6 +218,7 @@ export default class ZaikoExtension extends Extension {
         this._quitMenuItem.label.text = this._t('menu.quit');
         this._character.accessible_name = this._t('accessibility.character');
         this._panelClose.accessible_name = this._t('accessibility.close');
+        this._logBottom.accessible_name = this._t('accessibility.bottom');
         for (const {entry, cancel} of this._composers) {
             entry.accessible_name = this._t('accessibility.message');
             cancel.accessible_name = this._t('accessibility.cancel');
@@ -480,7 +481,26 @@ export default class ZaikoExtension extends Extension {
         this._registerScrollbarParts(this._logScroll);
         this._logHistory = new St.BoxLayout({vertical: true, style_class: 'zaiko-history', x_expand: true});
         this._logScroll.set_child(this._logHistory);
-        this._panelContent.add_child(this._logScroll);
+        // New messages keep the Log at the bottom only while the reader is
+        // there; after scrolling up, a button jumps back down.
+        this._logFollow = true;
+        const adjustment = this._logScroll.get_vadjustment();
+        this._connect(adjustment, 'notify::value', () => {
+            this._logFollow = adjustment.value >= adjustment.upper - adjustment.page_size - 8;
+            this._logBottom.visible = !this._logFollow;
+        });
+        this._logBottom = new St.Button({
+            style_class: 'zaiko-log-to-bottom', width: 28, height: 28,
+            can_focus: true, accessible_name: this._t('accessibility.bottom'), visible: false,
+            x_expand: true, y_expand: true,
+            x_align: Clutter.ActorAlign.END, y_align: Clutter.ActorAlign.END,
+        });
+        this._logBottom.set_child(new St.Icon({icon_name: 'go-down-symbolic', icon_size: 16}));
+        this._logBottom.connect('clicked', () => this._queueLogScroll(true));
+        const logArea = new St.Widget({layout_manager: new Clutter.BinLayout(), x_expand: true, y_expand: true});
+        logArea.add_child(this._logScroll);
+        logArea.add_child(this._logBottom);
+        this._panelContent.add_child(logArea);
         this._logStatus = this._wrappedLabel('', 'zaiko-log-status');
         this._logStatus.visible = false;
         this._panelContent.add_child(this._logStatus);
@@ -907,6 +927,7 @@ export default class ZaikoExtension extends Extension {
         this._panelOpen = true;
         this._renderLogState();
         this._renderCompact();
+        this._queueLogScroll(true);
         if (this._panel.visible)
             this._logEntry.grab_key_focus();
     }
@@ -986,7 +1007,7 @@ export default class ZaikoExtension extends Extension {
             this._logClick = null;
             const source = global.stage.get_event_actor(event);
             if (!this._panel.contains(source) ||
-                this._ownsFocus(source, [this._logComposer, this._panelClose]))
+                this._ownsFocus(source, [this._logComposer, this._panelClose, this._logBottom]))
                 return;
             for (let actor = source; actor && actor !== this._panel; actor = actor.get_parent()) {
                 if (actor instanceof St.ScrollBar)
@@ -1234,12 +1255,19 @@ export default class ZaikoExtension extends Extension {
         this._queueLogScroll();
     }
 
-    _queueLogScroll() {
+    // force jumps to the bottom even when the reader has scrolled up.
+    _queueLogScroll(force = false) {
+        if (force) {
+            this._logFollow = true;
+            this._logBottom.visible = false;
+        }
+        if (!this._logFollow)
+            return;
         if (this._scrollSource)
             GLib.Source.remove(this._scrollSource);
         this._scrollSource = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
             this._scrollSource = 0;
-            if (this._enabled) {
+            if (this._enabled && this._logFollow) {
                 const adjustment = this._logScroll.get_vadjustment();
                 adjustment.value = Math.max(adjustment.lower, adjustment.upper - adjustment.page_size);
             }
@@ -1611,6 +1639,7 @@ export default class ZaikoExtension extends Extension {
         this._sending = true;
         this._uiError = null;
         entry.set_text('');
+        this._queueLogScroll(true);
         this._renderSnapshot();
         try {
             await this._callCore('Submit', new GLib.Variant('(ss)', [requestId, text]));
@@ -1794,6 +1823,7 @@ export default class ZaikoExtension extends Extension {
         this._panelContent = null;
         this._panelClose = null;
         this._logScroll = null;
+        this._logBottom = null;
         this._logHistory = null;
         this._logComposer = null;
         this._logEntry = null;

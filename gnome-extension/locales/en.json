@@ -11,6 +11,7 @@
   "action.stop": "Stop",
   "action.stopping": "Stopping…",
   "accessibility.character": "Zaiko — left-click to type, right-click for Log, drag to move",
+  "accessibility.bottom": "Scroll to latest message",
   "accessibility.close": "Close conversation",
   "accessibility.message": "Message",
   "accessibility.cancel": "Cancel request",

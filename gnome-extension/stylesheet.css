@@ -35,6 +35,19 @@
 .zaiko-panel-close:hover {
     border-color: #a0a6b1;
 }
+/* A bare arrow, green like the [Me] prefix; brighter on hover. */
+.zaiko-log-to-bottom {
+    color: #98c379;
+    background-color: transparent;
+    margin: 0 10px 6px 0;
+    padding: 0;
+    border: none;
+    box-shadow: none;
+}
+.zaiko-log-to-bottom:hover, .zaiko-log-to-bottom:focus {
+    color: #c3e88d;
+    background-color: transparent;
+}
 .zaiko-history { spacing: 0; padding-right: 4px; }
 .zaiko-log-message {
     color: #dcdfe4;
