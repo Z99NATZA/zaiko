@@ -277,11 +277,25 @@ export class CommandMenu {
     }
 
     _event(event) {
-        if (!this._open || event.type() !== Clutter.EventType.KEY_PRESS ||
-            event.get_state() & (Clutter.ModifierType.CONTROL_MASK |
-                Clutter.ModifierType.MOD1_MASK | Clutter.ModifierType.SUPER_MASK))
+        if (!this._open || event.type() !== Clutter.EventType.KEY_PRESS)
             return Clutter.EVENT_PROPAGATE;
+        const state = event.get_state();
         const symbol = event.get_key_symbol();
+        // Super+J/K move down/up like the arrows and stop at the first/last row.
+        // Physical keys (evdev 36/37) keep working under the Thai layout.
+        if (state & (Clutter.ModifierType.SUPER_MASK | Clutter.ModifierType.MOD4_MASK) &&
+            !(state & (Clutter.ModifierType.CONTROL_MASK | Clutter.ModifierType.MOD1_MASK))) {
+            const code = event.get_event_code();
+            const step = code === 36 || [Clutter.KEY_j, Clutter.KEY_J].includes(symbol) ? 1
+                : code === 37 || [Clutter.KEY_k, Clutter.KEY_K].includes(symbol) ? -1 : 0;
+            if (!step)
+                return Clutter.EVENT_PROPAGATE;
+            this._select(this._selected + step);
+            return Clutter.EVENT_STOP;
+        }
+        if (state & (Clutter.ModifierType.CONTROL_MASK |
+            Clutter.ModifierType.MOD1_MASK | Clutter.ModifierType.SUPER_MASK | Clutter.ModifierType.MOD4_MASK))
+            return Clutter.EVENT_PROPAGATE;
         if (!this.entry.clutter_text.single_line_mode && event.get_state() & Clutter.ModifierType.SHIFT_MASK &&
             [Clutter.KEY_Return, Clutter.KEY_KP_Enter].includes(symbol))
             return Clutter.EVENT_PROPAGATE;

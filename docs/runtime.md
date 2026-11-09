@@ -199,8 +199,8 @@ steady while typing.
 Popup geometry is measured after the input is allocated, keeping its full
 width stable during text edits.
 At most eight rows are visible, with native mouse-wheel scrolling for the rest.
-Up/Down select and scroll the chosen row into view, stopping at the first/last
-command without wrapping. Tab fills the command without
+Up/Down, or Super+J/K (also under the Thai layout), select and scroll the chosen
+row into view, stopping at the first/last command without wrapping. Tab fills the command without
 submitting; Enter or clicking a row submits it once. Escape closes the picker
 and preserves the draft; the next Escape follows the normal composer/Vim behavior.
 The picker hides while busy, on focus loss, and when its composer is hidden.
