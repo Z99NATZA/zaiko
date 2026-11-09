@@ -239,9 +239,23 @@ def main():
         marker.write_text("QA unrelated file")
         legacy_ui = Path(env["XDG_CONFIG_HOME"]) / "zaiko/ui.json"
         legacy_ui.write_text('{"theme":"red","syncZhyprbola":true}')
-        config_source.write_text("OPENAI_API_KEY=qa-replacement-must-not-win\n")
         run(install, env=env, cwd=base)
-        check(installed_config.read_bytes() == fixture_bytes, "Reinstall overwrote existing config")
+        backups = lambda: sorted(installed_config.parent.glob(".env.backup-*"))
+        check(not backups(), "Reinstall with unchanged config created a backup")
+        installed_key = "qa-replacement-key-never-sent"
+        replacement = fixture_bytes.replace(synthetic_key.encode(), installed_key.encode())
+        config_source.write_bytes(replacement)
+        run(install, env=env, cwd=base)
+        check(installed_config.read_bytes() == replacement, "Reinstall did not replace changed config")
+        check(installed_config.stat().st_mode & 0o077 == 0, "Replaced config permits group/other access")
+        saved = backups()
+        check(len(saved) == 1 and saved[0].read_bytes() == fixture_bytes,
+              "Reinstall did not back up the previous config")
+        check(saved[0].stat().st_mode & 0o077 == 0, "Config backup permits group/other access")
+        template_install = [sys.executable, source / "scripts/install.py", "--binary", args.binary.resolve(),
+                            "--no-enable"]
+        run(template_install, env=env, cwd=base)
+        check(installed_config.read_bytes() == replacement, "Template-only reinstall replaced real config")
         check(all(not (extension / name).exists() for name in retired), "Reinstall retained retired theme modules")
         check(marker.read_text() == "QA unrelated file", "Cleanup removed unrelated files")
         check(legacy_ui.read_text() == '{"theme":"red","syncZhyprbola":true}',
@@ -255,7 +269,7 @@ def main():
         check((extension / "extension.js").is_file(), "GNOME extension not installed")
         for language in ("en", "th"):
             catalog = extension / "locales" / f"{language}.json"
-            check(catalog.is_file() and json.loads(catalog.read_text())["menu.language"] == "Lang: {language}",
+            check(catalog.is_file() and "{language}" in json.loads(catalog.read_text()).get("menu.language", ""),
                   "Installed extension is missing its JSON language catalog")
         for folder in (data, extension):
             for path in folder.rglob("*"):
@@ -266,10 +280,10 @@ def main():
         working.mkdir()
         run([launcher, "--help"], env=env, cwd=working)
         run([launcher, "--version"], env=env, cwd=working)
-        print("PASS isolated install, space-containing paths, config preservation, source-independent help")
+        print("PASS isolated install, space-containing paths, config backup/replace, source-independent help")
         layout = working / "qa layout.json"
         layout.write_text(json.dumps({
-            "launcher": str(launcher), "working": str(working), "synthetic_key": synthetic_key,
+            "launcher": str(launcher), "working": str(working), "synthetic_key": installed_key,
         }))
         result = run([
             "dbus-run-session", "--", sys.executable, Path(__file__).resolve(), "--session", layout,

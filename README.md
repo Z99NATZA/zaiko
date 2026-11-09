@@ -9,7 +9,8 @@
 [ -e .env ] || cp .env.example .env
 
 # Set your API key in .env before installing.
-# Installed config: `~/.config/zaiko/.env`
+# make install copies .env to ~/.config/zaiko/.env and backs up the old one
+# as ~/.config/zaiko/.env.backup-<timestamp>.
 make install
 ```
 

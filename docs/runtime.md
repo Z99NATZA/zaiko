@@ -22,9 +22,10 @@ written as openai:<id> or deepseek:<id>.
 The selected provider's API key is required, plus the key of any other provider
 used by ZAIKO_LLM_MODELS.
 
-The installer copies the project .env to ~/.config/zaiko/.env on first install.
-Reinstallation preserves existing keys and configuration. Edit the installed
-file for subsequent changes, then run zaiko restart.
+make install copies the project .env to ~/.config/zaiko/.env. If the installed
+file differs, it is first saved as ~/.config/zaiko/.env.backup-<timestamp>.
+Without a project .env, an existing installed file is kept. Run zaiko restart
+after changing the configuration.
 
 Installation
 ----------
@@ -477,7 +478,7 @@ Installer testing
 
 scripts/install.py supports --binary PATH, --config-source PATH, and --no-enable.
 Reinstallation removes only retired theme modules/tests from the installed
-extension and preserves API configuration, ignored old ui.json, and unrelated
+extension, backs up replaced API configuration, and preserves ignored old ui.json and unrelated
 files. The integration harness uses temporary HOME/XDG paths, synthetic keys, a private
 session bus, and a fake desktop service. It never calls a provider or opens apps.
 These checks do not by themselves verify pointer gestures or a real Thai IME.

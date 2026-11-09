@@ -81,7 +81,8 @@ The local .env is ready for OpenAI and DeepSeek API keys and is excluded from Gi
 See the main README for the setup command, which preserves an existing .env.
 Provider/model selection uses environment configuration at startup; /model can
 switch the model for the current session.
-The installed runtime reads the user-local configuration copied at first install.
+The installed runtime reads the user-local configuration copied by make install;
+the previous copy is kept as a timestamped backup.
 
 Current UI iteration
 ----------

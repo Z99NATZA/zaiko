@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install only Zaiko's files for the current user and preserve local keys."""
+"""Install only Zaiko's files for the current user and back up replaced local keys."""
 
 import argparse
 import ast
@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 PROJECT = Path(__file__).resolve().parent.parent
 UUID = "zaiko@znnn.local"
@@ -34,6 +35,27 @@ def atomic_copy(source, destination, mode=0o644):
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def install_config(source, config_file, template_only):
+    if not config_file.exists():
+        atomic_copy(source, config_file, 0o600)
+        print("Initial Zaiko configuration installed with private permissions.")
+    elif template_only:
+        # Never replace real keys with the empty example.
+        print("No project .env; existing Zaiko configuration preserved.")
+    elif config_file.read_bytes() == source.read_bytes():
+        print("Zaiko configuration already up to date.")
+    else:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        backup = config_file.with_name(f".env.backup-{stamp}")
+        counter = 1
+        while backup.exists():
+            backup = config_file.with_name(f".env.backup-{stamp}-{counter}")
+            counter += 1
+        atomic_copy(config_file, backup, 0o600)
+        atomic_copy(source, config_file, 0o600)
+        print(f"Zaiko configuration replaced; previous copy saved to {backup}.")
 
 
 def enable_extension():
@@ -61,7 +83,7 @@ def enable_extension():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, help="Install an already built zaiko-core.")
-    parser.add_argument("--config-source", type=Path, help="Initial .env source; existing configuration is preserved.")
+    parser.add_argument("--config-source", type=Path, help=".env source; a differing installed configuration is backed up, then replaced.")
     parser.add_argument("--no-enable", action="store_true", help="Install files without changing GNOME settings.")
     options = parser.parse_args()
     home = Path.home()
@@ -72,7 +94,8 @@ def main():
     extension = data / "gnome-shell/extensions" / UUID
     config_file = config / "zaiko/.env"
     source = options.config_source or PROJECT / ".env"
-    if not source.is_file():
+    template_only = not source.is_file()
+    if template_only:
         if options.config_source is not None:
             raise ValueError("The explicit configuration source does not exist.")
         source = PROJECT / ".env.example"
@@ -97,14 +120,7 @@ def main():
                      *retired_art):
         (extension / obsolete).unlink(missing_ok=True)
     config_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    try:
-        fd = os.open(config_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        print("Existing Zaiko configuration preserved.")
-    else:
-        with os.fdopen(fd, "wb") as output, source.open("rb") as original:
-            shutil.copyfileobj(original, output)
-        print("Initial Zaiko configuration installed with private permissions.")
+    install_config(source, config_file, template_only)
     binaries.mkdir(parents=True, exist_ok=True)
     wrapper = f"#!/bin/sh\nexec python3 {shlex.quote(str(runtime / 'launcher.py'))} \"$@\"\n"
     executable = binaries / "zaiko"
