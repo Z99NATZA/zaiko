@@ -29,9 +29,13 @@ constructing a provider client or running tools, including when configuration is
 invalid. It reports the state before reserving this request, provider/model, and
 current permission boundaries. It also recognizes /model: without arguments it
 reports the active provider/model; /model <model-id> switches the model used by
-later provider requests for this core session only (same provider and key; a
-restart returns to configuration). Invalid IDs, IDs equal to the API key, and
-switches while configuration is invalid are rejected without changing the model.
+later provider requests for this core session only, switching provider and key
+when the model belongs to the other provider (a restart returns to configuration).
+A successful switch, including to the active model, finishes during Submit: it adds
+no message (so nothing reaches the provider history), skips the thinking state and
+emits only an idle state event.
+Invalid IDs, IDs equal to the API key, and
+switches while configuration is invalid are rejected with a reply and without changing the model.
 A rejected request (active slot or duplicate ID) never switches the model.
 /exit never reaches Submit: the extension calls
 Quit instead. Arguments and unknown slash commands receive local
@@ -54,7 +58,7 @@ Payload is JSON with type and optional request_id, state, content, role, message
 Types: state, message, error, present. States: idle, thinking, working, error.
 All user-visible conversation and request state can be recovered from GetSnapshot.
 Snapshot JSON: messages [{role, content}], state, request_id, error, provider, model.
-model is the active session model, including a /model switch. models lists
+provider and model are the active session pair, including a /model switch. models lists
 picker choices: ZAIKO_LLM_MODEL, then ZAIKO_LLM_MODELS, then IDs switched to
 in this session; empty when configuration is invalid.
 The selected provider API key and provider HTTP bodies are never included.

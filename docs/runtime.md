@@ -16,7 +16,11 @@ Select openai or deepseek with ZAIKO_LLM_PROVIDER and its model ID with
 ZAIKO_LLM_MODEL. The example selects openai / gpt-6.1-sol.
 Optionally list more model IDs for the /model picker in ZAIKO_LLM_MODELS,
 separated by commas (up to 64, same ID rules). ZAIKO_LLM_MODEL is always first.
-Only the selected provider's API key is required.
+Listed models can use either provider: IDs starting with deepseek use DeepSeek,
+IDs starting with gpt- use OpenAI, and other IDs use ZAIKO_LLM_PROVIDER unless
+written as openai:<id> or deepseek:<id>.
+The selected provider's API key is required, plus the key of any other provider
+used by ZAIKO_LLM_MODELS.
 
 The installer copies the project .env to ~/.config/zaiko/.env on first install.
 Reinstallation preserves existing keys and configuration. Edit the installed
@@ -171,9 +175,11 @@ The reply appears in the existing answer preview and Log. Like other retained
 messages, it can be included in the history of a later model request. Commands
 share the existing request-ID, cancellation, and active-request guards.
 Type /model to see the active provider/model, or /model <model-id> to switch
-the model for the rest of this session. The provider and its API key stay the
-same; restarting Zaiko returns to ZAIKO_LLM_MODEL. The Log footer and /status
-show the switched model. The ID uses the same rules as ZAIKO_LLM_MODEL and is
+the model for the rest of this session. A listed model keeps its provider; a
+typed ID uses the same provider rules as ZAIKO_LLM_MODELS and needs that
+provider's key. Restarting Zaiko returns to ZAIKO_LLM_PROVIDER/ZAIKO_LLM_MODEL. A successful
+switch leaves no message in the Log or the model history; the Log footer and
+/status show the switched model. The ID uses the same rules as ZAIKO_LLM_MODEL and is
 not checked against the provider until the next model request. A switched ID
 that is not in ZAIKO_LLM_MODELS joins the picker list for this session.
 In the command picker, Enter, Tab or clicking /model opens a list of model IDs

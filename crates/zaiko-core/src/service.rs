@@ -8,7 +8,7 @@ use zbus::{Connection, Proxy, fdo, object_server::SignalEmitter};
 
 use crate::{
     command::{self, CommandRequest},
-    config::{self, Config},
+    config::{Config, ModelChoice},
     provider::{App, Client, LaunchMode, Message, Tools},
 };
 
@@ -37,17 +37,24 @@ struct Active {
 
 struct State {
     snapshot: Snapshot,
+    /// Session model and picker choices; None/empty while configuration is invalid.
+    model: Option<ModelChoice>,
+    models: Vec<ModelChoice>,
     active: Option<Active>,
     seen: HashSet<String>,
     stopping: bool,
 }
 
+/// A slash command handled by the core without the provider.
+enum Local {
+    Reply(String),
+    /// A /model switch: applied at once, with no message or reply.
+    Switch(ModelChoice),
+}
+
 impl State {
-    fn reserve(
-        &mut self,
-        id: &str,
-        content: String,
-    ) -> fdo::Result<(CancellationToken, Vec<Message>)> {
+    /// Checks the request ID and active slot, then marks the ID as used.
+    fn admit(&mut self, id: &str) -> fdo::Result<()> {
         if id.is_empty()
             || id.len() > 128
             || !id
@@ -77,8 +84,17 @@ impl State {
                 "Session request limit reached. Restart Zaiko to start a new session.".to_owned(),
             ));
         }
-        let cancel = CancellationToken::new();
         self.seen.insert(id.to_owned());
+        Ok(())
+    }
+
+    fn reserve(
+        &mut self,
+        id: &str,
+        content: String,
+    ) -> fdo::Result<(CancellationToken, Vec<Message>)> {
+        self.admit(id)?;
+        let cancel = CancellationToken::new();
         self.active = Some(Active {
             id: id.to_owned(),
             cancel: cancel.clone(),
@@ -91,6 +107,18 @@ impl State {
             content,
         });
         Ok((cancel, self.snapshot.messages.clone()))
+    }
+
+    fn set_model(&mut self, choice: ModelChoice) {
+        // Keep a typed, unlisted model selectable in the picker.
+        if !self.models.contains(&choice) {
+            self.models.push(choice.clone());
+        }
+        self.snapshot.models = self.models.iter().map(|c| c.model.clone()).collect();
+        self.snapshot.models.dedup();
+        self.snapshot.provider = choice.provider.name().to_owned();
+        self.snapshot.model = choice.model.clone();
+        self.model = Some(choice);
     }
 
     fn append(&mut self, message: Message) {
@@ -124,27 +152,31 @@ struct Runtime {
 impl Runtime {
     fn new(config: Result<Config, String>) -> Arc<Self> {
         let error = config.as_ref().err().cloned();
+        let mut state = State {
+            snapshot: Snapshot {
+                messages: Vec::new(),
+                state: if error.is_some() { "error" } else { "idle" },
+                request_id: None,
+                error,
+                provider: String::new(),
+                model: String::new(),
+                models: Vec::new(),
+            },
+            model: None,
+            models: Vec::new(),
+            active: None,
+            seen: HashSet::new(),
+            stopping: false,
+        };
+        if let Ok(config) = &config {
+            state.models = config.models.clone();
+            state.set_model(ModelChoice {
+                provider: config.provider,
+                model: config.model.clone(),
+            });
+        }
         Arc::new(Self {
-            state: Mutex::new(State {
-                snapshot: Snapshot {
-                    messages: Vec::new(),
-                    state: if error.is_some() { "error" } else { "idle" },
-                    request_id: None,
-                    error,
-                    provider: config
-                        .as_ref()
-                        .map(|c| c.provider.name().to_owned())
-                        .unwrap_or_default(),
-                    model: config.as_ref().map(|c| c.model.clone()).unwrap_or_default(),
-                    models: config
-                        .as_ref()
-                        .map(|c| c.models.clone())
-                        .unwrap_or_default(),
-                },
-                active: None,
-                seen: HashSet::new(),
-                stopping: false,
-            }),
+            state: Mutex::new(state),
             config,
             shutdown: CancellationToken::new(),
         })
@@ -152,65 +184,84 @@ impl Runtime {
 
     fn clean(&self, text: &str) -> String {
         match &self.config {
-            Ok(config) => text.replace(&config.api_key, "[redacted]"),
+            Ok(config) => config
+                .secrets()
+                .fold(text.to_owned(), |text, key| text.replace(key, "[redacted]")),
             Err(_) => text.to_owned(),
         }
     }
 
-    /// Returns a local reply and, for /model, the model to switch to once the
-    /// request is accepted.
-    fn slash_reply(&self, text: &str, snapshot: &Snapshot) -> Option<(String, Option<String>)> {
+    fn slash_reply(&self, text: &str, state: &State) -> Option<Local> {
         let name = text.split_whitespace().next()?;
         if !name.starts_with('/') {
             return None;
         }
         match name {
-            "/status" if text == "/status" => Some((self.status_reply(snapshot), None)),
-            "/status" => Some(("ใช้ /status โดยไม่ใส่อาร์กิวเมนต์ค่ะ".into(), None)),
-            "/model" => Some(self.model_reply(text, snapshot)),
-            _ => Some((
+            "/status" if text == "/status" => {
+                Some(Local::Reply(self.status_reply(&state.snapshot)))
+            }
+            "/status" => Some(Local::Reply("ใช้ /status โดยไม่ใส่อาร์กิวเมนต์ค่ะ".into())),
+            "/model" => Some(match self.model_reply(text, state) {
+                Ok(choice) => Local::Switch(choice),
+                Err(reply) => Local::Reply(reply),
+            }),
+            _ => Some(Local::Reply(
                 "ยังไม่รองรับคำสั่งนี้ค่ะ คำสั่งที่ใช้ได้: /status, /model, /exit".into(),
-                None,
             )),
         }
     }
 
-    fn model_reply(&self, text: &str, snapshot: &Snapshot) -> (String, Option<String>) {
+    /// Ok is the model to switch to silently (the footer shows it); Err is a
+    /// reply that leaves the model unchanged.
+    fn model_reply(&self, text: &str, state: &State) -> Result<ModelChoice, String> {
         let args: Vec<&str> = text.split_whitespace().skip(1).collect();
-        let config = match &self.config {
-            Ok(config) => config,
-            Err(error) => return (format!("ยังสลับโมเดลไม่ได้ค่ะ การตั้งค่า: {error}"), None),
+        let (config, Some(current)) = (
+            match &self.config {
+                Ok(config) => config,
+                Err(error) => return Err(format!("ยังสลับโมเดลไม่ได้ค่ะ การตั้งค่า: {error}")),
+            },
+            &state.model,
+        ) else {
+            return Err("ยังสลับโมเดลไม่ได้ค่ะ".into());
         };
-        let provider = config.provider.name();
-        let current = &snapshot.model;
-        match args.as_slice() {
-            [] => (
-                format!(
-                    "โมเดล: {provider} · {current}\n       \
-                     ใช้ /model <model-id> เพื่อสลับโมเดลในเซสชันนี้ค่ะ"
+        let [entry] = args.as_slice() else {
+            return Err(match args.as_slice() {
+                [] => format!(
+                    "โมเดล: {} · {}\n       \
+                     ใช้ /model <model-id> เพื่อสลับโมเดลในเซสชันนี้ค่ะ",
+                    current.provider.name(),
+                    current.model
                 ),
-                None,
-            ),
-            // Never accept the API key as a model ID: snapshots are not redacted.
-            [model] if !config::valid_model(model) || self.clean(model) != *model => (
+                _ => "ใช้ /model หรือ /model <model-id> ค่ะ".into(),
+            });
+        };
+        // Picker names resolve to their listed provider before inferring one.
+        let choice = state
+            .models
+            .iter()
+            .find(|choice| choice.model == *entry)
+            .cloned()
+            .or_else(|| ModelChoice::parse(entry, config.provider));
+        // Never accept a key as a model ID: snapshots are not redacted.
+        let Some(choice) = choice.filter(|_| self.clean(entry) == *entry) else {
+            return Err(
                 "model ID ไม่ถูกต้องค่ะ ใช้ได้เฉพาะตัวอักษร ตัวเลข และ . _ / - : ไม่เกิน 128 ตัว".into(),
-                None,
-            ),
-            [model] if model == current => (format!("ใช้ {provider} · {model} อยู่แล้วค่ะ"), None),
-            [model] => (
-                format!(
-                    "สลับโมเดลเป็น {provider} · {model} แล้วค่ะ\n       \
-                     ใช้เฉพาะเซสชันนี้ รีสตาร์ตแล้วจะกลับไปใช้ค่าจาก .env"
-                ),
-                Some((*model).to_owned()),
-            ),
-            _ => ("ใช้ /model หรือ /model <model-id> ค่ะ".into(), None),
+            );
+        };
+        if config.key(choice.provider).is_none() {
+            return Err(format!(
+                "ยังใช้ {} ไม่ได้ค่ะ ต้องตั้ง {} ก่อน",
+                choice.provider.name(),
+                choice.provider.key_name()
+            ));
         }
+        // Choosing the active model is a silent no-op switch.
+        Ok(choice)
     }
 
     fn status_reply(&self, snapshot: &Snapshot) -> String {
         let (provider, model) = match &self.config {
-            Ok(config) => (config.provider.name(), snapshot.model.as_str()),
+            Ok(_) => (snapshot.provider.as_str(), snapshot.model.as_str()),
             Err(_) => ("ยังไม่พร้อม", "ยังไม่พร้อม"),
         };
         let state = match snapshot.state {
@@ -253,25 +304,32 @@ impl Runtime {
             // Capture the state before reserving this request changes it to thinking.
             // Desktop actions do not enter the slash-command path.
             let local_reply = if app.is_none() {
-                self.slash_reply(text, &state.snapshot)
+                self.slash_reply(text, &state)
             } else {
                 None
             };
+            // A /model switch finishes here: no message, no thinking state and
+            // no task. Switch only after the ID is accepted, so a rejected
+            // request (busy or duplicate ID) changes nothing.
+            let local_reply = match local_reply {
+                Some(Local::Switch(choice)) => {
+                    state.admit(id)?;
+                    state.set_model(choice);
+                    state.snapshot.state = "idle";
+                    state.snapshot.error = None;
+                    emit(
+                        connection,
+                        json!({"type":"state","request_id":id,"state":"idle"}),
+                    )
+                    .await;
+                    return Ok(());
+                }
+                Some(Local::Reply(reply)) => Some(reply),
+                None => None,
+            };
             let safe_text = self.clean(text);
             let (cancel, history) = state.reserve(id, safe_text.clone())?;
-            // Switch only after the request is accepted, so a rejected /model
-            // (busy or duplicate ID) changes nothing.
-            let local_reply = local_reply.map(|(reply, model)| {
-                if let Some(model) = model {
-                    // Keep a typed, unlisted model selectable in the picker.
-                    if !state.snapshot.models.contains(&model) {
-                        state.snapshot.models.push(model.clone());
-                    }
-                    state.snapshot.model = model;
-                }
-                reply
-            });
-            let model = state.snapshot.model.clone();
+            let model = state.model.clone();
             emit(
                 connection,
                 json!({"type":"message","request_id":id,"role":"user","content":safe_text}),
@@ -309,8 +367,13 @@ impl Runtime {
                             .to_owned())
                     }
                 } else {
-                    let mut config = runtime.config.clone()?;
-                    config.model = model;
+                    let config = runtime.config.as_ref().map_err(Clone::clone)?;
+                    let config = match &model {
+                        Some(choice) => config
+                            .with_choice(choice)
+                            .ok_or("The selected model's provider has no API key.")?,
+                        None => config.clone(),
+                    };
                     let client = Client::new(config)?;
                     client.chat(&history, &mut tools).await.map(Some)
                 }
@@ -720,19 +783,21 @@ mod tests {
         let runtime = Runtime::new(Ok(Config {
             provider: crate::config::Provider::DeepSeek,
             model: "test-model".into(),
-            models: vec!["test-model".into()],
+            models: Vec::new(),
             api_key: "dummy-secret-value".into(),
+            keys: Vec::new(),
         }));
         let state = runtime.state.lock().await;
-        let (reply, model) = runtime.slash_reply("/status", &state.snapshot).unwrap();
-        assert!(model.is_none());
+        let Some(Local::Reply(reply)) = runtime.slash_reply("/status", &state) else {
+            panic!("/status must reply");
+        };
         assert_eq!(
             reply,
             "สถานะ: ● ว่าง (idle)\n       โมเดล: deepseek · test-model\n       \
              สิทธิ์: บัญชีผู้ใช้ปัจจุบัน · ไม่มี sandbox\n       ไฟล์/โฟลเดอร์สำคัญ: ยังไม่มีการป้องกัน"
         );
         assert!(!reply.contains("dummy-secret-value"));
-        assert!(runtime.slash_reply("สวัสดี", &state.snapshot).is_none());
+        assert!(runtime.slash_reply("สวัสดี", &state).is_none());
     }
 
     #[tokio::test]
@@ -740,33 +805,34 @@ mod tests {
         let runtime = Runtime::new(Ok(Config {
             provider: crate::config::Provider::OpenAi,
             model: "gpt-6.1-sol".into(),
-            models: vec!["gpt-6.1-sol".into()],
+            models: Vec::new(),
             api_key: "dummy-secret-value".into(),
+            keys: Vec::new(),
         }));
         let state = runtime.state.lock().await;
-        let reply = |text| runtime.slash_reply(text, &state.snapshot).unwrap();
-        let (show, none) = reply("/model");
-        assert!(show.starts_with("โมเดล: openai · gpt-6.1-sol"));
-        assert!(none.is_none());
-        assert_eq!(
-            reply("/model  gpt-6.1-mini ").1.as_deref(),
-            Some("gpt-6.1-mini")
-        );
-        assert!(reply("/model gpt-6.1-sol").1.is_none());
+        let reply = |text| match runtime.slash_reply(text, &state) {
+            Some(Local::Reply(reply)) => reply,
+            _ => panic!("{text} must reply"),
+        };
+        let switch = |text| match runtime.slash_reply(text, &state) {
+            Some(Local::Switch(choice)) => choice.model,
+            _ => panic!("{text} must switch"),
+        };
+        assert!(reply("/model").starts_with("โมเดล: openai · gpt-6.1-sol"));
+        // A switch, including to the active model, has no reply.
+        assert_eq!(switch("/model  gpt-6.1-mini "), "gpt-6.1-mini");
+        assert_eq!(switch("/model gpt-6.1-sol"), "gpt-6.1-sol");
+        // DeepSeek has no key in this config, so it cannot be selected.
+        assert!(reply("/model deepseek-chat").contains("DEEPSEEK_API_KEY"));
         for invalid in ["/model bad$id", "/model dummy-secret-value", "/model a b"] {
-            let (text, model) = reply(invalid);
-            assert!(model.is_none());
-            assert!(!text.contains("dummy-secret-value"));
+            assert!(!reply(invalid).contains("dummy-secret-value"));
         }
         let broken = Runtime::new(Err("Missing test config".into()));
         let state = broken.state.lock().await;
-        assert!(
-            broken
-                .slash_reply("/model x", &state.snapshot)
-                .unwrap()
-                .1
-                .is_none()
-        );
+        assert!(matches!(
+            broken.slash_reply("/model x", &state),
+            Some(Local::Reply(_))
+        ));
     }
 
     #[tokio::test]
@@ -788,8 +854,9 @@ mod tests {
         let runtime = Runtime::new(Ok(Config {
             provider: crate::config::Provider::OpenAi,
             model: "gpt-6.1-sol".into(),
-            models: vec!["gpt-6.1-sol".into()],
+            models: Vec::new(),
             api_key: "dummy-secret-value".into(),
+            keys: Vec::new(),
         }));
         let mut state = runtime.state.lock().await;
         for _ in 0..100 {

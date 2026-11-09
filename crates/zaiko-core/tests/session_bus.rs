@@ -217,7 +217,11 @@ async fn model_command_switches_the_session_model_without_contacting_the_provide
             .env("DBUS_SESSION_BUS_ADDRESS", &bus.address)
             .env("ZAIKO_LLM_MODEL", "gpt-6.1-sol")
             .env("OPENAI_API_KEY", "dummy-model-secret")
-            .env("ZAIKO_LLM_MODELS", "gpt-6.1-mini,gpt-6.1-nano")
+            .env(
+                "ZAIKO_LLM_MODELS",
+                "gpt-6.1-mini,gpt-6.1-nano,deepseek-flash",
+            )
+            .env("DEEPSEEK_API_KEY", "dummy-deepseek-secret")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -228,7 +232,12 @@ async fn model_command_switches_the_session_model_without_contacting_the_provide
     assert_eq!(snapshot(&proxy).await["model"], "gpt-6.1-sol");
     assert_eq!(
         snapshot(&proxy).await["models"],
-        serde_json::json!(["gpt-6.1-sol", "gpt-6.1-mini", "gpt-6.1-nano"])
+        serde_json::json!([
+            "gpt-6.1-sol",
+            "gpt-6.1-mini",
+            "gpt-6.1-nano",
+            "deepseek-flash"
+        ])
     );
 
     for (id, text, model, expected) in [
@@ -238,12 +247,7 @@ async fn model_command_switches_the_session_model_without_contacting_the_provide
             "gpt-6.1-sol",
             "โมเดล: openai · gpt-6.1-sol",
         ),
-        (
-            "model-switch",
-            " /model gpt-6.1-mini ",
-            "gpt-6.1-mini",
-            "สลับโมเดลเป็น openai · gpt-6.1-mini",
-        ),
+        ("model-switch", " /model gpt-6.1-mini ", "gpt-6.1-mini", ""),
         (
             "model-bad",
             "/model bad$id",
@@ -262,24 +266,60 @@ async fn model_command_switches_the_session_model_without_contacting_the_provide
             "gpt-6.1-mini",
             "โมเดล: openai · gpt-6.1-mini",
         ),
+        (
+            "model-deepseek",
+            "/model deepseek-flash",
+            "deepseek-flash",
+            "",
+        ),
+        (
+            "model-deepseek-status",
+            "/status",
+            "deepseek-flash",
+            "โมเดล: deepseek · deepseek-flash",
+        ),
+        (
+            "model-deepseek-secret",
+            "/model dummy-deepseek-secret",
+            "deepseek-flash",
+            "model ID ไม่ถูกต้อง",
+        ),
     ] {
+        let before = snapshot(&proxy).await["messages"].clone();
         proxy.call::<_, _, ()>("Submit", &(id, text)).await.unwrap();
         let result = idle(&proxy).await;
         assert_eq!(result["model"], model);
-        assert!(
-            result["messages"].as_array().unwrap().last().unwrap()["content"]
-                .as_str()
-                .unwrap()
-                .contains(expected)
-        );
+        if expected.is_empty() {
+            // A switch adds nothing to the Log or the history sent to the provider.
+            assert_eq!(result["messages"], before);
+        } else {
+            assert!(
+                result["messages"].as_array().unwrap().last().unwrap()["content"]
+                    .as_str()
+                    .unwrap()
+                    .contains(expected)
+            );
+        }
         assert!(!result.to_string().contains("dummy-model-secret"));
+        assert!(!result.to_string().contains("dummy-deepseek-secret"));
     }
+    // A reused request ID is rejected and never switches the model.
+    assert!(
+        proxy
+            .call::<_, _, ()>("Submit", &("model-switch", "/model gpt-6.1-nano"))
+            .await
+            .is_err()
+    );
+    assert_eq!(snapshot(&proxy).await["model"], "deepseek-flash");
     // An unlisted model chosen by ID joins the picker list.
     proxy
         .call::<_, _, ()>("Submit", &("model-custom", "/model gpt-custom"))
         .await
         .unwrap();
-    assert_eq!(idle(&proxy).await["models"].as_array().unwrap().len(), 4);
+    let result = idle(&proxy).await;
+    assert_eq!(result["models"].as_array().unwrap().len(), 5);
+    // gpt-custom is inferred as OpenAI even though DeepSeek was active.
+    assert_eq!(result["provider"], "openai");
     proxy.call::<_, _, ()>("Quit", &()).await.unwrap();
 }
 
