@@ -167,6 +167,21 @@ export class InputVim {
             const wordKind = kind(characters[cursor] ?? '');
             while (cursor > 0 && kind(characters[cursor - 1]) === wordKind)
                 cursor--;
+        } else if (key === 'x') {
+            // Delete the character under the cursor with its combining marks,
+            // never the line break; at the line end, step back like Vim.
+            if (cursor < characters.length && characters[cursor] !== '\n') {
+                let end = cursor + 1;
+                while (end < characters.length && mark(characters[end]))
+                    end++;
+                characters.splice(cursor, end - cursor);
+                if ((cursor === characters.length || characters[cursor] === '\n') &&
+                    cursor > 0 && characters[cursor - 1] !== '\n') {
+                    cursor--;
+                    while (cursor > 0 && mark(characters[cursor]))
+                        cursor--;
+                }
+            }
         } else if (['i', 'a', 'A', 'C', 'R'].includes(key)) {
             this.reset(key === 'R' ? 'replace' : 'insert');
             if (key === 'a')

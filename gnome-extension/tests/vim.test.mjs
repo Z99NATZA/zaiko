@@ -198,3 +198,34 @@ test('j and k line up Thai text by visible cells, never landing on a combining m
     const at = (text, cursor, key, measure) => new InputVim().handle(text, cursor, key, measure).cursor;
     assert.equal(at('ab\nxy', 1, 'j', position => position < 3 ? position * 10 : (position - 3) * 4), 4);
 });
+
+test('x deletes the character under the cursor and never joins lines', () => {
+    const input = editor('abc');
+    input.key('x');
+    assert.equal(input.text, 'bc');
+    assert.equal(input.cursor, 0);
+    // At the line end the cursor steps back onto the new last character.
+    input.keys('$x');
+    assert.equal(input.text, 'b');
+    assert.equal(input.cursor, 0);
+    input.keys('xx');
+    assert.equal(input.text, '');
+    assert.equal(input.cursor, 0);
+
+    const lines = editor('ab\n\ncd', 1);
+    lines.key('x');
+    assert.equal(lines.text, 'a\n\ncd');
+    assert.equal(lines.cursor, 0);
+    // An empty line has nothing to delete.
+    lines.keys('jx');
+    assert.equal(lines.text, 'a\n\ncd');
+
+    // A Thai letter goes together with its combining vowel and tone marks.
+    const thai = editor('กี่ข', 0);
+    thai.key('x');
+    assert.equal(thai.text, 'ข');
+    const end = editor('ขกี่', 1);
+    end.key('x');
+    assert.equal(end.text, 'ข');
+    assert.equal(end.cursor, 0);
+});
