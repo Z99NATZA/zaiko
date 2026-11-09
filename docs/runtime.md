@@ -319,6 +319,12 @@ absent, this creates its first window with one tab. An explicit new-terminal or
 separate-window request uses new-window (--standalone). Default and tab requests
 target the primary instance, even when standalone windows are open.
 
+To open zter with a program running ("เปิด zter พร้อมรัน codex"), Aiko uses
+run_command to start zter --new-tab --run '<command>' (or zter -s --run for
+separate windows), once per requested terminal and in the requested folder. zter
+types the command into a new tab's shell, so any program available in zter works
+without a per-program rule. This needs a zter build with --run.
+
 VS Code keeps opening a new window using new-empty-window (--new-window).
 A launcher without a requested action reports an error; Zaiko does not substitute
 another mode. Install the updated zter binary and desktop launcher for tab support.
