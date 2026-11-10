@@ -683,6 +683,18 @@ export default class OverlayQA extends ZaikoExtension {
                     checkRow(0);
                     qaAssert(entry.get_text() === draft && vim._state.mode === 'normal',
                         'Wrapped row motions preserve the draft and normal mode in both inputs');
+                    // dd on the second displayed row of a wrapped line removes only that row.
+                    const from = rows.get(heights[1])[0].position;
+                    const to = rows.get(heights[2])[0].position;
+                    const lineEnd = draft.includes('\n') ? characters.indexOf('\n') : characters.length;
+                    if (to <= lineEnd) {
+                        text.set_selection(from, from);
+                        await physical(32); // d
+                        await physical(32);
+                        const expected = [...characters.slice(0, from), ...characters.slice(to)].join('');
+                        qaAssert(entry.get_text() === expected && vim._state.mode === 'normal',
+                            `Physical dd on a wrapped row deletes only that row in ${entry === this._overlayEntry ? 'compact' : 'Log'} input: ${JSON.stringify({text: entry.get_text(), expected})}`);
+                    }
                 }
                 this._toggleVim();
                 entry.set_text('');

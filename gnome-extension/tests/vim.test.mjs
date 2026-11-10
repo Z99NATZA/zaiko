@@ -134,6 +134,38 @@ test('dd deletes only the current logical line and keeps the remaining lines int
     assert.equal(input.cursor, 0);
 });
 
+test('dd on a wrapped line deletes only the displayed row under the cursor', () => {
+    // Rows of five cells: 'alpha beta gamma' wraps as 'alpha', ' beta', ' gamm', 'a'.
+    const measure = text => {
+        const points = [];
+        let row = 0, x = 0;
+        for (const character of [...Array.from(text), '']) {
+            points.push({x: x * 10, y: row * 20});
+            if (character === '\n' || ++x === 5) {
+                row++;
+                x = 0;
+            }
+        }
+        return position => points[position];
+    };
+    for (const [value, cursor, expected, position] of [
+        ['abcdefghijkl', 2, 'fghijkl', 0],
+        ['abcdefghijkl', 7, 'abcdekl', 5],
+        ['abcdefghijkl', 11, 'abcdefghij', 9],
+        ['abcdefgh\nxy', 6, 'abcde\nxy', 4],
+        ['abcdefgh\nxy', 10, 'abcdefgh', 0],
+        ['ab\nabcdefg', 4, 'ab\nfg', 3],
+        ['abกี่de', 6, 'abกี่', 2],
+    ]) {
+        const vim = new InputVim();
+        vim.handle(value, cursor, 'd', measure(value));
+        const result = vim.handle(value, cursor, 'd', measure(value));
+        assert.equal(result.text, expected, JSON.stringify({value, cursor}));
+        assert.equal(result.cursor, position, JSON.stringify({value, cursor}));
+        assert.equal(vim.mode, 'normal');
+    }
+});
+
 test('o and O open logical lines above/below a Unicode draft and enter insert mode', () => {
     for (const [text, cursor, key, expected, position] of [
         ['alpha\nbeta\ngamma', 8, 'o', 'alpha\nbeta\n\ngamma', 11],

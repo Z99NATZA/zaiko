@@ -59,7 +59,29 @@ export class InputVim {
                     start--;
                 while (end < characters.length && characters[end] !== '\n')
                     end++;
-                if (end < characters.length) {
+                // With a layout, a wrapped line loses only the displayed row
+                // under the cursor; the rest of the line reflows.
+                let from = start;
+                let to = end;
+                if (measure) {
+                    const y = measure(cursor).y;
+                    from = to = cursor;
+                    while (from > start && measure(from - 1).y === y)
+                        from--;
+                    while (to < end && measure(to).y === y)
+                        to++;
+                }
+                if (from > start || to < end) {
+                    characters.splice(from, to - from);
+                    cursor = from;
+                    end -= to - from;
+                    // After the last row, rest on the end of the row above.
+                    if (cursor === end && cursor > start) {
+                        cursor--;
+                        while (cursor > start && mark(characters[cursor]))
+                            cursor--;
+                    }
+                } else if (end < characters.length) {
                     // Include the following newline so adjacent lines stay separate.
                     characters.splice(start, end - start + 1);
                     cursor = start;

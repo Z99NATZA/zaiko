@@ -257,7 +257,8 @@ horizontal position), including rows wrapped automatically to fit either input.
 word. i inserts before the cursor, a after it, and A at the end. ciw changes the
 current word, C changes through the end, x deletes the character under the cursor, r replaces one character, and R replaces
 continuously; Backspace restores overwritten characters in R mode. dd deletes
-only the current logical line in the input draft, preserving the other lines.
+only the current line in the input draft, preserving the other lines; on a line
+wrapped automatically, it deletes only the displayed row under the cursor.
 Conversation messages remain read-only.
 o opens a blank line below the current logical line; O opens one above it.
 Both enter insert mode and preserve the surrounding lines. Ctrl+J inserts a
