@@ -5,25 +5,128 @@ const mark = character => /\p{M}/u.test(character ?? '');
 const normal = (characters, cursor) => Math.max(0,
     Math.min(cursor, characters.length - (characters.at(-1) === '\n' ? 0 : 1)));
 
+// The logical line [start, end) around a position; end is its newline or the end.
+function line(characters, position) {
+    let start = position;
+    let end = position;
+    while (start > 0 && characters[start - 1] !== '\n')
+        start--;
+    while (end < characters.length && characters[end] !== '\n')
+        end++;
+    return [start, end];
+}
+
+// The displayed row [from, to) around a position. With a layout, a wrapped
+// line has several rows; without one, each logical line is a single row.
+function row(characters, position, measure) {
+    const [start, end] = line(characters, position);
+    if (!measure)
+        return [start, end];
+    const y = measure(position).y;
+    let from = position;
+    let to = position;
+    while (from > start && measure(from - 1).y === y)
+        from--;
+    while (to < end && measure(to).y === y)
+        to++;
+    return [from, to];
+}
+
+// The inner word (or run of spaces or punctuation) under the cursor.
+function word(characters, cursor) {
+    let start = cursor;
+    let end = Math.min(characters.length, cursor + 1);
+    const wordKind = kind(characters[cursor] ?? '');
+    while (start > 0 && kind(characters[start - 1]) === wordKind)
+        start--;
+    while (end < characters.length && kind(characters[end]) === wordKind)
+        end++;
+    return [start, end];
+}
+
+const firstNonBlank = (characters, position) => {
+    while (position < characters.length && /[ \t]/.test(characters[position]))
+        position++;
+    return normal(characters, position);
+};
+
+// Deletes the rows [from, to) and returns the new cursor. Whole logical lines
+// go with one newline so the other lines stay separate, like Vim's dd; part
+// of a wrapped line loses only those rows and the rest of it reflows.
+function deleteRows(characters, from, to) {
+    const [start] = line(characters, from);
+    const [, end] = line(characters, to);
+    if (from > start || to < end) {
+        characters.splice(from, to - from);
+        let cursor = from;
+        const [lineStart, lineEnd] = line(characters, from);
+        // After the last row, rest on the end of the row above.
+        if (cursor === lineEnd && cursor > lineStart) {
+            cursor--;
+            while (cursor > lineStart && mark(characters[cursor]))
+                cursor--;
+        }
+        return cursor;
+    }
+    if (end < characters.length) {
+        characters.splice(start, end - start + 1);
+        return start;
+    }
+    // The last line has no terminator; remove its preceding newline.
+    const before = Math.max(0, start - 1);
+    characters.splice(before, end - before);
+    return line(characters, before)[0];
+}
+
+function changeCase(characters, from, to, upper) {
+    const text = characters.slice(from, to).join('');
+    characters.splice(from, to - from, ...Array.from(upper ? text.toUpperCase() : text.toLowerCase()));
+}
+
 export class InputVim {
     constructor() {
         this.reset();
     }
 
+    // Visual mode needs its anchor, so it never survives a reset.
     reset(mode = 'normal') {
-        this.mode = mode;
+        this.mode = mode === 'visual' ? 'normal' : mode;
         this.pending = '';
         this.history = [];
         this.column = null;
+        this.anchor = null;
+        this.head = null;
     }
 
     // measure(position) optionally gives {x, y} in the rendered text layout.
+    // In visual line mode, the result also has selection: [bound, cursor].
     handle(value, position, key, measure = null) {
         const characters = Array.from(value);
         let cursor = position < 0 ? characters.length : position;
-        const result = () => ({handled: true, text: characters.join(''), cursor});
+        if (this.mode === 'visual' && this.anchor === null)
+            this.mode = 'normal';
+        const visual = this.mode === 'visual';
+        if (visual)
+            cursor = this.head;
+        // The selection covers whole displayed rows from the anchor to the cursor.
+        const selected = () => {
+            const [from] = row(characters, Math.min(this.anchor, this.head), measure);
+            const [, to] = row(characters, Math.max(this.anchor, this.head), measure);
+            return [from, to];
+        };
+        const result = () => {
+            if (this.mode !== 'visual')
+                return {handled: true, text: characters.join(''), cursor};
+            this.head = cursor;
+            let [from, to] = selected();
+            // Show an empty row by highlighting its newline.
+            if (from === to && to < characters.length)
+                to++;
+            return {handled: true, text: characters.join(''), cursor,
+                selection: cursor < this.anchor ? [to, from] : [from, to]};
+        };
         if (key === 'Escape') {
-            if (this.mode !== 'normal' && cursor > 0 && characters[cursor - 1] !== '\n')
+            if (this.mode !== 'normal' && !visual && cursor > 0 && characters[cursor - 1] !== '\n')
                 cursor--;
             this.reset();
             cursor = normal(characters, cursor);
@@ -52,60 +155,28 @@ export class InputVim {
         if (this.pending) {
             const command = this.pending + key;
             this.pending = '';
-            if (command === 'dd') {
-                let start = cursor;
-                let end = cursor;
-                while (start > 0 && characters[start - 1] !== '\n')
-                    start--;
-                while (end < characters.length && characters[end] !== '\n')
-                    end++;
-                // With a layout, a wrapped line loses only the displayed row
-                // under the cursor; the rest of the line reflows.
-                let from = start;
-                let to = end;
-                if (measure) {
-                    const y = measure(cursor).y;
-                    from = to = cursor;
-                    while (from > start && measure(from - 1).y === y)
-                        from--;
-                    while (to < end && measure(to).y === y)
-                        to++;
-                }
-                if (from > start || to < end) {
-                    characters.splice(from, to - from);
-                    cursor = from;
-                    end -= to - from;
-                    // After the last row, rest on the end of the row above.
-                    if (cursor === end && cursor > start) {
-                        cursor--;
-                        while (cursor > start && mark(characters[cursor]))
-                            cursor--;
-                    }
-                } else if (end < characters.length) {
-                    // Include the following newline so adjacent lines stay separate.
-                    characters.splice(start, end - start + 1);
-                    cursor = start;
-                } else {
-                    // The last line has no terminator; remove its preceding newline.
-                    const from = Math.max(0, start - 1);
-                    characters.splice(from, end - from);
-                    cursor = from;
-                    while (cursor > 0 && characters[cursor - 1] !== '\n')
-                        cursor--;
-                }
-            } else if (command === 'ci') {
-                this.pending = 'ci';
+            if (command === 'gg') {
+                cursor = firstNonBlank(characters, 0);
+            } else if (visual) {
+                // Visual mode only waits for gg.
+            } else if (command === 'dd') {
+                const [from, to] = row(characters, cursor, measure);
+                cursor = deleteRows(characters, from, to);
+            } else if (['ci', 'gu', 'gU', 'gui', 'gUi'].includes(command)) {
+                this.pending = command;
             } else if (command === 'ciw') {
-                let start = cursor;
-                let end = Math.min(characters.length, cursor + 1);
-                const wordKind = kind(characters[cursor] ?? '');
-                while (start > 0 && kind(characters[start - 1]) === wordKind)
-                    start--;
-                while (end < characters.length && kind(characters[end]) === wordKind)
-                    end++;
+                const [start, end] = word(characters, cursor);
                 characters.splice(start, end - start);
                 cursor = start;
                 this.reset('insert');
+            } else if (command === 'guu' || command === 'gUU') {
+                const [from, to] = row(characters, cursor, measure);
+                changeCase(characters, from, to, command === 'gUU');
+                cursor = normal(characters, cursor);
+            } else if (command === 'guiw' || command === 'gUiw') {
+                const [start, end] = word(characters, cursor);
+                changeCase(characters, start, end, command === 'gUiw');
+                cursor = start;
             } else if (command.startsWith('r') && Array.from(key).length === 1 &&
                 key.codePointAt(0) >= 32 && characters.length) {
                 characters[cursor] = key;
@@ -139,9 +210,9 @@ export class InputVim {
                 rows.get(y).push({position, x});
             }
             const heights = [...rows.keys()].sort((a, b) => a - b);
-            const row = heights.indexOf(current.y);
-            const target = rows.get(heights[row + (key === 'j' ? 1 : -1)]);
-            if (row < 0 || !target)
+            const index = heights.indexOf(current.y);
+            const target = rows.get(heights[index + (key === 'j' ? 1 : -1)]);
+            if (index < 0 || !target)
                 return result();
             let distance = Infinity;
             for (const {position, x} of target) {
@@ -151,18 +222,10 @@ export class InputVim {
                     cursor = position;
                 }
             }
-        } else if (key === 'o' || key === 'O') {
-            if (key === 'o') {
-                while (cursor < characters.length && characters[cursor] !== '\n')
-                    cursor++;
-                characters.splice(cursor, 0, '\n');
-                cursor++;
-            } else {
-                while (cursor > 0 && characters[cursor - 1] !== '\n')
-                    cursor--;
-                characters.splice(cursor, 0, '\n');
-            }
-            this.reset('insert');
+        } else if (key === 'G') {
+            // Go to the last displayed row, so a wrapped last line still reaches the bottom.
+            const [from] = row(characters, normal(characters, characters.length), measure);
+            cursor = firstNonBlank(characters, from);
         } else if (['h', 'Left', 'BackSpace'].includes(key)) {
             cursor = Math.max(0, cursor - 1);
         } else if (['l', 'Right', ' '].includes(key)) {
@@ -185,6 +248,43 @@ export class InputVim {
             const wordKind = kind(characters[cursor] ?? '');
             while (cursor > 0 && kind(characters[cursor - 1]) === wordKind)
                 cursor--;
+        } else if (key === 'g') {
+            this.pending = key;
+        } else if (visual) {
+            const [from, to] = selected();
+            if (['d', 'x', 'D', 'X'].includes(key)) {
+                cursor = deleteRows(characters, from, to);
+                this.reset();
+            } else if (['c', 'C', 's', 'S'].includes(key)) {
+                // Like Vim, changed lines leave one empty line to type on.
+                characters.splice(from, to - from);
+                cursor = from;
+                this.reset('insert');
+            } else if (key === 'u' || key === 'U') {
+                changeCase(characters, from, to, key === 'U');
+                this.reset();
+                cursor = normal(characters, from);
+            } else if (key === 'o') {
+                [this.anchor, cursor] = [cursor, this.anchor];
+            } else if (key === 'V') {
+                this.reset();
+            }
+        } else if (key === 'V') {
+            this.reset();
+            this.mode = 'visual';
+            this.anchor = cursor;
+        } else if (key === 'o' || key === 'O') {
+            if (key === 'o') {
+                while (cursor < characters.length && characters[cursor] !== '\n')
+                    cursor++;
+                characters.splice(cursor, 0, '\n');
+                cursor++;
+            } else {
+                while (cursor > 0 && characters[cursor - 1] !== '\n')
+                    cursor--;
+                characters.splice(cursor, 0, '\n');
+            }
+            this.reset('insert');
         } else if (key === 'x') {
             // Delete the character under the cursor with its combining marks,
             // never the line break; at the line end, step back like Vim.

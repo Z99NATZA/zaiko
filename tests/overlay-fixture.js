@@ -636,6 +636,70 @@ export default class OverlayQA extends ZaikoExtension {
                 await physical(32);
                 qaAssert(entry.get_text() === 'hello' && vim._state.mode === 'normal' && entry.mapped,
                     'Physical dd under Thai deletes only the current row in each composer');
+                entry.set_text('  one\ntwo\nthree');
+                entry.clutter_text.set_selection(7, 7);
+                await physical(34); // g
+                await physical(34);
+                qaAssert(entry.clutter_text.get_cursor_position() === 2, 'Physical gg under Thai goes to the first non-blank');
+                await physical(34, true); // G
+                qaAssert(entry.clutter_text.get_cursor_position() === 10, 'Physical G under Thai goes to the last line');
+                await physical(34);
+                await physical(22, true); // U
+                await physical(23); // i
+                await physical(17); // w
+                qaAssert(entry.get_text() === '  one\ntwo\nTHREE', 'Physical gUiw under Thai uppercases the word');
+                await physical(34);
+                await physical(22); // u
+                await physical(22);
+                qaAssert(entry.get_text() === '  one\ntwo\nthree', 'Physical guu under Thai lowercases the row');
+                await physical(47, true); // V
+                await physical(37); // k
+                {
+                    const text = entry.clutter_text;
+                    const label = this._logVimMode.text;
+                    qaAssert(vim._state.mode === 'visual' && (entry !== this._logEntry || label === '--VISUAL LINE--') && !text.editable &&
+                        [15, -1].includes(text.get_selection_bound()) && text.get_cursor_position() === 6,
+                    `Physical V and K under Thai select whole lines: ${JSON.stringify({mode: vim._state.mode, label, bound: text.get_selection_bound(), cursor: text.get_cursor_position()})}`);
+                }
+                await physical(22, true); // U
+                qaAssert(entry.get_text() === '  one\nTWO\nTHREE' && vim._state.mode === 'normal' &&
+                    !entry.clutter_text.get_selection(), 'Visual U uppercases the selected lines and returns to normal');
+                await physical(47, true);
+                await physical(34, true);
+                await physical(32); // d
+                qaAssert(entry.get_text() === '  one' && vim._state.mode === 'normal',
+                    `Visual G then d deletes through the last line: ${JSON.stringify(entry.get_text())}`);
+                await physical(47, true);
+                await this._key(Clutter.KEY_Escape);
+                qaAssert(vim._state.mode === 'normal' && !entry.clutter_text.get_selection(),
+                    'Escape leaves visual line mode and clears the selection');
+                entry.set_text('a    b');
+                entry.clutter_text.set_selection(0, 0);
+                await physical(47, true);
+                await qaPause(150);
+                {
+                    const text = entry.clutter_text;
+                    const [, x, y, height] = text.position_to_coords(2);
+                    const [textX, textY] = text.get_transformed_position();
+                    const [color] = await new Shell.Screenshot().pick_color(
+                        Math.round(textX + x + 2), Math.round(textY + y + height / 2));
+                    qaAssert(color.red === 0x4a && color.green === 0x69 && color.blue === 0x88,
+                        `The visual line selection is drawn in the visible selection color: ${[color.red, color.green, color.blue]}`);
+                }
+                await this._key(Clutter.KEY_Escape);
+                entry.set_text('alpha beta gamma delta '.repeat(6).trim());
+                entry.clutter_text.set_selection(0, 0);
+                await qaPause(150);
+                await physical(34, true); // G
+                {
+                    const text = entry.clutter_text;
+                    const length = Array.from(text.text).length;
+                    const [, , lastY] = text.position_to_coords(length - 1);
+                    const [, , firstY] = text.position_to_coords(0);
+                    const [, , cursorY] = text.position_to_coords(text.get_cursor_position());
+                    qaAssert(lastY > firstY && cursorY === lastY,
+                        `G goes to the last displayed row of a wrapped line: ${JSON.stringify({firstY, lastY, cursorY})}`);
+                }
                 for (const draft of ['alpha beta gamma delta '.repeat(4),
                     `${'ที่นี่มีข้อความภาษาไทย '.repeat(4)}\n\nท้าย\n`]) {
                     await this._key(Clutter.KEY_Escape);

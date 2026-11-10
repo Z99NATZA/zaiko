@@ -259,6 +259,16 @@ current word, C changes through the end, x deletes the character under the curso
 continuously; Backspace restores overwritten characters in R mode. dd deletes
 only the current line in the input draft, preserving the other lines; on a line
 wrapped automatically, it deletes only the displayed row under the cursor.
+gg goes to the first non-blank character of the first line, and G to that of
+the last displayed row, so it reaches the bottom of a wrapped last line.
+guiw/gUiw lowercase/uppercase the word under the cursor, and guu/gUU the
+current row (the displayed row on a wrapped line, like dd). V starts visual
+line mode (--VISUAL LINE-- in yellow #e5c07b), which highlights whole rows from
+where it started to the cursor in blue #4a6988 (the inputs' selection color,
+visible on the #3e4451 composer); motions such as j/k, gg and G extend it. In it,
+d or x deletes the rows, c replaces them with an empty line in insert mode,
+u/U change their case, o jumps to the other end, and Escape or V leaves.
+Clicking or editing the text elsewhere also leaves visual mode.
 Conversation messages remain read-only.
 o opens a blank line below the current logical line; O opens one above it.
 Both enter insert mode and preserve the surrounding lines. Ctrl+J inserts a

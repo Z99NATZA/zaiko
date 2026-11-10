@@ -1319,7 +1319,7 @@ export default class ZaikoExtension extends Extension {
     _renderLogVimMode(mode) {
         if (!this._logVimMode)
             return;
-        this._logVimMode.text = mode ? `--${mode.toUpperCase()}--` : '';
+        this._logVimMode.text = mode ? `--${mode === 'visual' ? 'VISUAL LINE' : mode.toUpperCase()}--` : '';
         this._logVimMode.set_style_class_name(`zaiko-vim-mode${mode ? ` zaiko-vim-${mode}` : ''}`);
         this._syncLogFooter();
     }

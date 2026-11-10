@@ -305,3 +305,96 @@ test('x deletes the character under the cursor and never joins lines', () => {
     assert.equal(end.text, 'ข');
     assert.equal(end.cursor, 0);
 });
+
+test('gg and G jump to the first non-blank character of the first and last lines', () => {
+    const input = editor('  one\ntwo\n  three', 7);
+    input.key('G'); assert.equal(input.cursor, 12);
+    input.keys('gg'); assert.equal(input.cursor, 2);
+    input.key('g'); input.key('Escape');
+    assert.equal(input.vim.pending, '');
+    const blank = editor('a\nb\n', 0);
+    blank.key('G'); assert.equal(blank.cursor, 4);
+    blank.keys('gg'); assert.equal(blank.cursor, 0);
+    assert.equal(blank.text, 'a\nb\n');
+    // With a layout, G reaches the last displayed row of a wrapped last line.
+    const measure = position => ({x: position % 5 * 10, y: Math.floor(position / 5) * 20});
+    const vim = new InputVim();
+    assert.equal(vim.handle('one\nabcdefghijkl', 0, 'G', measure).cursor, 15);
+    assert.deepEqual(vim.handle('abcdefghijkl', 0, 'V', measure).selection, [0, 5]);
+    assert.deepEqual(vim.handle('abcdefghijkl', 0, 'G', measure).selection, [0, 12]);
+});
+
+test('guiw, gUiw, guu and gUU change case of the word or row and stay in normal mode', () => {
+    for (const [value, cursor, keys, expected, position] of [
+        ['Hello WORLD ไทย', 8, 'guiw', 'Hello world ไทย', 6],
+        ['hello world', 2, 'gUiw', 'HELLO world', 0],
+        ['one\nTwo\nthree', 5, 'gUU', 'one\nTWO\nthree', 5],
+        ['ONE\nTWO', 1, 'guu', 'one\nTWO', 1],
+        ['ab-cd', 2, 'gUiw', 'ab-cd', 2],
+    ]) {
+        const input = editor(value, cursor);
+        input.keys(keys);
+        assert.equal(input.text, expected, JSON.stringify({value, keys}));
+        assert.equal(input.cursor, position, JSON.stringify({value, keys}));
+        assert.equal(input.vim.mode, 'normal');
+        assert.equal(input.vim.pending, '');
+    }
+    // With a layout, guu and gUU change only the displayed row of a wrapped line.
+    const measure = position => ({x: position % 5 * 10, y: Math.floor(position / 5) * 20});
+    const vim = new InputVim();
+    vim.handle('abcdefghij', 6, 'g', measure);
+    vim.handle('abcdefghij', 6, 'U', measure);
+    assert.deepEqual(vim.handle('abcdefghij', 6, 'U', measure), {handled: true, text: 'abcdeFGHIJ', cursor: 6});
+});
+
+test('V selects whole lines, follows motions and applies d, c, u, U and o', () => {
+    const visual = (value, cursor, keys, measure = null) => {
+        const vim = new InputVim();
+        let state = {text: value, cursor};
+        for (const key of keys) {
+            state = vim.handle(state.text, state.cursor, key, measure);
+            assert.equal(state.handled, true);
+        }
+        return {vim, ...state};
+    };
+    const text = 'one\ntwo\nthree\nfour';
+    let state = visual(text, 5, ['V']);
+    assert.equal(state.vim.mode, 'visual');
+    assert.deepEqual(state.selection, [4, 7]);
+    assert.deepEqual(visual(text, 5, ['V', 'j']).selection, [4, 13]);
+    assert.deepEqual(visual(text, 5, ['V', 'k']).selection, [7, 0]);
+    assert.deepEqual(visual(text, 5, ['V', 'G']).selection, [4, 18]);
+    assert.deepEqual(visual(text, 9, ['V', 'g', 'g']).selection, [13, 0]);
+    // o moves the cursor to the other end of the selection.
+    state = visual(text, 5, ['V', 'j', 'o']);
+    assert.deepEqual(state.selection, [13, 4]);
+    assert.equal(state.cursor, 5);
+    // Other keys do nothing and keep the selection.
+    state = visual(text, 5, ['V', 'i', 'a', 'p']);
+    assert.equal(state.vim.mode, 'visual');
+    assert.equal(state.text, text);
+
+    for (const [keys, expected, position, mode] of [
+        [['V', 'j', 'd'], 'one\nfour', 4, 'normal'],
+        [['V', 'G', 'x'], 'one', 0, 'normal'],
+        [['V', 'k', 'U'], 'ONE\nTWO\nthree\nfour', 0, 'normal'],
+        [['V', 'G', 'U'], 'one\nTWO\nTHREE\nFOUR', 4, 'normal'],
+        [['V', 'j', 'c'], 'one\n\nfour', 4, 'insert'],
+        [['V', 'j', 'Escape'], text, 9, 'normal'],
+        [['V', 'j', 'V'], text, 9, 'normal'],
+    ]) {
+        state = visual(text, 5, keys);
+        assert.equal(state.text, expected, JSON.stringify(keys));
+        assert.equal(state.cursor, position, JSON.stringify(keys));
+        assert.equal(state.vim.mode, mode, JSON.stringify(keys));
+        assert.equal(state.selection, undefined);
+    }
+    // An empty row highlights its newline so the selection stays visible.
+    assert.deepEqual(visual('a\n\nb', 2, ['V']).selection, [2, 3]);
+    // With a layout, V selects displayed rows of a wrapped line.
+    const measure = position => ({x: position % 5 * 10, y: Math.floor(position / 5) * 20});
+    assert.deepEqual(visual('abcdefghijkl', 6, ['V'], measure).selection, [5, 10]);
+    state = visual('abcdefghijkl', 6, ['V', 'j', 'd'], measure);
+    assert.equal(state.text, 'abcde');
+    assert.equal(state.cursor, 4);
+});

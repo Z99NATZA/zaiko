@@ -85,6 +85,7 @@
 .zaiko-vim-insert { color: #98c379; }
 .zaiko-vim-normal { color: #c678dd; }
 .zaiko-vim-replace { color: #e06c75; }
+.zaiko-vim-visual { color: #e5c07b; }
 .zaiko-log-entry, .zaiko-log-entry:focus,
 .zaiko-overlay-entry, .zaiko-overlay-entry:focus {
     color: #dcdfe4;
@@ -94,7 +95,7 @@
     padding: 0 3px;
     box-shadow: none;
     caret-color: #dcdfe4;
-    selection-background-color: #3e4451;
+    selection-background-color: #4a6988;
     selected-color: #dcdfe4;
     font-size: 13px;
     font-weight: 400;

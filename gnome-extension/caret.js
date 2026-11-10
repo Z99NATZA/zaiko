@@ -38,9 +38,9 @@ export class CaretBlink {
     _reset() {
         this._stop();
         const active = this._text.mapped && this._text.has_key_focus() &&
-            (this._text.editable || this._vimMode === 'normal');
+            (this._text.editable || this._vimMode === 'normal' || this._vimMode === 'visual');
         this._text.set_cursor_visible(active);
-        if (this._vimMode === 'normal' || this._vimMode === 'replace')
+        if (['normal', 'replace', 'visual'].includes(this._vimMode))
             return;
         const timeout = this._settings.get_int('cursor-blink-timeout');
         if (!active || !this._settings.get_boolean('cursor-blink') || timeout <= 0)

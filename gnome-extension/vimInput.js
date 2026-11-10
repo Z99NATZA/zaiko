@@ -6,8 +6,9 @@ import {InputVim} from './vim.js';
 const NORMAL_KEYS = new Map([
     [5, ['4', '$']], [11, ['0', ')']],
     [17, ['w', 'W']], [19, ['r', 'R']], [23, ['i', 'I']], [24, ['o', 'O']],
-    [30, ['a', 'A']], [32, ['d', 'D']], [35, ['h', 'H']], [36, ['j', 'J']], [37, ['k', 'K']],
-    [38, ['l', 'L']], [45, ['x', 'X']], [46, ['c', 'C']], [48, ['b', 'B']],
+    [22, ['u', 'U']], [30, ['a', 'A']], [32, ['d', 'D']], [34, ['g', 'G']], [35, ['h', 'H']],
+    [36, ['j', 'J']], [37, ['k', 'K']], [38, ['l', 'L']], [45, ['x', 'X']], [46, ['c', 'C']],
+    [47, ['v', 'V']], [48, ['b', 'B']],
 ]);
 
 export class VimInput {
@@ -19,7 +20,7 @@ export class VimInput {
         this._onMode = onMode;
         this._modeState = modeState;
         this._state = new InputVim();
-        this._state.mode = this._modeState?.mode ?? this._state.mode;
+        this._restoreMode();
         this._enabled = false;
         this._available = false;
         this._cursorSize = this._text.get_cursor_size();
@@ -43,7 +44,7 @@ export class VimInput {
             });
         }
         connect(this._text, 'key-focus-in', () => {
-            this._state.mode = this._modeState?.mode ?? this._state.mode;
+            this._restoreMode();
             this._normalCursor();
             this._sync();
         });
@@ -56,6 +57,7 @@ export class VimInput {
             if (!this._updating) {
                 this._state.pending = '';
                 this._state.history = [];
+                this._leaveVisual();
             }
             this._queueCursor();
         });
@@ -73,10 +75,37 @@ export class VimInput {
     }
 
     leave() {
-        this._state.mode = this._modeState?.mode ?? this._state.mode;
+        this._restoreMode();
+        this._leaveVisual();
         this._state.reset(this._state.mode);
         this._rememberMode();
         this._normalCursor();
+        this._sync();
+    }
+
+    // The modes are shared between inputs, but a visual selection belongs to
+    // one input; without its anchor, continue in normal mode.
+    _restoreMode() {
+        this._state.mode = this._modeState?.mode ?? this._state.mode;
+        if (this._state.mode === 'visual' && this._state.anchor === null)
+            this._state.mode = 'normal';
+    }
+
+    // Drops the visual selection and keeps the caret where it was moving.
+    _leaveVisual() {
+        if (this._state.mode !== 'visual')
+            return;
+        const head = this._state.head;
+        this._state.reset();
+        this._rememberMode();
+        if (head !== null) {
+            this._updating = true;
+            try {
+                this._text.set_selection(head, head);
+            } finally {
+                this._updating = false;
+            }
+        }
         this._sync();
     }
 
@@ -98,7 +127,7 @@ export class VimInput {
 
     _sync() {
         const mode = this._enabled && this._available ? this._state.mode : null;
-        this._text.editable = this._available && mode !== 'normal';
+        this._text.editable = this._available && mode !== 'normal' && mode !== 'visual';
         this._caret.setVimMode(mode);
         this._onMode?.(mode);
         this._syncCursor();
@@ -140,12 +169,13 @@ export class VimInput {
 
     _event(event) {
         if (event.type() === Clutter.EventType.KEY_PRESS)
-            this._state.mode = this._modeState?.mode ?? this._state.mode;
+            this._restoreMode();
         if (event.type() === Clutter.EventType.KEY_PRESS && !this._text.single_line_mode &&
             event.get_state() & Clutter.ModifierType.CONTROL_MASK &&
             !(event.get_state() & (Clutter.ModifierType.MOD1_MASK | Clutter.ModifierType.SUPER_MASK)) &&
             (event.get_event_code() === 36 || [Clutter.KEY_j, Clutter.KEY_J].includes(event.get_key_symbol()))) {
             if (this._available) {
+                this._leaveVisual();
                 this._state.reset('insert');
                 this._rememberMode();
                 this._updating = true;
@@ -166,13 +196,14 @@ export class VimInput {
             return Clutter.EVENT_PROPAGATE;
         // Clicks only place the caret natively; entering insert mode needs i.
         if (event.type() === Clutter.EventType.BUTTON_PRESS && event.get_button() === Clutter.BUTTON_PRIMARY) {
+            this._leaveVisual();
             this._state.pending = '';
             this._clicked = true;
             return Clutter.EVENT_PROPAGATE;
         }
         if (event.type() !== Clutter.EventType.KEY_PRESS)
             return Clutter.EVENT_PROPAGATE;
-        this._state.mode = this._modeState?.mode ?? this._state.mode;
+        this._restoreMode();
         const symbol = event.get_key_symbol();
         if (event.get_state() & (Clutter.ModifierType.CONTROL_MASK |
             Clutter.ModifierType.MOD1_MASK | Clutter.ModifierType.SUPER_MASK)) {
@@ -205,7 +236,7 @@ export class VimInput {
         const character = typeof unicode === 'number' ? (unicode ? String.fromCodePoint(unicode) : '') : unicode;
         // The character after r, insert mode and continuous replace mode must
         // keep the active layout: they are text, rather than Vim commands.
-        const physical = this._state.mode === 'normal' && this._state.pending !== 'r'
+        const physical = ['normal', 'visual'].includes(this._state.mode) && this._state.pending !== 'r'
             ? NORMAL_KEYS.get(event.get_event_code()) : null;
         const key = special.get(symbol) ?? (physical
             ? physical[event.get_state() & Clutter.ModifierType.SHIFT_MASK ? 1 : 0] : character);
@@ -222,7 +253,9 @@ export class VimInput {
         try {
             if (result.text !== this._text.text)
                 this._text.set_text(result.text);
-            this._text.set_selection(result.cursor, result.cursor);
+            // Clutter puts the cursor at the first position and the bound at the second.
+            const [bound, cursor] = result.selection ?? [result.cursor, result.cursor];
+            this._text.set_selection(cursor, bound);
         } finally {
             this._updating = false;
         }
