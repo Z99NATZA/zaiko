@@ -9,6 +9,11 @@ function qaPause(milliseconds) {
     }));
 }
 
+// A menu row as "Title: choice" for choice rows, or its label otherwise.
+function qaMenuRow(item) {
+    return item.choice === undefined ? item.label?.text : `${item.label.text.split(':')[0]}: ${item.choice}`;
+}
+
 function qaAssert(condition, message) {
     if (!condition)
         throw new Error(message);
@@ -855,7 +860,7 @@ export default class OverlayQA extends ZaikoExtension {
         const uiError = this._uiError;
         const vimEnabled = this._vimEnabled;
         try {
-            qaAssert(this._language === 'en' && this._langMenuItem.label.text === 'Lang: en',
+            qaAssert(this._language === 'en' && this._langMenuItem.label.text === 'Lang: en th' && this._langMenuItem.choice === 'en',
                 'Language defaults to English and exposes the current selection');
             this._overlayEntry.set_text('compact ภาษาไทย draft');
             this._logEntry.set_text('log ภาษาไทย draft');
@@ -874,8 +879,9 @@ export default class OverlayQA extends ZaikoExtension {
             await qaPause(200);
             await this._click(this._langMenuItem);
             qaAssert(this._language === 'th' && this._characterMenu.isOpen &&
-                this._characterMenu._getMenuItems().map(item => item.label.text).join(',') ===
-                `พูดคุย,ขนาด: ${this._characterSize},ภาษา: th,Vim: ${vimEnabled ? 'เปิด' : 'ปิด'},ปิด`,
+                this._characterMenu._getMenuItems().map(qaMenuRow).join(',') ===
+                `พูดคุย,ขนาด: ${this._characterSize},ภาษา: th,Vim: ${vimEnabled ? 'เปิด' : 'ปิด'},ปิด` &&
+                this._langMenuItem.label.text === 'ภาษา: en th',
                 `Lang toggles to Thai, updates every menu row and keeps the menu open: ${JSON.stringify({language: this._language, open: this._characterMenu.isOpen, rows: this._characterMenu._getMenuItems().map(item => item.label.text)})}`);
             qaAssert(this._loadLanguage() === 'th', 'The language choice persists in language.json');
             qaAssert(this._answerHideSource === expiry && JSON.stringify(this._snapshot.messages) === messages &&
@@ -894,8 +900,8 @@ export default class OverlayQA extends ZaikoExtension {
                 'Slash commands keep their identifiers and translate their descriptions');
             await this._shot('language-th-menu');
             await this._click(this._vimMenuItem);
-            qaAssert(this._vimEnabled !== vimEnabled && this._vimMenuItem.label.text ===
-                `Vim: ${this._vimEnabled ? 'เปิด' : 'ปิด'}`, 'Vim remains independently switchable in Thai');
+            qaAssert(this._vimEnabled !== vimEnabled && this._vimMenuItem.label.text === 'Vim: เปิด ปิด' &&
+                this._vimMenuItem.choice === (this._vimEnabled ? 'เปิด' : 'ปิด'), 'Vim remains independently switchable in Thai');
             await this._click(this._vimMenuItem);
             this._snapshot.state = 'thinking';
             this._snapshot.request_id = 'qa-language-request';
@@ -1019,7 +1025,7 @@ export default class OverlayQA extends ZaikoExtension {
     async _checkCharacterSize() {
         const size = this._characterSize;
         try {
-            qaAssert(size === 3 && this._character.width === 312 && this._sizeMenuItem.label.text === 'CharSize: 3',
+            qaAssert(size === 3 && this._character.width === 312 && this._sizeMenuItem.label.text === 'CharSize: 1 2 3 4 5' && this._sizeMenuItem.choice === '3',
                 'Character size defaults to 3');
             this._positionCharacter(500, 400);
             await qaPause(60);
@@ -1027,7 +1033,7 @@ export default class OverlayQA extends ZaikoExtension {
             await qaPause(40);
             this._openCharacterMenu();
             await qaPause(200);
-            const rows = this._characterMenu._getMenuItems().map(item => item.label.text).join(',');
+            const rows = this._characterMenu._getMenuItems().map(qaMenuRow).join(',');
             qaAssert(rows === `Log,CharSize: 3,Lang: en,Vim: ${this._vimEnabled ? 'on' : 'off'},Quit`,
                 `Log is first, Quit is last and the rows between are sorted A-Z: ${rows}`);
             const anchor = () => [this._character.x + this._character.width / 2, this._character.y + this._character.height];
@@ -1037,12 +1043,12 @@ export default class OverlayQA extends ZaikoExtension {
                 await this._click(this._sizeMenuItem);
                 await qaPause(60);
                 seen.push({size: this._characterSize, width: this._character.width, height: this._character.height,
-                    image: this._image.width, label: this._sizeMenuItem.label.text, open: this._characterMenu.isOpen,
+                    image: this._image.width, label: this._sizeMenuItem.label.text, choice: this._sizeMenuItem.choice, open: this._characterMenu.isOpen,
                     saved: this._loadCharacterSize(), anchor: anchor()});
             }
             qaAssert(seen.map(row => row.size).join() === '4,5,1,2,3,4' &&
                 seen.map(row => row.width).join() === '390,468,208,260,312,390' &&
-                seen.every(row => row.label === `CharSize: ${row.size}` && row.open && row.saved === row.size &&
+                seen.every(row => row.label === 'CharSize: 1 2 3 4 5' && row.choice === String(row.size) && row.open && row.saved === row.size &&
                     row.image > row.width * 0.9 && Math.abs(row.anchor[0] - start[0]) <= 1 &&
                     Math.abs(row.anchor[1] - start[1]) <= 1),
                 `CharSize cycles 1-5, keeps the menu open, saves the choice and keeps her bottom centre: ${JSON.stringify(seen)}`);
@@ -1067,13 +1073,37 @@ export default class OverlayQA extends ZaikoExtension {
         try {
             this._openCharacterMenu();
             await qaPause(200);
-            qaAssert(!this._vimEnabled && this._vimMenuItem.label.text === 'Vim: off', 'Input Vim defaults to off');
+            qaAssert(!this._vimEnabled && this._vimMenuItem.label.text === 'Vim: on off' && this._vimMenuItem.choice === 'off',
+                'Input Vim defaults to off and the menu lists both choices');
             await this._click(this._vimMenuItem);
-            qaAssert(this._vimEnabled && this._vimMenuItem.label.text === 'Vim: on' && this._characterMenu.isOpen,
+            qaAssert(this._vimEnabled && this._vimMenuItem.choice === 'on' && this._characterMenu.isOpen,
                 `Clicking Vim toggles on, updates its label and keeps the menu open: ${JSON.stringify({enabled: this._vimEnabled, label: this._vimMenuItem.label.text, open: this._characterMenu.isOpen, panel: this._panel.visible, hover: this._vimMenuItem.hover})}`);
             await this._click(this._vimMenuItem);
-            qaAssert(!this._vimEnabled && this._vimMenuItem.label.text === 'Vim: off' && this._characterMenu.isOpen,
+            qaAssert(!this._vimEnabled && this._vimMenuItem.choice === 'off' && this._characterMenu.isOpen,
                 'Clicking Vim again toggles off without closing the menu');
+            {
+                // "Vim: on off" with Vim off: "Vim:" and "off" draw in the normal
+                // color and "on" dim, even on the hovered row St has restyled.
+                await qaPause(100);
+                const text = this._vimMenuItem.label.clutter_text;
+                const [textX, textY] = text.get_transformed_position();
+                const reader = new Shell.Screenshot();
+                const brightest = async (start, end) => {
+                    const [, left, top, height] = text.position_to_coords(start);
+                    const [, right] = text.position_to_coords(end);
+                    let best = 0;
+                    for (let x = Math.ceil(textX + left); x < textX + right; x++) {
+                        for (let y = Math.ceil(textY + top); y < textY + top + height; y++) {
+                            const [color] = await reader.pick_color(x, y);
+                            best = Math.max(best, color.red, color.green, color.blue);
+                        }
+                    }
+                    return best;
+                };
+                const [title, inactive, active] = [await brightest(0, 4), await brightest(5, 7), await brightest(8, 11)];
+                qaAssert(title >= 0xc8 && active >= 0xc8 && inactive >= 0x60 && inactive <= 0x9a,
+                    `Only the inactive Vim choice is dim and the rest keeps the menu color: ${JSON.stringify({title, inactive, active})}`);
+            }
             await this._click(this._vimMenuItem);
             qaAssert(this._loadVimEnabled(), 'The input Vim preference is saved in Zaiko configuration');
             await this._key(Clutter.KEY_Escape);
@@ -1761,7 +1791,7 @@ export default class OverlayQA extends ZaikoExtension {
         await this._shot('character-context-menu');
         const items = this._characterMenu._getMenuItems();
         qaAssert(items.length === 5 &&
-            items.map(item => item.label?.text).join(',') === 'Log,CharSize: 3,Lang: en,Vim: off,Quit',
+            items.map(qaMenuRow).join(',') === 'Log,CharSize: 3,Lang: en,Vim: off,Quit',
             'Character menu shows Log first, Quit last and CharSize, Lang, Vim sorted between');
         qaAssert(this._characterMenu.box.get_theme_node().get_border_radius(St.Corner.TOPLEFT) === 8 &&
             qaColor(this._characterMenu.box.get_theme_node().get_background_color(), '#282c34'), 'Character menu uses the One Half Dark surface');
@@ -2061,8 +2091,8 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(outsideClicks === 2, 'Outside target works after disable');
         ZaikoExtension.prototype.enable.call(this);
         await qaPause(150);
-        qaAssert(this._vimEnabled && this._vimMenuItem.label.text === 'Vim: เปิด' &&
-            this._language === 'th' && this._langMenuItem.label.text === 'ภาษา: th',
+        qaAssert(this._vimEnabled && this._vimMenuItem.label.text === 'Vim: เปิด ปิด' && this._vimMenuItem.choice === 'เปิด' &&
+            this._language === 'th' && this._langMenuItem.label.text === 'ภาษา: en th' && this._langMenuItem.choice === 'th',
             'Re-enabling restores both language and Vim preferences');
         this.disable();
         outside.destroy();

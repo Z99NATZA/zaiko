@@ -14,10 +14,11 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {
     APP_IDS, APP_ACTIONS, TERMINAL_ACTIONS, CORE_BUS, CORE_PATH, DESKTOP_BUS, DESKTOP_PATH, DESKTOP_XML,
     panelPosition, clampPosition, compactPosition, expressionFor, isBusy, latestAssistant, parseEvent, parseSnapshot,
-    transcriptLine, formatElapsed,
+    transcriptLine, formatElapsed, choiceLabel,
 } from './protocol.js';
-import {characterBox, frameCycleDelay, imageGeometry, nextCharacterSize, normalizeCharacterSize, pickFrame}
-    from './assets/manifest.js';
+import {
+    CHARACTER_SIZES, characterBox, frameCycleDelay, imageGeometry, nextCharacterSize, normalizeCharacterSize, pickFrame,
+} from './assets/manifest.js';
 import {CharacterMotion} from './characterMotion.js';
 import {TICK_MS, Typewriter, firstGraphemes, graphemes} from './typewriter.js';
 import {answerPreview} from './answerPreview.js';
@@ -39,6 +40,46 @@ const ToggleMenuItem = GObject.registerClass(class ToggleMenuItem extends PopupM
     activate() {
         // This preference toggles in place; Log and Quit keep normal activation.
         this._toggle();
+    }
+});
+
+// Lists every choice with the active one in the normal color and the others dim.
+const ChoiceMenuItem = GObject.registerClass(class ChoiceMenuItem extends ToggleMenuItem {
+    _init(toggle) {
+        super._init('', toggle);
+        this._dim = [];
+        // St replaces foreground attributes when applying CSS; recolor after it.
+        this.label.connect_after('style-changed', () => this._dimChoices());
+    }
+
+    setChoices(title, choices, active) {
+        const {text, dim} = choiceLabel(title, choices, active);
+        this.choice = active;
+        this._dim = dim;
+        this.label.text = text;
+        this.accessible_name = `${title}: ${active}`;
+        this._dimChoices();
+    }
+
+    _dimChoices() {
+        // The theme color is only known once the label is styled on the stage.
+        if (!this.label.get_stage())
+            return;
+        const text = this.label.clutter_text;
+        // Keep St's attributes, and color the whole row explicitly: a list
+        // without a foreground color draws unmarked text black.
+        const attributes = text.get_attributes()?.copy() ?? Pango.AttrList.new();
+        const color = (red, green, blue, start, end) => {
+            const attribute = Pango.attr_foreground_new(red * 257, green * 257, blue * 257);
+            attribute.start_index = start;
+            attribute.end_index = end;
+            attributes.change(attribute);
+        };
+        const normal = this.label.get_theme_node().get_foreground_color();
+        color(normal.red, normal.green, normal.blue, 0, new TextEncoder().encode(text.text).length);
+        for (const [start, end] of this._dim)
+            color(0x7f, 0x84, 0x8e, start, end);
+        text.set_attributes(attributes);
     }
 });
 
@@ -195,8 +236,11 @@ export default class ZaikoExtension extends Extension {
         return this._translate(key, values);
     }
 
-    _vimLabel() {
-        return this._t('menu.vim', {state: this._t(this._vimEnabled ? 'state.on' : 'state.off')});
+    _syncChoiceMenus() {
+        const [on, off] = [this._t('state.on'), this._t('state.off')];
+        this._sizeMenuItem.setChoices(this._t('menu.size'), CHARACTER_SIZES.map(String), String(this._characterSize));
+        this._langMenuItem.setChoices(this._t('menu.language'), LANGUAGES, this._language);
+        this._vimMenuItem.setChoices(this._t('menu.vim'), [on, off], this._vimEnabled ? on : off);
     }
 
     _toggleLanguage() {
@@ -212,9 +256,7 @@ export default class ZaikoExtension extends Extension {
         this._language = language;
         this._translate = createTranslator(this._catalogs, language);
         this._logMenuItem.label.text = this._t('menu.log');
-        this._sizeMenuItem.label.text = this._sizeLabel();
-        this._vimMenuItem.label.text = this._vimLabel();
-        this._langMenuItem.label.text = this._t('menu.language', {language});
+        this._syncChoiceMenus();
         this._quitMenuItem.label.text = this._t('menu.quit');
         this._character.accessible_name = this._t('accessibility.character');
         this._panelClose.accessible_name = this._t('accessibility.close');
@@ -260,13 +302,9 @@ export default class ZaikoExtension extends Extension {
             return;
         }
         this._vimEnabled = enabled;
-        this._vimMenuItem.label.text = this._vimLabel();
+        this._syncChoiceMenus();
         for (const vim of this._vimInputs)
             vim.setEnabled(enabled);
-    }
-
-    _sizeLabel() {
-        return this._t('menu.size', {size: this._characterSize});
     }
 
     _loadCharacterSize() {
@@ -295,7 +333,7 @@ export default class ZaikoExtension extends Extension {
         const previous = this._characterBox;
         this._characterSize = size;
         this._characterBox = characterBox(size);
-        this._sizeMenuItem.label.text = this._sizeLabel();
+        this._syncChoiceMenus();
         this._character.set_size(this._characterBox.width, this._characterBox.height);
         this._drawFrame();
         // Grow or shrink around her bottom centre; positioning still clamps.
@@ -719,12 +757,13 @@ export default class ZaikoExtension extends Extension {
         this._logMenuItem = this._characterMenu.addAction(this._t('menu.log'), () => this._showLog());
         // Log stays first and Quit last; the rows between are sorted A-Z by
         // their English names, in every language.
-        this._sizeMenuItem = new ToggleMenuItem(this._sizeLabel(), () => this._cycleCharacterSize());
+        this._sizeMenuItem = new ChoiceMenuItem(() => this._cycleCharacterSize());
         this._characterMenu.addMenuItem(this._sizeMenuItem);
-        this._langMenuItem = new ToggleMenuItem(this._t('menu.language', {language: this._language}), () => this._toggleLanguage());
+        this._langMenuItem = new ChoiceMenuItem(() => this._toggleLanguage());
         this._characterMenu.addMenuItem(this._langMenuItem);
-        this._vimMenuItem = new ToggleMenuItem(this._vimLabel(), () => this._toggleVim());
+        this._vimMenuItem = new ChoiceMenuItem(() => this._toggleVim());
         this._characterMenu.addMenuItem(this._vimMenuItem);
+        this._syncChoiceMenus();
         this._quitMenuItem = this._characterMenu.addAction(this._t('menu.quit'), () => this._quitCore());
         Main.uiGroup.add_child(this._characterMenu.actor);
         this._characterMenu.actor.hide();

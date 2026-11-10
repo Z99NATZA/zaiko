@@ -127,3 +127,19 @@ export function formatElapsed(seconds, units = {hour: 'h', minute: 'm', second: 
     parts.push(`${elapsed % 60}${units.second}`);
     return parts.join(' ');
 }
+
+// A menu row listing every choice, such as "CharSize: 1 2 3 4 5". dim holds
+// the UTF-8 byte ranges of the inactive choices, for Pango attributes.
+export function choiceLabel(title, choices, active) {
+    const encoder = new TextEncoder();
+    let text = `${title}:`;
+    const dim = [];
+    for (const choice of choices) {
+        text += ' ';
+        const start = encoder.encode(text).length;
+        text += choice;
+        if (choice !== active)
+            dim.push([start, encoder.encode(text).length]);
+    }
+    return {text, dim};
+}

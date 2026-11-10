@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {APP_IDS, panelPosition, clampPosition, expressionFor, isBusy, parseEvent, parseSnapshot} from '../protocol.js';
+import {APP_IDS, panelPosition, clampPosition, expressionFor, isBusy, parseEvent, parseSnapshot, choiceLabel} from '../protocol.js';
 import {existsSync} from 'node:fs';
 import {CHARACTER_SIZES, EXPRESSIONS, FRAME, characterBox, frameCycleDelay, imageGeometry, nextCharacterSize,
     normalizeCharacterSize, pickFrame} from '../assets/manifest.js';
@@ -95,4 +95,13 @@ test('character size cycles 1 to 5 and falls back to 3', () => {
 test('snapshot keeps only string model names', () => {
     assert.deepEqual(parseSnapshot('{"messages":[],"state":"idle","models":["a",1,"b"]}').models, ['a', 'b']);
     assert.deepEqual(parseSnapshot('{"messages":[],"state":"idle"}').models, []);
+});
+
+test('choice labels list every choice and dim the inactive ones by UTF-8 byte range', () => {
+    assert.deepEqual(choiceLabel('CharSize', ['1', '2', '3', '4', '5'], '3'),
+        {text: 'CharSize: 1 2 3 4 5', dim: [[10, 11], [12, 13], [16, 17], [18, 19]]});
+    assert.deepEqual(choiceLabel('Vim', ['on', 'off'], 'on'), {text: 'Vim: on off', dim: [[8, 11]]});
+    // Thai letters take three bytes each in UTF-8.
+    assert.deepEqual(choiceLabel('ภาษา', ['en', 'th'], 'th'), {text: 'ภาษา: en th', dim: [[14, 16]]});
+    assert.deepEqual(choiceLabel('Vim', ['เปิด', 'ปิด'], 'เปิด'), {text: 'Vim: เปิด ปิด', dim: [[18, 27]]});
 });

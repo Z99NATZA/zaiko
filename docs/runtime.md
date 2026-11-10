@@ -150,7 +150,10 @@ while the pointer is anywhere in Log, including its input and close button, and
 hides immediately on leaving. Click closes
 Log; Escape works even while the close button is hidden.
 The character's right-click menu has five compact rows: Log, CharSize: 1-5,
-Lang: en/th, Vim: off/on, and Quit, with no separator. Log is always first and
+Lang: en/th, Vim: off/on, and Quit, with no separator. Each setting row lists
+all of its choices ("CharSize: 1 2 3 4 5", "Lang: en th", "Vim: on off"): the
+current one in the normal color and the others dim (#7f848e), and clicking the row
+moves to the next choice. Log is always first and
 Quit always last; the rows between are sorted A-Z by their English names and
 keep that order in Thai. New rows follow the same rule. It opens near the
 right-click position and flips or shifts to stay inside the monitor's work area
@@ -242,7 +245,7 @@ Input Vim
 ----------
 
 Vim is off by default. Click the Vim: off/on menu row to toggle it; the menu stays
-open and the label immediately shows the current value. The choice is saved in
+open and the row immediately shows the current value. The choice is saved in
 ~/.config/zaiko/input-vim-enabled (following XDG_CONFIG_HOME), independently of
 zhyprbola. It applies to both the compact input and the Log input.
 
