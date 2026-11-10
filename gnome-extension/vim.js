@@ -17,7 +17,7 @@ export class InputVim {
         this.column = null;
     }
 
-    // measure(position) optionally gives the on-screen x of a position.
+    // measure(position) optionally gives {x, y} in the rendered text layout.
     handle(value, position, key, measure = null) {
         const characters = Array.from(value);
         let cursor = position < 0 ? characters.length : position;
@@ -91,43 +91,39 @@ export class InputVim {
             return result();
         }
         if (key === 'j' || key === 'k') {
-            let start = cursor;
-            while (start > 0 && characters[start - 1] !== '\n')
-                start--;
-            // Combining marks share a cell with the letter before them, so the
-            // cursor never stops on one. Without a layout, count visible cells.
-            const x = measure ?? (position => {
-                let line = position;
-                while (line > 0 && characters[line - 1] !== '\n')
-                    line--;
-                return characters.slice(line, position).filter(c => !mark(c)).length;
-            });
-            // Like Vim, remember the wanted column across short lines.
-            this.column = column ?? x(cursor);
-            let target;
-            if (key === 'j') {
-                target = start;
-                while (target < characters.length && characters[target] !== '\n')
-                    target++;
-                if (target === characters.length)
-                    return result();
-                target++;
-            } else {
-                if (start === 0)
-                    return result();
-                target = start - 1;
-                while (target > 0 && characters[target - 1] !== '\n')
-                    target--;
+            // Without a layout, use logical lines and count visible cells.
+            const cells = [{x: 0, y: 0}];
+            if (!measure) {
+                for (const character of characters) {
+                    const {x, y} = cells.at(-1);
+                    cells.push(character === '\n' ? {x: 0, y: y + 1}
+                        : {x: x + (mark(character) ? 0 : 1), y});
+                }
             }
-            let end = target;
-            while (end < characters.length && characters[end] !== '\n')
-                end++;
-            cursor = target;
-            let distance = Infinity;
-            for (let position = target; position < Math.max(target + 1, end); position++) {
-                if (position > target && mark(characters[position]))
+            const coords = measure ?? (position => cells[position]);
+            const current = coords(cursor);
+            // Like Vim, remember the wanted column across short lines.
+            this.column = column ?? current.x;
+            const rows = new Map();
+            for (let position = 0; position <= normal(characters, characters.length); position++) {
+                // Skip combining marks and nonempty lines' newline characters.
+                // Empty lines (including a final blank line) remain reachable.
+                if (mark(characters[position]) || (characters[position] === '\n' &&
+                    position > 0 && characters[position - 1] !== '\n'))
                     continue;
-                const offset = Math.abs(x(position) - this.column);
+                const {x, y} = coords(position);
+                if (!rows.has(y))
+                    rows.set(y, []);
+                rows.get(y).push({position, x});
+            }
+            const heights = [...rows.keys()].sort((a, b) => a - b);
+            const row = heights.indexOf(current.y);
+            const target = rows.get(heights[row + (key === 'j' ? 1 : -1)]);
+            if (row < 0 || !target)
+                return result();
+            let distance = Infinity;
+            for (const {position, x} of target) {
+                const offset = Math.abs(x - this.column);
                 if (offset < distance) {
                     distance = offset;
                     cursor = position;

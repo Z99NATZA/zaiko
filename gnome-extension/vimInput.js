@@ -212,7 +212,10 @@ export class VimInput {
         if (!key)
             return Clutter.EVENT_PROPAGATE;
         const result = this._state.handle(this._text.text, this._text.get_cursor_position(), key,
-            position => this._text.position_to_coords(position)[1]);
+            position => {
+                const [, x, y] = this._text.position_to_coords(position);
+                return {x, y};
+            });
         if (!result.handled)
             return Clutter.EVENT_PROPAGATE;
         this._updating = true;

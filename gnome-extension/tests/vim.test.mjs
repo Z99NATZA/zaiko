@@ -196,7 +196,51 @@ test('j and k line up Thai text by visible cells, never landing on a combining m
     input.key('$'); input.key('k'); assert.equal(input.cursor, 3);
     input.key('j'); assert.equal(input.cursor, 11);
     const at = (text, cursor, key, measure) => new InputVim().handle(text, cursor, key, measure).cursor;
-    assert.equal(at('ab\nxy', 1, 'j', position => position < 3 ? position * 10 : (position - 3) * 4), 4);
+    assert.equal(at('ab\nxy', 1, 'j', position => position < 3
+        ? {x: position * 10, y: 0} : {x: (position - 3) * 4, y: 20}), 4);
+});
+
+test('j and k follow rendered rows without newlines and stop at the first/last row', () => {
+    const vim = new InputVim();
+    const text = 'abcdefghijkl';
+    const measure = position => ({x: position % 5 * 10, y: Math.floor(position / 5) * 20});
+    let cursor = 3;
+    for (const [key, expected] of [['k', 3], ['j', 8], ['j', 11], ['j', 11],
+        ['k', 8], ['k', 3], ['k', 3]]) {
+        const result = vim.handle(text, cursor, key, measure);
+        assert.equal(result.cursor, expected);
+        assert.equal(result.text, text);
+        cursor = result.cursor;
+    }
+});
+
+test('rendered motions cross wraps, hard breaks and blank lines while remembering x', () => {
+    const vim = new InputVim();
+    const text = 'abcdef\n\nxyz\n';
+    const points = [
+        [0, 0], [10, 0], [20, 0], [0, 20], [10, 20], [20, 20], [30, 20],
+        [0, 40], [0, 60], [10, 60], [20, 60], [30, 60], [0, 80],
+    ];
+    const measure = position => ({x: points[position][0], y: points[position][1]});
+    let cursor = 2;
+    for (const [key, expected] of [['j', 5], ['j', 7], ['j', 10], ['j', 12],
+        ['j', 12], ['k', 10], ['k', 7], ['k', 5], ['k', 2]]) {
+        cursor = vim.handle(text, cursor, key, measure).cursor;
+        assert.equal(cursor, expected);
+    }
+    // A horizontal move replaces the remembered column for the next motion.
+    cursor = vim.handle(text, cursor, 'h', measure).cursor;
+    assert.equal(vim.handle(text, cursor, 'j', measure).cursor, 4);
+});
+
+test('wrapped Thai rows skip combining marks and keep Unicode code point positions', () => {
+    const vim = new InputVim();
+    const text = '🙂กี่ขคุ่ง';
+    const points = [[0, 0], [12, 0], [12, 0], [12, 0], [0, 20],
+        [12, 20], [12, 20], [12, 20], [24, 20]];
+    const measure = position => ({x: points[position][0], y: points[position][1]});
+    assert.equal(vim.handle(text, 1, 'j', measure).cursor, 5);
+    assert.equal(vim.handle(text, 5, 'k', measure).cursor, 1);
 });
 
 test('x deletes the character under the cursor and never joins lines', () => {

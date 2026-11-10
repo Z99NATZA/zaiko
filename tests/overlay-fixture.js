@@ -558,7 +558,7 @@ export default class OverlayQA extends ZaikoExtension {
                 const vim = this._vimInputs.find(candidate => candidate.entry === entry);
                 entry.set_text('');
                 entry.grab_key_focus();
-                vim.leave();
+                await this._key(Clutter.KEY_Escape);
                 entry.set_text('abc');
                 {
                     const [entryX, entryY] = entry.get_transformed_position();
@@ -575,7 +575,7 @@ export default class OverlayQA extends ZaikoExtension {
                     entry.get_text() === 'abc',
                 `Clicking past the text keeps normal mode with the caret on the last character: ${JSON.stringify({mode: vim._state.mode, cursor: entry.clutter_text.get_cursor_position()})}`);
                 entry.set_text('');
-                vim.leave();
+                await this._key(Clutter.KEY_Escape);
                 await physical(23); // US I / Thai ร
                 qaAssert(vim._state.mode === 'insert' && entry.get_text() === '',
                     'Physical I enters insert mode under Thai without inserting a character');
@@ -636,6 +636,54 @@ export default class OverlayQA extends ZaikoExtension {
                 await physical(32);
                 qaAssert(entry.get_text() === 'hello' && vim._state.mode === 'normal' && entry.mapped,
                     'Physical dd under Thai deletes only the current row in each composer');
+                for (const draft of ['alpha beta gamma delta '.repeat(4),
+                    `${'ที่นี่มีข้อความภาษาไทย '.repeat(4)}\n\nท้าย\n`]) {
+                    await this._key(Clutter.KEY_Escape);
+                    entry.set_text(draft);
+                    await qaPause(150);
+                    const text = entry.clutter_text;
+                    const characters = Array.from(draft);
+                    const rows = new Map();
+                    const last = characters.length - (draft.endsWith('\n') ? 0 : 1);
+                    for (let position = 0; position <= last; position++) {
+                        if (/\p{M}/u.test(characters[position] ?? '') ||
+                            (characters[position] === '\n' && position > 0 && characters[position - 1] !== '\n'))
+                            continue;
+                        const [ok, x, y] = text.position_to_coords(position);
+                        qaAssert(ok, 'Rendered Vim test positions have valid coordinates');
+                        if (!rows.has(y))
+                            rows.set(y, []);
+                        rows.get(y).push({position, x});
+                    }
+                    const heights = [...rows.keys()].sort((a, b) => a - b);
+                    qaAssert(heights.length >= 3, 'Vim test draft wraps into multiple displayed rows');
+                    const first = rows.get(heights[0]);
+                    const origin = first[Math.floor(first.length * 0.6)];
+                    text.set_selection(origin.position, origin.position);
+                    const checkRow = row => {
+                        const cursor = text.get_cursor_position();
+                        const [, x, y] = text.position_to_coords(cursor);
+                        qaAssert(y === heights[row],
+                            `Physical J/K under Thai visits each displayed row in ${entry === this._overlayEntry ? 'compact' : 'Log'} input: row ${row}, y ${y}, expected ${heights[row]}`);
+                        qaAssert(!/\p{M}/u.test(characters[cursor] ?? '') &&
+                            Math.abs(x - origin.x) <= Math.min(...rows.get(y).map(point => Math.abs(point.x - origin.x))) + 0.01,
+                        'Rendered motions keep the wanted x and never land on Thai combining marks');
+                    };
+                    for (let row = 1; row < heights.length; row++) {
+                        await physical(36); // J
+                        checkRow(row);
+                    }
+                    await physical(36);
+                    checkRow(heights.length - 1);
+                    for (let row = heights.length - 2; row >= 0; row--) {
+                        await physical(37); // K
+                        checkRow(row);
+                    }
+                    await physical(37);
+                    checkRow(0);
+                    qaAssert(entry.get_text() === draft && vim._state.mode === 'normal',
+                        'Wrapped row motions preserve the draft and normal mode in both inputs');
+                }
                 this._toggleVim();
                 entry.set_text('');
                 await physical(23);
@@ -670,7 +718,7 @@ export default class OverlayQA extends ZaikoExtension {
             for (const [key, mode] of [[null, 'normal'], ['i', 'insert'], ['R', 'replace']]) {
                 entry.set_text('focus draft');
                 entry.grab_key_focus();
-                vim.leave();
+                await this._key(Clutter.KEY_Escape);
                 entry.clutter_text.set_selection(2, 2);
                 if (key)
                     await this._key(key.codePointAt(0));
@@ -692,10 +740,11 @@ export default class OverlayQA extends ZaikoExtension {
                 qaAssert(vim._state.mode === mode && entry.clutter_text.has_key_focus(),
                     'Returning to Log continues in the same Vim mode');
             }
-            vim._state.reset('insert');
+            await this._key(Clutter.KEY_Escape);
+            await this._key(Clutter.KEY_i);
             this._hidePanel();
             this._showLog();
-            qaAssert(vim._state.mode === 'normal', 'Closing Log returns its input to normal mode');
+            qaAssert(vim._state.mode === 'insert', 'Closing and reopening Log preserves its input mode');
         } finally {
             outside.destroy();
             label.destroy();
@@ -1005,6 +1054,7 @@ export default class OverlayQA extends ZaikoExtension {
             this._hidePanel();
             this._showInput();
             const compact = this._overlayEntry;
+            await this._key(Clutter.KEY_Escape);
             compact.set_text('draft');
             compact.clutter_text.set_cursor_position(0);
             await keys('A!');

@@ -251,8 +251,9 @@ while Vim is on, the mode on the right: --NORMAL-- in purple (#c678dd, matching
 [Aiko]), --INSERT-- in green (#98c379, matching Me) and --REPLACE-- in red.
 
 Following zhyprbola Tasks, normal mode uses a steady block cursor. h/l or the
-left/right arrows move by character, j/k move down/up a line (keeping the
-column), 0/$ move to the start/end, and b/w move by
+left/right arrows move by character, j/k move down/up a displayed row (keeping the
+horizontal position), including rows wrapped automatically to fit either input.
+0/$ move to the start/end, and b/w move by
 word. i inserts before the cursor, a after it, and A at the end. ciw changes the
 current word, C changes through the end, x deletes the character under the cursor, r replaces one character, and R replaces
 continuously; Backspace restores overwritten characters in R mode. dd deletes
