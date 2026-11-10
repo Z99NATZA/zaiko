@@ -45,6 +45,7 @@ export class VimInput {
         }
         connect(this._text, 'key-focus-in', () => {
             this._restoreMode();
+            this._state.track(this._text.text, this._text.get_cursor_position());
             this._normalCursor();
             this._sync();
         });
@@ -205,8 +206,12 @@ export class VimInput {
             return Clutter.EVENT_PROPAGATE;
         this._restoreMode();
         const symbol = event.get_key_symbol();
-        if (event.get_state() & (Clutter.ModifierType.CONTROL_MASK |
-            Clutter.ModifierType.MOD1_MASK | Clutter.ModifierType.SUPER_MASK)) {
+        const modifiers = event.get_state() & (Clutter.ModifierType.CONTROL_MASK |
+            Clutter.ModifierType.MOD1_MASK | Clutter.ModifierType.SUPER_MASK);
+        // Ctrl+R redoes in normal mode; match the physical R under any layout.
+        const redo = modifiers === Clutter.ModifierType.CONTROL_MASK && this._state.mode === 'normal' &&
+            (event.get_event_code() === 19 || [Clutter.KEY_r, Clutter.KEY_R].includes(symbol));
+        if (modifiers && !redo) {
             if ((event.get_state() & Clutter.ModifierType.CONTROL_MASK) &&
                 [Clutter.KEY_v, Clutter.KEY_V, Clutter.KEY_x, Clutter.KEY_X].includes(symbol)) {
                 this._state.reset('insert');
@@ -238,7 +243,7 @@ export class VimInput {
         // keep the active layout: they are text, rather than Vim commands.
         const physical = ['normal', 'visual'].includes(this._state.mode) && this._state.pending !== 'r'
             ? NORMAL_KEYS.get(event.get_event_code()) : null;
-        const key = special.get(symbol) ?? (physical
+        const key = redo ? 'C-r' : special.get(symbol) ?? (physical
             ? physical[event.get_state() & Clutter.ModifierType.SHIFT_MASK ? 1 : 0] : character);
         if (!key)
             return Clutter.EVENT_PROPAGATE;

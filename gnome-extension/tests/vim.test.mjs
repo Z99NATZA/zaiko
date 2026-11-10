@@ -398,3 +398,74 @@ test('V selects whole lines, follows motions and applies d, c, u, U and o', () =
     assert.equal(state.text, 'abcde');
     assert.equal(state.cursor, 4);
 });
+
+test('u and Ctrl+R undo and redo commands, restoring the cursor', () => {
+    const input = editor('one\ntwo', 5);
+    input.keys('dd');
+    assert.equal(input.text, 'one');
+    input.key('u');
+    assert.equal(input.text, 'one\ntwo');
+    assert.equal(input.cursor, 5);
+    input.key('C-r');
+    assert.equal(input.text, 'one');
+    input.key('C-r');
+    assert.equal(input.text, 'one');
+    input.key('u');
+    input.key('u');
+    assert.equal(input.text, 'one\ntwo');
+    assert.equal(input.vim.mode, 'normal');
+    // Pending commands and visual mode keep u as a case command.
+    for (const [keys, changed] of [['guu', 'abc'], ['Vu', 'abc'], ['ru', 'uBC']]) {
+        const cased = editor('ABC', 0);
+        cased.keys(keys);
+        assert.equal(cased.text, changed, keys);
+        cased.key('u');
+        assert.equal(cased.text, 'ABC', keys);
+    }
+});
+
+test('an insert or replace session, with the command that began it, is one undo step', () => {
+    const input = editor('ab', 0);
+    input.keys('i');
+    input.key('Escape');
+    input.key('u');
+    assert.equal(input.text, 'ab', 'Entering and leaving insert mode without typing adds no step');
+    input.keys('Acde');
+    input.key('Escape');
+    input.keys('0x');
+    assert.equal(input.text, 'bcde');
+    input.key('u');
+    assert.equal(input.text, 'abcde');
+    input.key('u');
+    assert.equal(input.text, 'ab');
+    input.key('C-r');
+    input.key('C-r');
+    assert.equal(input.text, 'bcde');
+    for (const [start, keys, typed] of [['one', 'otwo', 'one\ntwo'], ['one', 'ciwnew', 'new'],
+        ['abcd', 'Rxy', 'xycd']]) {
+        const session = editor(start, 0);
+        session.keys(keys);
+        session.key('Escape');
+        assert.equal(session.text, typed, keys);
+        session.key('u');
+        assert.equal(session.text, start, keys);
+        assert.equal(session.cursor, 0, keys);
+    }
+});
+
+test('undo keeps the 10 latest steps and a new change clears redo', () => {
+    const input = editor('abcdefghijklmnop', 0);
+    for (let step = 0; step < 12; step++)
+        input.key('x');
+    assert.equal(input.text, 'mnop');
+    for (let step = 0; step < 12; step++)
+        input.key('u');
+    assert.equal(input.text, 'cdefghijklmnop');
+    input.key('x');
+    input.key('C-r');
+    assert.equal(input.text, 'defghijklmnop');
+    // A change made outside Vim (such as sending the draft) is its own step.
+    const vim = new InputVim();
+    vim.handle('draft', 0, 'l');
+    assert.deepEqual(vim.handle('', 0, 'u'), {handled: true, text: 'draft', cursor: 1});
+});

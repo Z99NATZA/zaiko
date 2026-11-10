@@ -83,9 +83,16 @@ function changeCase(characters, from, to, upper) {
     characters.splice(from, to - from, ...Array.from(upper ? text.toUpperCase() : text.toLowerCase()));
 }
 
+const UNDO_LIMIT = 10;
+
 export class InputVim {
     constructor() {
         this.reset();
+        // Undo steps are {text, cursor} snapshots; saved is the text as of the
+        // last step, so edits made outside Vim commands are noticed later.
+        this.undos = [];
+        this.redos = [];
+        this.saved = null;
     }
 
     // Visual mode needs its anchor, so it never survives a reset.
@@ -98,9 +105,57 @@ export class InputVim {
         this.head = null;
     }
 
+    // Records any change since the last step (typing in insert mode, Ctrl+J,
+    // sending) as one undo step, so a whole insert undoes at once like Vim.
+    track(value, position) {
+        if (this.saved && value !== this.saved.text) {
+            this.undos.push(this.saved);
+            if (this.undos.length > UNDO_LIMIT)
+                this.undos.shift();
+            this.redos = [];
+        } else if (this.saved) {
+            this.saved.cursor = position;
+            return;
+        }
+        this.saved = {text: value, cursor: position};
+    }
+
+    // u and Ctrl+R move one step between the undo and redo stacks.
+    _step(value, position, from, to) {
+        const step = from.pop();
+        if (step) {
+            to.push({text: value, cursor: position});
+            if (to.length > UNDO_LIMIT)
+                to.shift();
+            this.saved = {...step};
+            this.reset();
+        }
+        const {text, cursor} = step ?? {text: value, cursor: position};
+        const characters = Array.from(text);
+        return {handled: true, text, cursor: normal(characters, cursor < 0 ? characters.length : cursor)};
+    }
+
     // measure(position) optionally gives {x, y} in the rendered text layout.
     // In visual line mode, the result also has selection: [bound, cursor].
+    // key is a character or a key name such as Escape or C-r (Ctrl+R).
     handle(value, position, key, measure = null) {
+        const mode = this.mode === 'visual' && this.anchor === null ? 'normal' : this.mode;
+        // Insert and replace mode keys are typing; their changes become a step
+        // when the mode ends.
+        if (!['insert', 'replace'].includes(mode) || key === 'Escape')
+            this.track(value, position);
+        if (mode === 'normal' && !this.pending && (key === 'u' || key === 'C-r'))
+            return key === 'u' ? this._step(value, position, this.undos, this.redos)
+                : this._step(value, position, this.redos, this.undos);
+        const result = this._command(value, position, key, measure);
+        // A command that enters insert or replace mode joins the typing after
+        // it in a single step, which track() records on Escape.
+        if (result.handled && ['normal', 'visual'].includes(this.mode))
+            this.track(result.text, result.cursor);
+        return result;
+    }
+
+    _command(value, position, key, measure) {
         const characters = Array.from(value);
         let cursor = position < 0 ? characters.length : position;
         if (this.mode === 'visual' && this.anchor === null)

@@ -700,6 +700,26 @@ export default class OverlayQA extends ZaikoExtension {
                     qaAssert(lastY > firstY && cursorY === lastY,
                         `G goes to the last displayed row of a wrapped line: ${JSON.stringify({firstY, lastY, cursorY})}`);
                 }
+                await this._key(Clutter.KEY_Escape);
+                entry.set_text('one two');
+                entry.clutter_text.set_selection(0, 0);
+                await physical(32); // d
+                await physical(32);
+                await physical(22); // u
+                qaAssert(entry.get_text() === 'one two' && vim._state.mode === 'normal',
+                    `Physical u under Thai undoes dd: ${JSON.stringify(entry.get_text())}`);
+                this._keyboard.notify_key(GLib.get_monotonic_time(), 29, Clutter.KeyState.PRESSED);
+                await physical(19); // Ctrl+R
+                this._keyboard.notify_key(GLib.get_monotonic_time(), 29, Clutter.KeyState.RELEASED);
+                qaAssert(entry.get_text() === '' && vim._state.mode === 'normal',
+                    `Physical Ctrl+R under Thai redoes dd: ${JSON.stringify(entry.get_text())}`);
+                await physical(23); // i
+                await physical(23); // Thai ร in insert mode
+                await this._key(Clutter.KEY_Escape);
+                await physical(22);
+                qaAssert(entry.get_text() === '', `u undoes a whole insert under Thai: ${JSON.stringify(entry.get_text())}`);
+                await physical(22);
+                qaAssert(entry.get_text() === 'one two', 'u keeps undoing earlier steps');
                 for (const draft of ['alpha beta gamma delta '.repeat(4),
                     `${'ที่นี่มีข้อความภาษาไทย '.repeat(4)}\n\nท้าย\n`]) {
                     await this._key(Clutter.KEY_Escape);

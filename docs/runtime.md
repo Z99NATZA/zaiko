@@ -269,6 +269,11 @@ visible on the #3e4451 composer); motions such as j/k, gg and G extend it. In it
 d or x deletes the rows, c replaces them with an empty line in insert mode,
 u/U change their case, o jumps to the other end, and Escape or V leaves.
 Clicking or editing the text elsewhere also leaves visual mode.
+u undoes and Ctrl+R redoes, keeping the 10 latest steps for each input. Each
+command is one step, and an insert or replace session together with the command
+that began it (such as o or ciw) is one step, like Vim. Changes made outside
+Vim commands, including sending the draft, are a step too, so u after sending
+brings the sent text back. A new change clears redo.
 Conversation messages remain read-only.
 o opens a blank line below the current logical line; O opens one above it.
 Both enter insert mode and preserve the surrounding lines. Ctrl+J inserts a
