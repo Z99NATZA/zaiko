@@ -10,7 +10,14 @@ use crate::{
 
 const MAX_RESPONSE_BYTES: usize = 1_048_576;
 const MAX_TOOL_CALLS: usize = 16;
+// Consecutive failed tool calls that end a request early, so a model that
+// keeps trying workarounds answers instead of spending every call.
+const MAX_FAILURES: usize = 4;
 const SYSTEM: &str = include_str!("../prompts/aiko.md");
+// Sent with tools disabled once a request has used all its tool calls or keeps
+// failing, so the model answers normally instead of the user seeing an error.
+const LIMIT_NOTE: &str = "No more tools can run for this request. Without calling tools, reply briefly in the language of the user's latest message: say what was done, and that the rest is not supported or cannot be done this way. Do not describe it as an error or mention tool call limits.";
+const LIMIT_REPLY: &str = "ส่วนที่เหลือไอโกะยังทำให้ไม่ได้ค่ะ ตอนนี้ยังไม่รองรับนะคะ";
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
@@ -174,13 +181,13 @@ impl Client {
             .iter()
             .map(|m| json!({"role":m.role,"content":m.content}))
             .collect();
-        let mut executed = Executed::default();
-        for _ in 0..=MAX_TOOL_CALLS {
+        let request = |input: &[Value], tool_choice: &str| {
             let mut request = json!({
                 "model": self.config.model,
                 "instructions": SYSTEM,
                 "input": input,
                 "tools": tool_definitions(true),
+                "tool_choice": tool_choice,
                 "parallel_tool_calls": false,
                 "store": false,
                 "include": ["reasoning.encrypted_content"],
@@ -189,35 +196,21 @@ impl Client {
             if self.config.model.starts_with("gpt-6") || self.config.model.starts_with("gpt-5") {
                 request["reasoning"] = json!({"effort":"low"});
             }
-            let response = self.post(request).await?;
-            if matches!(
-                response["status"].as_str(),
-                Some("failed" | "cancelled" | "incomplete")
-            ) {
-                return Err(
-                    "Provider did not complete its response. Try a shorter request.".to_owned(),
-                );
-            }
-            let output = response["output"]
-                .as_array()
-                .ok_or("Provider response has no output.")?;
+            request
+        };
+        let mut executed = Executed::default();
+        for _ in 0..=MAX_TOOL_CALLS {
+            let response = self.post(request(&input, "auto")).await?;
+            let output = response_output(&response)?;
             let calls: Vec<_> = output
                 .iter()
                 .filter(|item| item["type"] == "function_call")
                 .collect();
             if calls.is_empty() {
-                let text = output
-                    .iter()
-                    .filter(|item| item["type"] == "message")
-                    .flat_map(|item| item["content"].as_array().into_iter().flatten())
-                    .filter(|part| part["type"] == "output_text")
-                    .filter_map(|part| part["text"].as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                return self.reply(text);
+                return self.reply(output_text(output));
             }
             if calls.len() + executed.count > MAX_TOOL_CALLS {
-                return Err("Tool call limit reached for this request.".to_owned());
+                break;
             }
             // Stateless Responses must carry all output items, including reasoning,
             // into the follow-up alongside each function_call_output.
@@ -231,8 +224,18 @@ impl Client {
                     json!({"type":"function_call_output","call_id":id,"output":result.to_string()}),
                 );
             }
+            if executed.stuck() {
+                break;
+            }
         }
-        Err("Tool call limit reached for this request.".to_owned())
+        input.push(json!({"role":"system","content":LIMIT_NOTE}));
+        let response = self.post(request(&input, "none")).await?;
+        let output = response_output(&response)?;
+        if output.iter().any(|item| item["type"] == "function_call") {
+            return Ok(LIMIT_REPLY.to_owned());
+        }
+        self.reply(output_text(output))
+            .or_else(|_| Ok(LIMIT_REPLY.to_owned()))
     }
 
     async fn completions(
@@ -246,33 +249,20 @@ impl Client {
                 .iter()
                 .map(|m| json!({"role":m.role,"content":m.content})),
         );
+        let request = |messages: &[Value], tool_choice: &str| {
+            json!({
+                "model":self.config.model,
+                "messages":messages,
+                "tools":tool_definitions(false),
+                "tool_choice":tool_choice,
+                "max_tokens":2048,
+                "stream":false
+            })
+        };
         let mut executed = Executed::default();
         for _ in 0..=MAX_TOOL_CALLS {
-            let response = self
-                .post(json!({
-                    "model":self.config.model,
-                    "messages":messages,
-                    "tools":tool_definitions(false),
-                    "max_tokens":2048,
-                    "stream":false
-                }))
-                .await?;
-            let choice = response["choices"]
-                .as_array()
-                .and_then(|v| v.first())
-                .ok_or("Provider response has no choice.")?;
-            if matches!(
-                choice["finish_reason"].as_str(),
-                Some("length" | "content_filter")
-            ) {
-                return Err(
-                    "Provider did not complete its response. Try a shorter request.".to_owned(),
-                );
-            }
-            let message = choice
-                .get("message")
-                .filter(|v| v.is_object())
-                .ok_or("Provider response has no message.")?;
+            let response = self.post(request(&messages, "auto")).await?;
+            let message = choice_message(&response)?;
             let calls = message["tool_calls"]
                 .as_array()
                 .filter(|calls| !calls.is_empty());
@@ -280,7 +270,7 @@ impl Client {
                 return self.reply(message["content"].as_str().unwrap_or_default().to_owned());
             };
             if calls.len() + executed.count > MAX_TOOL_CALLS {
-                return Err("Tool call limit reached for this request.".to_owned());
+                break;
             }
             // Preserve reasoning_content when a thinking model returns it.
             messages.push(message.clone());
@@ -298,8 +288,21 @@ impl Client {
                 messages
                     .push(json!({"role":"tool","tool_call_id":id,"content":result.to_string()}));
             }
+            if executed.stuck() {
+                break;
+            }
         }
-        Err("Tool call limit reached for this request.".to_owned())
+        messages.push(json!({"role":"system","content":LIMIT_NOTE}));
+        let response = self.post(request(&messages, "none")).await?;
+        let message = choice_message(&response)?;
+        if message["tool_calls"]
+            .as_array()
+            .is_some_and(|calls| !calls.is_empty())
+        {
+            return Ok(LIMIT_REPLY.to_owned());
+        }
+        self.reply(message["content"].as_str().unwrap_or_default().to_owned())
+            .or_else(|_| Ok(LIMIT_REPLY.to_owned()))
     }
 
     fn reply(&self, text: String) -> Result<String, String> {
@@ -312,6 +315,46 @@ impl Client {
         }
         Ok(text.replace(&self.config.api_key, "[redacted]"))
     }
+}
+
+fn response_output(response: &Value) -> Result<&Vec<Value>, String> {
+    if matches!(
+        response["status"].as_str(),
+        Some("failed" | "cancelled" | "incomplete")
+    ) {
+        return Err("Provider did not complete its response. Try a shorter request.".to_owned());
+    }
+    response["output"]
+        .as_array()
+        .ok_or_else(|| "Provider response has no output.".to_owned())
+}
+
+fn output_text(output: &[Value]) -> String {
+    output
+        .iter()
+        .filter(|item| item["type"] == "message")
+        .flat_map(|item| item["content"].as_array().into_iter().flatten())
+        .filter(|part| part["type"] == "output_text")
+        .filter_map(|part| part["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn choice_message(response: &Value) -> Result<&Value, String> {
+    let choice = response["choices"]
+        .as_array()
+        .and_then(|v| v.first())
+        .ok_or("Provider response has no choice.")?;
+    if matches!(
+        choice["finish_reason"].as_str(),
+        Some("length" | "content_filter")
+    ) {
+        return Err("Provider did not complete its response. Try a shorter request.".to_owned());
+    }
+    choice
+        .get("message")
+        .filter(|v| v.is_object())
+        .ok_or_else(|| "Provider response has no message.".to_owned())
 }
 
 fn field<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -377,10 +420,38 @@ struct Executed {
     ids: HashMap<String, (String, String, Value)>,
     apps: HashMap<(App, LaunchMode), Value>,
     count: usize,
+    failures: usize,
+}
+
+// A tool call failed when it was rejected, its command exited nonzero, or it timed out.
+fn failed(result: &Value) -> bool {
+    result["success"] == false
+        || result["timed_out"] == true
+        || result["exit_code"].as_i64().is_some_and(|code| code != 0)
 }
 
 impl Executed {
+    fn stuck(&self) -> bool {
+        self.failures >= MAX_FAILURES
+    }
+
     async fn call(
+        &mut self,
+        id: &str,
+        name: &str,
+        arguments: &str,
+        tools: &mut impl Tools,
+    ) -> Result<Value, String> {
+        let result = self.run(id, name, arguments, tools).await?;
+        self.failures = if failed(&result) {
+            self.failures + 1
+        } else {
+            0
+        };
+        Ok(result)
+    }
+
+    async fn run(
         &mut self,
         id: &str,
         name: &str,
@@ -446,9 +517,11 @@ mod tests {
             Ok(json!({"success":true,"message":"Launch requested."}))
         }
         async fn run_command(&mut self, request: CommandRequest) -> Result<Value, String> {
+            // The command "false" fails like the real one.
+            let exit_code = i32::from(request.command == "false");
             self.commands.push(request.command);
             Ok(
-                json!({"success":true,"exit_code":0,"stdout":"mock command result","stderr":"","timed_out":false,"truncated":false}),
+                json!({"success":true,"exit_code":exit_code,"stdout":"mock command result","stderr":"","timed_out":false,"truncated":false}),
             )
         }
     }
@@ -689,6 +762,104 @@ mod tests {
         let result: Value =
             serde_json::from_str(requests[1]["input"][1]["output"].as_str().unwrap()).unwrap();
         assert_eq!(result["stdout"], "mock command result");
+    }
+
+    fn test_client(provider: Provider, url: String) -> Client {
+        Client::with_endpoint(
+            Config {
+                provider,
+                model: "test-model".into(),
+                models: Vec::new(),
+                api_key: "dummy-test-key".into(),
+                keys: Vec::new(),
+            },
+            url,
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn exhausted_tool_calls_end_with_a_normal_reply_without_tools() {
+        let command = r#"{"command":"pwd","workdir":"/tmp","timeout_ms":null}"#;
+        // 16 calls run; the 17th is over the limit, so a final request disables tools.
+        let mut responses: Vec<Value> = (0..=MAX_TOOL_CALLS)
+            .map(|index| json!({"status":"completed","output":[{"type":"function_call","call_id":format!("call-{index}"),"name":"run_command","arguments":command}]}))
+            .collect();
+        responses.push(json!({"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ยังไม่รองรับค่ะ"}]}]}));
+        let (url, server) = mock_server(responses).await;
+        let mut tools = FakeTools::default();
+        let reply = test_client(Provider::OpenAi, url)
+            .chat(&[], &mut tools)
+            .await;
+        assert_eq!(reply.unwrap(), "ยังไม่รองรับค่ะ");
+        assert_eq!(tools.commands.len(), MAX_TOOL_CALLS);
+        let requests = server.await.unwrap();
+        assert_eq!(requests[0]["tool_choice"], "auto");
+        let last = requests.last().unwrap();
+        assert_eq!(last["tool_choice"], "none");
+        let note = last["input"].as_array().unwrap().last().unwrap();
+        assert_eq!(note["role"], "system");
+        assert_eq!(note["content"], LIMIT_NOTE);
+
+        let call = |index: usize| json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":format!("call-{index}"),"type":"function","function":{"name":"run_command","arguments":command}}]}}]});
+        let mut responses: Vec<Value> = (0..=MAX_TOOL_CALLS).map(call).collect();
+        responses.push(
+            json!({"choices":[{"message":{"role":"assistant","content":"It is not supported."}}]}),
+        );
+        let (url, server) = mock_server(responses).await;
+        let mut tools = FakeTools::default();
+        let reply = test_client(Provider::DeepSeek, url)
+            .chat(&[], &mut tools)
+            .await;
+        assert_eq!(reply.unwrap(), "It is not supported.");
+        assert_eq!(tools.commands.len(), MAX_TOOL_CALLS);
+        let requests = server.await.unwrap();
+        assert_eq!(requests[0]["tool_choice"], "auto");
+        let last = requests.last().unwrap();
+        assert_eq!(last["tool_choice"], "none");
+        assert_eq!(
+            last["messages"].as_array().unwrap().last().unwrap()["content"],
+            LIMIT_NOTE
+        );
+
+        // A model that still asks for a tool gets a fixed reply instead of an error.
+        let responses: Vec<Value> = (0..=MAX_TOOL_CALLS + 1).map(call).collect();
+        let (url, server) = mock_server(responses).await;
+        let mut tools = FakeTools::default();
+        let reply = test_client(Provider::DeepSeek, url)
+            .chat(&[], &mut tools)
+            .await;
+        assert_eq!(reply.unwrap(), LIMIT_REPLY);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn consecutive_failures_end_the_request_with_a_normal_reply() {
+        let call = |(index, command): (usize, &&str)| json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":format!("call-{index}"),"type":"function","function":{"name":"run_command","arguments":format!(r#"{{"command":"{command}","workdir":null,"timeout_ms":null}}"#)}}]}}]});
+        // A success resets the count; the next four failures stop the request.
+        let commands = [
+            "false", "false", "false", "pwd", "false", "false", "false", "false",
+        ];
+        let mut responses: Vec<Value> = commands.iter().enumerate().map(call).collect();
+        responses
+            .push(json!({"choices":[{"message":{"role":"assistant","content":"ยังไม่รองรับค่ะ"}}]}));
+        let (url, server) = mock_server(responses).await;
+        let mut tools = FakeTools::default();
+        let reply = test_client(Provider::DeepSeek, url)
+            .chat(&[], &mut tools)
+            .await;
+        assert_eq!(reply.unwrap(), "ยังไม่รองรับค่ะ");
+        assert_eq!(tools.commands, commands);
+        let requests = server.await.unwrap();
+        assert_eq!(requests.len(), commands.len() + 1);
+        assert_eq!(requests.last().unwrap()["tool_choice"], "none");
+        assert!(failed(&json!({"success":false,"message":"bad"})));
+        assert!(failed(
+            &json!({"success":true,"exit_code":null,"timed_out":true})
+        ));
+        assert!(!failed(
+            &json!({"success":true,"message":"Launch requested."})
+        ));
     }
 
     #[tokio::test]

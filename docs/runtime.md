@@ -339,9 +339,16 @@ target the primary instance, even when standalone windows are open.
 
 To open zter with a program running ("เปิด zter พร้อมรัน codex"), Aiko uses
 run_command to start zter --new-tab --run '<command>' (or zter -s --run for
-separate windows), once per requested terminal and in the requested folder. zter
-types the command into a new tab's shell, so any program available in zter works
-without a per-program rule. This needs a zter build with --run.
+separate windows), once per requested terminal. zter types the command into a
+new tab's shell, so any program available in zter works without a per-program
+rule. This needs a zter build with --run. A new tab in a running zter starts in
+the active tab's folder rather than the launching workdir, so a requested folder
+goes into the command: zter --new-tab --run "cd '/path' && codex".
+
+zter cannot type into or change the folder of a tab that is already open; the
+prompt states this so Aiko does not look for a workaround. In general, when the
+tools cannot do something, she says briefly that it is not supported, without
+suggesting alternatives unless asked.
 
 VS Code keeps opening a new window using new-empty-window (--new-window).
 A launcher without a requested action reports an error; Zaiko does not substitute
@@ -373,7 +380,12 @@ keeps an output pipe open keeps the command active until EOF or timeout.
 
 The default command timeout is 30 seconds; a call can request 1–120000 ms.
 Each stream retains at most 8192 bytes while excess output is drained. Timeout,
-Cancel and Quit stop the active command's process group. Changes already
+Cancel and Quit stop the active command's process group. A request may run at
+most 16 tool calls, and 4 failed calls in a row (rejected, nonzero exit, or
+timed out) end it early. In either case the core sends one last request with
+tools disabled (tool_choice none), so Aiko replies normally with what she did
+and what is not supported, instead of an error; if that reply still asks for
+a tool, a fixed Thai "not supported" reply is used. Changes already
 made to files or external systems are not rolled back. Commands use normal user
 permissions without an added filesystem sandbox or command allowlist.
 OPENAI_API_KEY and DEEPSEEK_API_KEY are removed from the child environment;
@@ -386,7 +398,8 @@ Configuration and providers
 The character is Aiko; Zaiko is the application name. Her prompt is compiled from
 crates/zaiko-core/prompts/aiko.md, adapted from wfchat's authoritative character
 profile. Both providers use the same prompt: calm, warm, lightly playful, concise,
-and feminine Thai speech. Her fixed profile is birthday 2000-05-27, height 175 cm,
+and feminine Thai speech, with short replies in plain words that put the answer
+first. Her fixed profile is birthday 2000-05-27, height 175 cm,
 and weight 58 kg. Dedicated desktop tools cover terminal and vscode; general
 local work uses run_command within the user's requested scope.
 Prompt edits take effect after rebuilding, reinstalling, and restarting the core.
