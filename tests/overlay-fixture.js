@@ -185,13 +185,40 @@ export default class OverlayQA extends ZaikoExtension {
         const selection = text.get_selection();
         qaAssert(selection && selection.length < label.text.length, 'Dragging selects part of a read-only transcript message');
         qaAssert(text.has_key_focus() && !text.editable, 'Transcript selection receives keyboard focus without enabling edits');
-        qaAssert(qaColor(text.get_selection_color(), '#3e4451') &&
+        qaAssert(qaColor(text.get_selection_color(), '#4a6988') &&
             qaColor(text.get_selected_text_color(), '#dcdfe4'), 'Transcript selection uses the existing visible selection palette');
         clipboard.set_text(St.ClipboardType.CLIPBOARD, 'before copy');
         this._keyboard.notify_keyval(GLib.get_monotonic_time(), Clutter.KEY_Control_L, Clutter.KeyState.PRESSED);
         await this._key(Clutter.KEY_c);
         this._keyboard.notify_keyval(GLib.get_monotonic_time(), Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
         qaAssert(await readClipboard() === selection, 'Ctrl+C copies the selected transcript text');
+        qaAssert(text.get_selection() === selection && text.has_key_focus(), 'Ctrl+C keeps the transcript selection');
+
+        // Typing or pasting during a selection clears it and continues in the input.
+        const input = this._logEntry;
+        const savedDraft = input.get_text();
+        const vimWasEnabled = this._vimEnabled;
+        for (const vim of this._vimInputs)
+            vim.setEnabled(false);
+        input.set_text('');
+        text.grab_key_focus();
+        text.set_selection(2, 10);
+        await this._key(Clutter.KEY_x);
+        qaAssert(!text.get_selection() && input.clutter_text.has_key_focus() && input.get_text() === 'x',
+            `Typing during a selection clears it and types into the focused input: ${JSON.stringify({selection: text.get_selection(), input: input.get_text()})}`);
+        text.grab_key_focus();
+        text.set_selection(2, 10);
+        clipboard.set_text(St.ClipboardType.CLIPBOARD, 'pasted');
+        this._keyboard.notify_keyval(GLib.get_monotonic_time(), Clutter.KEY_Control_L, Clutter.KeyState.PRESSED);
+        await this._key(Clutter.KEY_v);
+        this._keyboard.notify_keyval(GLib.get_monotonic_time(), Clutter.KEY_Control_L, Clutter.KeyState.RELEASED);
+        await qaPause(100);
+        qaAssert(!text.get_selection() && input.clutter_text.has_key_focus() && input.get_text() === 'xpasted',
+            `Pasting during a selection clears it and pastes into the focused input: ${JSON.stringify({selection: text.get_selection(), input: input.get_text()})}`);
+        input.set_text(savedDraft);
+        for (const vim of this._vimInputs)
+            vim.setEnabled(vimWasEnabled);
+        text.grab_key_focus();
 
         text.set_selection(7, -1);
         const body = text.get_selection();

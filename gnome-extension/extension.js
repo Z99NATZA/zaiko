@@ -1395,6 +1395,31 @@ export default class ZaikoExtension extends Extension {
             Math.max(0, Math.min(y, text.height - 1)));
     }
 
+    // A printable character, or Ctrl+V / Ctrl+Shift+V / Shift+Insert.
+    _typesText(event) {
+        const symbol = event.get_key_symbol();
+        const state = event.get_state();
+        const control = state & Clutter.ModifierType.CONTROL_MASK;
+        if (control && !(state & (Clutter.ModifierType.MOD1_MASK | Clutter.ModifierType.SUPER_MASK)))
+            return [Clutter.KEY_v, Clutter.KEY_V].includes(symbol);
+        if (symbol === Clutter.KEY_Insert)
+            return Boolean(state & Clutter.ModifierType.SHIFT_MASK);
+        if (state & (Clutter.ModifierType.MOD1_MASK | Clutter.ModifierType.SUPER_MASK |
+            Clutter.ModifierType.MOD4_MASK))
+            return false;
+        const character = event.get_key_unicode();
+        return Boolean(character) && !/[\u0000-\u001f\u007f]/.test(character);
+    }
+
+    // Focus the Log input and replay the key through its capture, target and
+    // bubble handlers, so Vim, the command picker and St paste all apply.
+    _typeIntoLogInput(event) {
+        const entry = this._logEntry;
+        entry.grab_key_focus();
+        if (!entry.event(event, true) && !entry.clutter_text.event(event, false))
+            entry.event(event, false);
+    }
+
     _makeMessageCopyable(label) {
         const text = label.clutter_text;
         label.reactive = true;
@@ -1433,7 +1458,13 @@ export default class ZaikoExtension extends Extension {
                     copy();
                 return Clutter.EVENT_STOP;
             }
-            return Clutter.EVENT_PROPAGATE;
+            // Typing or pasting while a message is selected goes to the input.
+            if (!this._typesText(event))
+                return Clutter.EVENT_PROPAGATE;
+            const cursor = text.get_cursor_position();
+            text.set_selection(cursor, cursor);
+            this._typeIntoLogInput(event);
+            return Clutter.EVENT_STOP;
         });
 
         label.menu = new PopupMenu.PopupMenu(label, 0, St.Side.TOP);
