@@ -429,6 +429,11 @@ export default class OverlayQA extends ZaikoExtension {
             qaAssert(menu.actor.visible && menu._rows.length === 6 &&
                 menu._matches.map(command => command.name).join() === '/status,/model,/permissions,/clear,/cls,/exit',
                 'The production picker contains only supported commands');
+            qaAssert(menu._hint.visible && menu.actor.get_child_at_index(0) === menu._hint &&
+                menu._hintLabel.text === 'Super + j/k or ↑ ↓' &&
+                qaColor(menu._hint.get_theme_node().get_background_color(), '#3e4451') &&
+                qaColor(menu._hint.get_theme_node().get_foreground_color(), '#7f848e'),
+            'A bar in the input color above the commands names Super+J/K and the arrow keys');
             await this._checkCommandHighlight(entry, menu);
             this._showLog();
             this._logEntry.set_text('/');

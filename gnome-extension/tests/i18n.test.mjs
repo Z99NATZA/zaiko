@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {test} from 'node:test';
 import {createTranslator, normalizeLanguage, LANGUAGES} from '../i18n.js';
-import {translatedCommands, translatedPermissions, commandMatches} from '../commands.js';
+import {translatedCommands, commandMatches} from '../commands.js';
 import {transcriptLine, formatElapsed} from '../protocol.js';
 
 const catalogs = Object.fromEntries(LANGUAGES.map(language => [language,
@@ -45,9 +45,8 @@ test('language changes descriptions, elapsed units and speaker labels without ch
     assert.deepEqual(commandMatches('/p', thai), [thai[2]]);
     assert.equal(thai[2].name, '/permissions');
     assert.notEqual(english[2].description, thai[2].description);
-    assert.deepEqual(commandMatches('/permissions ', thai, [], translatedPermissions(th)).map(mode => mode.name),
-        ['ask', 'full']);
-    assert.notEqual(translatedPermissions(en)[0].description, translatedPermissions(th)[0].description);
+    assert.deepEqual(commandMatches('/permissions ', thai).map(mode => mode.label),
+        ['Ask for approval', 'Full Access']);
     assert.deepEqual(commandMatches('/c', thai).map(command => command.name), ['/clear', '/cls']);
     assert.equal(thai[3].description, thai[4].description);
     assert.notEqual(english[3].description, thai[3].description);

@@ -6,7 +6,6 @@ import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {
     commandMatches, COMMAND_VISIBLE_ROWS, MODEL_COMMAND, PERMISSIONS_COMMAND, translatedCommands,
-    translatedPermissions,
 } from './commands.js';
 import {clampPosition} from './protocol.js';
 
@@ -20,7 +19,6 @@ export class CommandMenu {
         this._signals = [];
         this._matches = [];
         this._commands = translatedCommands(translate);
-        this._permissions = translatedPermissions(translate);
         this._models = [];
         this._currentModel = '';
         this._currentPermissions = '';
@@ -36,6 +34,12 @@ export class CommandMenu {
             vertical: true, style_class: 'zaiko-command-menu', visible: false,
             reactive: true,
         });
+        // A bar above the rows names the navigation keys. Adwaita's go-up/down
+        // icons are chevrons, so the arrows are text.
+        this._hint = new St.BoxLayout({style_class: 'zaiko-command-hint', x_expand: true});
+        this._hintLabel = new St.Label({text: `${translate('command.navigate')} ↑ ↓`});
+        this._hint.add_child(this._hintLabel);
+        this.actor.add_child(this._hint);
         this._scroll = new St.ScrollView({style_class: 'zaiko-scroll', x_expand: true});
         this._scroll.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC);
         styleScrollbar(this._scroll);
@@ -86,7 +90,7 @@ export class CommandMenu {
 
     setTranslator(translate) {
         this._commands = translatedCommands(translate);
-        this._permissions = translatedPermissions(translate);
+        this._hintLabel.text = `${translate('command.navigate')} ↑ ↓`;
         this._query = null;
         this.sync();
     }
@@ -98,7 +102,7 @@ export class CommandMenu {
             this.hide();
             return;
         }
-        const matches = commandMatches(text, this._commands, this._models, this._permissions);
+        const matches = commandMatches(text, this._commands, this._models);
         if (!matches.length) {
             this.hide();
             return;
@@ -221,7 +225,8 @@ export class CommandMenu {
         const gap = 4;
         const above = y - area.y - 8 - gap;
         const below = area.y + area.height - y - composerHeight - 8 - gap;
-        const scrollHeight = Math.max(1, Math.min(rowsHeight, Math.max(above, below)));
+        const hintHeight = this._hint.get_preferred_height(width)[1];
+        const scrollHeight = Math.max(1, Math.min(rowsHeight, Math.max(above, below) - hintHeight));
         if (this._scroll.height !== scrollHeight)
             this._scroll.height = scrollHeight;
         const height = this.actor.get_preferred_height(width)[1];

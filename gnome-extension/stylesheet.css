@@ -201,6 +201,12 @@
 .zaiko-command-row:selected, .zaiko-command-row:selected:hover,
 .zaiko-command-row:selected:focus, .zaiko-command-row:selected:active { color: #151820; background-color: #98c379; }
 .zaiko-command-columns { spacing: 8px; }
+/* The input's surface with faded hint text, starting in the name column. */
+.zaiko-command-hint {
+    color: #7f848e;
+    background-color: rgba(62, 68, 81, 0.95);
+    padding: 1px 9px 1px 25px;
+}
 .zaiko-command-indicator { width: 8px; }
 .zaiko-command-name { font-weight: 500; }
 .zaiko-command-description { color: #a0a6b1; }

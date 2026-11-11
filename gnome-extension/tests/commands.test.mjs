@@ -18,7 +18,7 @@ test('typing /model without a space still offers the command row', () => {
 });
 
 test('/permissions with a space lists the two modes, filtered by prefix', () => {
-    const modes = [{name: 'ask', description: 'Ask'}, {name: 'full', description: 'Full'}];
+    const modes = [{name: 'ask', label: 'Ask'}, {name: 'full', label: 'Full'}];
     assert.deepEqual(commandMatches('/per', SLASH_COMMANDS, models, modes).map(match => match.name), ['/permissions']);
     assert.deepEqual(commandMatches('/permissions ', SLASH_COMMANDS, models, modes).map(match => match.name),
         ['ask', 'full']);
