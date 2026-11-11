@@ -369,8 +369,8 @@ export default class OverlayQA extends ZaikoExtension {
             const menu = this._commandMenus.find(candidate => candidate.entry === entry);
             entry.set_text('/');
             await qaPause(180);
-            qaAssert(menu.actor.visible && menu._rows.length === 3 &&
-                menu._matches.map(command => command.name).join() === '/status,/model,/exit',
+            qaAssert(menu.actor.visible && menu._rows.length === 6 &&
+                menu._matches.map(command => command.name).join() === '/status,/model,/permissions,/clear,/cls,/exit',
                 'The production picker contains only supported commands');
             await this._checkCommandHighlight(entry, menu);
             this._showLog();
@@ -426,7 +426,7 @@ export default class OverlayQA extends ZaikoExtension {
             `Arrow navigation scrolls the selected command into view: ${JSON.stringify({selected: menu._selected, value: adjustment.value, page: adjustment.page_size, y: menu._rows[9].y, height: menu._rows[9].height})}`);
             qaAssert(menu._indicators[9].opacity === 255 && menu._indicators[0].opacity === 0,
                 'The leading marker follows keyboard selection');
-            for (let index = 0; index < 13; index++)
+            for (let index = 9; index < fixtures.length + 3; index++)
                 await this._key(Clutter.KEY_Down);
             qaAssert(menu._selected === fixtures.length - 1 && Math.abs(adjustment.value - (adjustment.upper - adjustment.page_size)) <= 1,
                 'Repeated Down stops at the final command and end of the scroll range');

@@ -153,10 +153,33 @@ async fn slash_commands_work_without_provider_config_and_keep_request_guards() {
 
     for (id, text, expected) in [
         ("status-args", "/status extra", "ไม่ใส่อาร์กิวเมนต์"),
-        ("unknown-command", "/permissions", "ยังไม่รองรับคำสั่งนี้"),
+        ("unknown-command", "/sandbox", "ยังไม่รองรับคำสั่งนี้"),
+        (
+            "permissions-show",
+            "/permissions",
+            "สิทธิ์: Full Access (full)",
+        ),
+        (
+            "permissions-bad",
+            "/permissions maybe",
+            "ใช้ /permissions ask",
+        ),
+        ("permissions-ask", " /permissions ask ", "Ask for approval"),
+        (
+            "permissions-status",
+            "/status",
+            "สิทธิ์: Ask for approval (ask)",
+        ),
+        ("permissions-full", "/permissions full", "Full Access"),
+        (
+            "permissions-again",
+            "/permissions",
+            "สิทธิ์: Full Access (full)",
+        ),
         ("model-unready", "/model gpt-6.1-mini", "ยังสลับโมเดลไม่ได้"),
         ("status-again", "/status", "สถานะ: ● ว่าง (idle)"),
         ("removed-mock", "/s001", "ยังไม่รองรับคำสั่งนี้"),
+        ("clear-args", "/clear all", "ใช้ /clear โดยไม่ใส่อาร์กิวเมนต์"),
     ] {
         proxy.call::<_, _, ()>("Submit", &(id, text)).await.unwrap();
         let result = idle(&proxy).await;
@@ -167,6 +190,34 @@ async fn slash_commands_work_without_provider_config_and_keep_request_guards() {
                 .contains(expected)
         );
     }
+
+    assert_eq!(snapshot(&proxy).await["permissions"], "full");
+    proxy
+        .call::<_, _, ()>("Submit", &("permissions-snapshot", "/permissions ask"))
+        .await
+        .unwrap();
+    assert_eq!(idle(&proxy).await["permissions"], "ask");
+
+    // /clear and /cls empty the conversation without adding a message.
+    for (id, text) in [
+        ("clear", " /clear "),
+        ("status-before-cls", "/status"),
+        ("cls", "/cls"),
+    ] {
+        proxy.call::<_, _, ()>("Submit", &(id, text)).await.unwrap();
+        let result = idle(&proxy).await;
+        assert_eq!(
+            result["messages"].as_array().unwrap().is_empty(),
+            text != "/status"
+        );
+        assert!(result["error"].is_null());
+    }
+    assert!(
+        proxy
+            .call::<_, _, ()>("Submit", &("clear", "/clear"))
+            .await
+            .is_err()
+    );
 
     let _desktop = zbus::connection::Builder::address(bus.address.as_str())
         .unwrap()
@@ -194,6 +245,14 @@ async fn slash_commands_work_without_provider_config_and_keep_request_guards() {
             .is_err()
     );
     assert_eq!(snapshot(&proxy).await["request_id"], "working");
+    // A rejected request never changes the permission mode.
+    assert!(
+        proxy
+            .call::<_, _, ()>("Submit", &("busy-permissions", "/permissions full"))
+            .await
+            .is_err()
+    );
+    assert_eq!(snapshot(&proxy).await["permissions"], "ask");
     proxy
         .call::<_, _, ()>("Cancel", &("working",))
         .await

@@ -57,6 +57,7 @@ export function parseSnapshot(payload) {
         model: typeof snapshot.model === 'string' ? snapshot.model : '',
         models: Array.isArray(snapshot.models)
             ? snapshot.models.filter(model => typeof model === 'string') : [],
+        permissions: ['ask', 'full'].includes(snapshot.permissions) ? snapshot.permissions : '',
     };
 }
 

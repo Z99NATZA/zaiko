@@ -9,7 +9,7 @@ use zbus::{Connection, Proxy, fdo, object_server::SignalEmitter};
 use crate::{
     command::{self, CommandRequest},
     config::{Config, ModelChoice},
-    provider::{App, Client, LaunchMode, Message, Tools},
+    provider::{App, Client, LaunchMode, Message, Permissions, Tools},
 };
 
 const BUS: &str = "org.zaiko.Companion";
@@ -28,6 +28,7 @@ struct Snapshot {
     provider: String,
     model: String,
     models: Vec<String>,
+    permissions: &'static str,
 }
 
 struct Active {
@@ -40,6 +41,7 @@ struct State {
     /// Session model and picker choices; None/empty while configuration is invalid.
     model: Option<ModelChoice>,
     models: Vec<ModelChoice>,
+    permissions: Permissions,
     active: Option<Active>,
     seen: HashSet<String>,
     stopping: bool,
@@ -50,6 +52,10 @@ enum Local {
     Reply(String),
     /// A /model switch: applied at once, with no message or reply.
     Switch(ModelChoice),
+    /// /clear or /cls: forget the conversation, with no message or reply.
+    Clear,
+    /// /permissions ask|full: applied once the request is accepted, then replies.
+    Permissions(Permissions, String),
 }
 
 impl State {
@@ -121,6 +127,11 @@ impl State {
         self.model = Some(choice);
     }
 
+    fn set_permissions(&mut self, permissions: Permissions) {
+        self.permissions = permissions;
+        self.snapshot.permissions = permissions.name();
+    }
+
     fn append(&mut self, message: Message) {
         self.snapshot.messages.push(message);
         while self.snapshot.messages.len() > MAX_MESSAGES
@@ -161,9 +172,11 @@ impl Runtime {
                 provider: String::new(),
                 model: String::new(),
                 models: Vec::new(),
+                permissions: Permissions::default().name(),
             },
             model: None,
             models: Vec::new(),
+            permissions: Permissions::default(),
             active: None,
             seen: HashSet::new(),
             stopping: false,
@@ -197,17 +210,45 @@ impl Runtime {
             return None;
         }
         match name {
-            "/status" if text == "/status" => {
-                Some(Local::Reply(self.status_reply(&state.snapshot)))
-            }
+            "/status" if text == "/status" => Some(Local::Reply(self.status_reply(state))),
             "/status" => Some(Local::Reply("ใช้ /status โดยไม่ใส่อาร์กิวเมนต์ค่ะ".into())),
+            "/clear" | "/cls" if text == name => Some(Local::Clear),
+            "/permissions" => Some(Self::permissions_reply(text, state.permissions)),
+            "/clear" | "/cls" => Some(Local::Reply(format!("ใช้ {name} โดยไม่ใส่อาร์กิวเมนต์ค่ะ"))),
             "/model" => Some(match self.model_reply(text, state) {
                 Ok(choice) => Local::Switch(choice),
                 Err(reply) => Local::Reply(reply),
             }),
             _ => Some(Local::Reply(
-                "ยังไม่รองรับคำสั่งนี้ค่ะ คำสั่งที่ใช้ได้: /status, /model, /exit".into(),
+                "ยังไม่รองรับคำสั่งนี้ค่ะ คำสั่งที่ใช้ได้: /status, /model, /permissions, /clear, /cls, /exit"
+                    .into(),
             )),
+        }
+    }
+
+    fn permissions_reply(text: &str, current: Permissions) -> Local {
+        let args: Vec<&str> = text.split_whitespace().skip(1).collect();
+        match args.as_slice() {
+            [] => Local::Reply(format!(
+                "สิทธิ์: {} ({})\n       \
+                 ใช้ /permissions ask เพื่อให้ถามก่อนลงมือ หรือ /permissions full เพื่อทำได้ทันทีค่ะ",
+                current.label(),
+                current.name()
+            )),
+            [mode] => match Permissions::parse(mode) {
+                Some(mode) => Local::Permissions(
+                    mode,
+                    match mode {
+                        Permissions::Ask => {
+                            "ตั้งเป็น Ask for approval แล้วค่ะ ไอโกะจะถามก่อนลงมือทำทุกครั้งนะคะ"
+                        }
+                        Permissions::Full => "ตั้งเป็น Full Access แล้วค่ะ ไอโกะจะลงมือทำได้ทันทีนะคะ",
+                    }
+                    .into(),
+                ),
+                None => Local::Reply("ใช้ /permissions ask หรือ /permissions full ค่ะ".into()),
+            },
+            _ => Local::Reply("ใช้ /permissions ask หรือ /permissions full ค่ะ".into()),
         }
     }
 
@@ -259,7 +300,8 @@ impl Runtime {
         Ok(choice)
     }
 
-    fn status_reply(&self, snapshot: &Snapshot) -> String {
+    fn status_reply(&self, state: &State) -> String {
+        let (snapshot, permissions) = (&state.snapshot, state.permissions);
         let (provider, model) = match &self.config {
             Ok(_) => (snapshot.provider.as_str(), snapshot.model.as_str()),
             Err(_) => ("ยังไม่พร้อม", "ยังไม่พร้อม"),
@@ -277,7 +319,11 @@ impl Runtime {
         let mut lines = vec![
             format!("สถานะ: {state} ({})", snapshot.state),
             format!("โมเดล: {provider} · {model}"),
-            "สิทธิ์: บัญชีผู้ใช้ปัจจุบัน · ไม่มี sandbox".to_owned(),
+            format!(
+                "สิทธิ์: {} ({}) · บัญชีผู้ใช้ปัจจุบัน · ไม่มี sandbox",
+                permissions.label(),
+                permissions.name()
+            ),
             "ไฟล์/โฟลเดอร์สำคัญ: ยังไม่มีการป้องกัน".to_owned(),
         ];
         if let Err(error) = &self.config {
@@ -299,7 +345,7 @@ impl Runtime {
                 "Text must contain 1–8192 UTF-8 bytes.".to_owned(),
             ));
         }
-        let (cancel, history, model, local_reply) = {
+        let (cancel, history, model, permissions, local_reply) = {
             let mut state = self.state.lock().await;
             // Capture the state before reserving this request changes it to thinking.
             // Desktop actions do not enter the slash-command path.
@@ -324,12 +370,34 @@ impl Runtime {
                     .await;
                     return Ok(());
                 }
-                Some(Local::Reply(reply)) => Some(reply),
+                // Like a switch, a clear finishes here once the ID is accepted.
+                Some(Local::Clear) => {
+                    state.admit(id)?;
+                    state.snapshot.messages.clear();
+                    state.snapshot.state = "idle";
+                    state.snapshot.error = None;
+                    emit(
+                        connection,
+                        json!({"type":"state","request_id":id,"state":"idle"}),
+                    )
+                    .await;
+                    return Ok(());
+                }
+                Some(Local::Reply(reply)) => Some((reply, None)),
+                Some(Local::Permissions(mode, reply)) => Some((reply, Some(mode))),
                 None => None,
             };
             let safe_text = self.clean(text);
             let (cancel, history) = state.reserve(id, safe_text.clone())?;
+            // Change the mode only after the ID and request slot are accepted.
+            let local_reply = local_reply.map(|(reply, mode)| {
+                if let Some(mode) = mode {
+                    state.set_permissions(mode);
+                }
+                reply
+            });
             let model = state.model.clone();
+            let permissions = state.permissions;
             emit(
                 connection,
                 json!({"type":"message","request_id":id,"role":"user","content":safe_text}),
@@ -340,7 +408,7 @@ impl Runtime {
                 json!({"type":"state","request_id":id,"state":"thinking"}),
             )
             .await;
-            (cancel, history, model, local_reply)
+            (cancel, history, model, permissions, local_reply)
         };
         let runtime = self.clone();
         let connection = connection.clone();
@@ -374,7 +442,7 @@ impl Runtime {
                             .ok_or("The selected model's provider has no API key.")?,
                         None => config.clone(),
                     };
-                    let client = Client::new(config)?;
+                    let client = Client::new(config)?.with_permissions(permissions);
                     client.chat(&history, &mut tools).await.map(Some)
                 }
             };
@@ -794,7 +862,7 @@ mod tests {
         assert_eq!(
             reply,
             "สถานะ: ● ว่าง (idle)\n       โมเดล: deepseek · test-model\n       \
-             สิทธิ์: บัญชีผู้ใช้ปัจจุบัน · ไม่มี sandbox\n       ไฟล์/โฟลเดอร์สำคัญ: ยังไม่มีการป้องกัน"
+             สิทธิ์: Full Access (full) · บัญชีผู้ใช้ปัจจุบัน · ไม่มี sandbox\n       ไฟล์/โฟลเดอร์สำคัญ: ยังไม่มีการป้องกัน"
         );
         assert!(!reply.contains("dummy-secret-value"));
         assert!(runtime.slash_reply("สวัสดี", &state).is_none());

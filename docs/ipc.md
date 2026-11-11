@@ -37,6 +37,18 @@ emits only an idle state event.
 Invalid IDs, IDs equal to the API key, and
 switches while configuration is invalid are rejected with a reply and without changing the model.
 A rejected request (active slot or duplicate ID) never switches the model.
+/permissions reports the permission mode; /permissions ask or /permissions full
+sets it for later provider requests in this core session (a restart returns to
+full). It replies like /status, and sets the mode only after the request is accepted.
+full (Full Access) lets the model call tools at once. ask (Ask for approval) adds
+an instruction telling the model to describe the action and ask in its reply, and
+to call tools only after the user's next message agrees, in any wording. ask is
+enforced by that instruction, not by the core. Desktop OpenApp/OpenTerminal
+requests are the user's own actions and are not affected.
+/clear and /cls are the same command: they empty the retained conversation
+(so later provider requests start fresh) and finish during Submit like a /model
+switch, with no message and only an idle state event. Arguments get a usage reply;
+a rejected request (active slot or duplicate ID) clears nothing. Request IDs stay used.
 /exit never reaches Submit: the extension calls
 Quit instead. Arguments and unknown slash commands receive local
 usage/unsupported replies. Local replies use the normal message/state events and
@@ -57,7 +69,8 @@ Event(payload: s)
 Payload is JSON with type and optional request_id, state, content, role, message.
 Types: state, message, error, present. States: idle, thinking, working, error.
 All user-visible conversation and request state can be recovered from GetSnapshot.
-Snapshot JSON: messages [{role, content}], state, request_id, error, provider, model.
+Snapshot JSON: messages [{role, content}], state, request_id, error, provider, model,
+permissions (ask or full).
 provider and model are the active session pair, including a /model switch. models lists
 picker choices: ZAIKO_LLM_MODEL, then ZAIKO_LLM_MODELS, then IDs switched to
 in this session; empty when configuration is invalid.

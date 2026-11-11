@@ -192,6 +192,16 @@ In the command picker, Enter, Tab or clicking /model opens a list of model IDs
 Without a model list (invalid configuration), /model submits as before.
 Leading/trailing whitespace is ignored. /status takes no arguments; other slash
 commands return a local unsupported-command reply instead of reaching the model.
+Type /permissions to see the permission mode, or pick a mode from its list:
+/permissions full (Full Access, the default) lets Aiko act right away, as before.
+/permissions ask (Ask for approval) makes Aiko first say what it will do and ask
+in a normal reply, then act only after you agree in your next message; any clear
+wording works. The mode lasts for this session; restarting Zaiko returns to Full
+Access. Ask mode is an instruction to the model, not a sandbox: commands still run
+with your user's permissions once Aiko calls them. /status shows the mode.
+Type /clear or /cls (they are the same) to clear the chat and start over: the Log
+and the history sent to the model are emptied, and the provider/model stays as it is.
+It takes no arguments and, like other commands, waits until no request is active.
 Type /exit to quit Zaiko exactly like the Quit menu; the extension handles it
 without submitting it to the core. If Quit fails, the draft is restored.
 Typing / opens a command picker above the focused compact or Log composer.

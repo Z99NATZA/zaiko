@@ -17,6 +17,8 @@ const SYSTEM: &str = include_str!("../prompts/aiko.md");
 // Sent with tools disabled once a request has used all its tool calls or keeps
 // failing, so the model answers normally instead of the user seeing an error.
 const LIMIT_NOTE: &str = "No more tools can run for this request. Without calling tools, reply briefly in the language of the user's latest message: say what was done, and that the rest is not supported or cannot be done this way. Do not describe it as an error or mention tool call limits.";
+// Added to the system prompt in Ask for approval mode.
+const ASK_NOTE: &str = "Permission mode: Ask for approval. Before calling any tool (open_app or run_command), first reply in plain text, without calling tools, saying briefly what you will do (the app, or the commands and folder) and asking the user to confirm. Call tools only when the user's latest message clearly agrees to what you proposed, in any wording. If they decline, are unsure, or change the request, do not act; answer or propose again. A confirmation covers only what you described; anything new or different needs a new confirmation.";
 const LIMIT_REPLY: &str = "ส่วนที่เหลือไอโกะยังทำให้ไม่ได้ค่ะ ตอนนี้ยังไม่รองรับนะคะ";
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
@@ -71,6 +73,38 @@ impl LaunchMode {
     }
 }
 
+/// Whether the model may use tools at once or must ask in chat first.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Permissions {
+    Ask,
+    #[default]
+    Full,
+}
+
+impl Permissions {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Full => "full",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ask => "Ask for approval",
+            Self::Full => "Full Access",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "ask" => Some(Self::Ask),
+            "full" => Some(Self::Full),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Message {
     pub role: String,
@@ -94,6 +128,7 @@ pub struct Client {
     http: reqwest::Client,
     config: Config,
     endpoint: String,
+    permissions: Permissions,
 }
 
 impl Client {
@@ -116,7 +151,20 @@ impl Client {
             http,
             config,
             endpoint,
+            permissions: Permissions::default(),
         })
+    }
+
+    pub fn with_permissions(mut self, permissions: Permissions) -> Self {
+        self.permissions = permissions;
+        self
+    }
+
+    fn instructions(&self) -> String {
+        match self.permissions {
+            Permissions::Ask => format!("{SYSTEM}\n\n{ASK_NOTE}"),
+            Permissions::Full => SYSTEM.to_owned(),
+        }
     }
 
     pub async fn chat(
@@ -181,10 +229,11 @@ impl Client {
             .iter()
             .map(|m| json!({"role":m.role,"content":m.content}))
             .collect();
+        let instructions = self.instructions();
         let request = |input: &[Value], tool_choice: &str| {
             let mut request = json!({
                 "model": self.config.model,
-                "instructions": SYSTEM,
+                "instructions": instructions,
                 "input": input,
                 "tools": tool_definitions(true),
                 "tool_choice": tool_choice,
@@ -243,7 +292,7 @@ impl Client {
         history: &[Message],
         tools: &mut impl Tools,
     ) -> Result<String, String> {
-        let mut messages = vec![json!({"role":"system","content":SYSTEM})];
+        let mut messages = vec![json!({"role":"system","content":self.instructions()})];
         messages.extend(
             history
                 .iter()
@@ -915,5 +964,48 @@ mod tests {
         let result: Value =
             serde_json::from_str(requests[1]["messages"][2]["content"].as_str().unwrap()).unwrap();
         assert_eq!(result["exit_code"], 0);
+    }
+
+    #[tokio::test]
+    async fn ask_mode_adds_the_approval_note_for_both_providers() {
+        for (provider, model, reply) in [
+            (
+                Provider::OpenAi,
+                "gpt-6.1-sol",
+                json!({"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"Okay?"}]}]}),
+            ),
+            (
+                Provider::DeepSeek,
+                "deepseek-chat",
+                json!({"choices":[{"message":{"role":"assistant","content":"Okay?"}}]}),
+            ),
+        ] {
+            for permissions in [Permissions::Ask, Permissions::Full] {
+                let (url, server) = mock_server(vec![reply.clone()]).await;
+                let client = Client::with_endpoint(
+                    Config {
+                        provider,
+                        model: model.into(),
+                        models: Vec::new(),
+                        api_key: "dummy-test-key".into(),
+                        keys: Vec::new(),
+                    },
+                    url,
+                )
+                .unwrap()
+                .with_permissions(permissions);
+                let mut tools = FakeTools::default();
+                assert_eq!(client.chat(&[], &mut tools).await.unwrap(), "Okay?");
+                let request = &server.await.unwrap()[0];
+                let system = match provider {
+                    Provider::OpenAi => &request["instructions"],
+                    Provider::DeepSeek => &request["messages"][0]["content"],
+                }
+                .as_str()
+                .unwrap();
+                assert!(system.starts_with(SYSTEM));
+                assert_eq!(system.contains(ASK_NOTE), permissions == Permissions::Ask);
+            }
+        }
     }
 }

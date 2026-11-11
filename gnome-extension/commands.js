@@ -1,6 +1,9 @@
 export const SLASH_COMMANDS = Object.freeze([
     {name: '/status', descriptionKey: 'command.status'},
     {name: '/model', descriptionKey: 'command.model'},
+    {name: '/permissions', descriptionKey: 'command.permissions'},
+    {name: '/clear', descriptionKey: 'command.clear'},
+    {name: '/cls', descriptionKey: 'command.clear'},
     {name: '/exit', descriptionKey: 'command.exit'},
 ]);
 
@@ -11,10 +14,27 @@ export function translatedCommands(translate) {
 }
 
 export const MODEL_COMMAND = '/model';
+export const PERMISSIONS_COMMAND = '/permissions';
 
-// "/model <filter>" lists model IDs (names only); otherwise match command prefixes.
-export function commandMatches(text, commands = SLASH_COMMANDS, models = []) {
+export const PERMISSION_MODES = Object.freeze([
+    {name: 'ask', descriptionKey: 'permissions.ask'},
+    {name: 'full', descriptionKey: 'permissions.full'},
+]);
+
+export function translatedPermissions(translate) {
+    return PERMISSION_MODES.map(({name, descriptionKey}) => ({name, description: translate(descriptionKey)}));
+}
+
+// "/model <filter>" lists model IDs (names only) and "/permissions <filter>"
+// lists modes; otherwise match command prefixes.
+export function commandMatches(text, commands = SLASH_COMMANDS, models = [], permissions = []) {
     const query = text.trimStart();
+    const mode = /^\/permissions\s+(\S*)$/i.exec(query);
+    if (mode) {
+        const filter = mode[1].toLowerCase();
+        return permissions.filter(({name}) => name.startsWith(filter))
+            .map(({name, description}) => ({name, description, permission: true}));
+    }
     const model = /^\/model\s+(\S*)$/i.exec(query);
     if (model) {
         const filter = model[1].toLowerCase();

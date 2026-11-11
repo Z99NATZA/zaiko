@@ -4,7 +4,10 @@ import Pango from 'gi://Pango';
 import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import {commandMatches, COMMAND_VISIBLE_ROWS, MODEL_COMMAND, translatedCommands} from './commands.js';
+import {
+    commandMatches, COMMAND_VISIBLE_ROWS, MODEL_COMMAND, PERMISSIONS_COMMAND, translatedCommands,
+    translatedPermissions,
+} from './commands.js';
 import {clampPosition} from './protocol.js';
 
 export class CommandMenu {
@@ -17,8 +20,10 @@ export class CommandMenu {
         this._signals = [];
         this._matches = [];
         this._commands = translatedCommands(translate);
+        this._permissions = translatedPermissions(translate);
         this._models = [];
         this._currentModel = '';
+        this._currentPermissions = '';
         this._rows = [];
         this._indicators = [];
         this._names = [];
@@ -71,8 +76,17 @@ export class CommandMenu {
         this.sync();
     }
 
+    setPermissions(current) {
+        if (current === this._currentPermissions)
+            return;
+        this._currentPermissions = current;
+        this._query = null;
+        this.sync();
+    }
+
     setTranslator(translate) {
         this._commands = translatedCommands(translate);
+        this._permissions = translatedPermissions(translate);
         this._query = null;
         this.sync();
     }
@@ -84,7 +98,7 @@ export class CommandMenu {
             this.hide();
             return;
         }
-        const matches = commandMatches(text, this._commands, this._models);
+        const matches = commandMatches(text, this._commands, this._models, this._permissions);
         if (!matches.length) {
             this.hide();
             return;
@@ -114,8 +128,10 @@ export class CommandMenu {
             this._indicators = [...items.values()].map(item => item.indicator);
             this._names = [...items.values()].filter(item => item.description).map(item => item.name);
             this._scroll.get_vadjustment().value = 0;
-            // The model list opens on the active model.
-            const current = matches.findIndex(match => match.model && match.name === this._currentModel);
+            // The model and permission lists open on the active choice.
+            const current = matches.findIndex(match =>
+                (match.model && match.name === this._currentModel) ||
+                (match.permission && match.name === this._currentPermissions));
             this._select(Math.max(0, current), current > 0);
         }
         this._open = true;
@@ -266,7 +282,15 @@ export class CommandMenu {
             this.entry.grab_key_focus();
             return;
         }
-        const text = command.model ? `${MODEL_COMMAND} ${command.name}` : command.name;
+        // /permissions continues to its modes the same way.
+        if (command.name === PERMISSIONS_COMMAND && !command.permission) {
+            this.entry.set_text(`${PERMISSIONS_COMMAND} `);
+            this.entry.clutter_text.set_selection(-1, -1);
+            this.entry.grab_key_focus();
+            return;
+        }
+        const text = command.model ? `${MODEL_COMMAND} ${command.name}`
+            : command.permission ? `${PERMISSIONS_COMMAND} ${command.name}` : command.name;
         this.entry.set_text(text);
         this.entry.clutter_text.set_selection(-1, -1);
         this.entry.grab_key_focus();

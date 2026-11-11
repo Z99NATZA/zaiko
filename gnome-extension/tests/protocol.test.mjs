@@ -95,6 +95,8 @@ test('character size cycles 1 to 5 and falls back to 3', () => {
 test('snapshot keeps only string model names', () => {
     assert.deepEqual(parseSnapshot('{"messages":[],"state":"idle","models":["a",1,"b"]}').models, ['a', 'b']);
     assert.deepEqual(parseSnapshot('{"messages":[],"state":"idle"}').models, []);
+    assert.equal(parseSnapshot('{"messages":[],"state":"idle","permissions":"ask"}').permissions, 'ask');
+    assert.equal(parseSnapshot('{"messages":[],"state":"idle","permissions":"root"}').permissions, '');
 });
 
 test('choice labels list every choice and dim the inactive ones by UTF-8 byte range', () => {
