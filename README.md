@@ -1,4 +1,4 @@
-# Zaiko
+# zaiko
 
 ## Setup
 
