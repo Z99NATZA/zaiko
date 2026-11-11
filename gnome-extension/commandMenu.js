@@ -109,7 +109,7 @@ export class CommandMenu {
             const items = new Map();
             matches.forEach((command, index) => {
                 let item = this._items.get(command.name);
-                if (!item || item.description !== command.description)
+                if (!item || item.description !== command.description || item.label !== command.label)
                     item = this._createRow(command);
                 item.index = index;
                 if (!item.button.get_parent())
@@ -141,13 +141,13 @@ export class CommandMenu {
     _createRow(command) {
         const button = new St.Button({
             style_class: 'zaiko-command-row', x_expand: true, can_focus: false,
-            accessible_name: command.description ? `${command.name}: ${command.description}` : command.name,
+            accessible_name: command.description ? `${command.name}: ${command.description}` : command.label ?? command.name,
         });
         const row = new St.BoxLayout({x_expand: true, style_class: 'zaiko-command-columns'});
         const indicator = new St.Label({text: '›', style_class: 'zaiko-command-indicator', opacity: 0});
-        // Model rows have no description, so their name takes the full width.
+        // Model and mode rows have no description, so their text takes the full width.
         const name = new St.Label({
-            text: command.name, style_class: 'zaiko-command-name', x_expand: !command.description,
+            text: command.label ?? command.name, style_class: 'zaiko-command-name', x_expand: !command.description,
         });
         name.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         row.add_child(indicator);
@@ -160,7 +160,7 @@ export class CommandMenu {
             row.add_child(description);
         }
         button.set_child(row);
-        const item = {button, indicator, name, description: command.description, index: 0};
+        const item = {button, indicator, name, description: command.description, label: command.label, index: 0};
         // Read the current index because filtering can move a retained row.
         button.connect('motion-event', () => {
             this._select(item.index, false);

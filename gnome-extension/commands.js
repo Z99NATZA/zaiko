@@ -32,8 +32,9 @@ export function commandMatches(text, commands = SLASH_COMMANDS, models = [], per
     const mode = /^\/permissions\s+(\S*)$/i.exec(query);
     if (mode) {
         const filter = mode[1].toLowerCase();
+        // Mode rows show only their description; name is what gets submitted.
         return permissions.filter(({name}) => name.startsWith(filter))
-            .map(({name, description}) => ({name, description, permission: true}));
+            .map(({name, description}) => ({name, description: '', label: description, permission: true}));
     }
     const model = /^\/model\s+(\S*)$/i.exec(query);
     if (model) {

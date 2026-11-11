@@ -23,6 +23,6 @@ test('/permissions with a space lists the two modes, filtered by prefix', () => 
     assert.deepEqual(commandMatches('/permissions ', SLASH_COMMANDS, models, modes).map(match => match.name),
         ['ask', 'full']);
     assert.deepEqual(commandMatches('/permissions F', SLASH_COMMANDS, models, modes),
-        [{name: 'full', description: 'Full', permission: true}]);
+        [{name: 'full', description: '', label: 'Full', permission: true}]);
     assert.deepEqual(commandMatches('/permissions x', SLASH_COMMANDS, models, modes), []);
 });
