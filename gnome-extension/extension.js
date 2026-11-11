@@ -109,6 +109,7 @@ export default class ZaikoExtension extends Extension {
         this._dragOrigin = null;
         this._characterGrab = null;
         this._characterGrabSignal = 0;
+        this._quitConfirmSource = 0;
         this._sending = false;
         this._cancelling = false;
         this._snapshotRunning = false;
@@ -259,6 +260,9 @@ export default class ZaikoExtension extends Extension {
         this._logMenuItem.label.text = this._t('menu.log');
         this._syncChoiceMenus();
         this._quitMenuItem.label.text = this._t('menu.quit');
+        this._quitConfirmTitle.label.text = this._t('quit.confirm');
+        this._quitCancel.label = this._t('action.cancel');
+        this._quitAccept.label = this._t('action.quit');
         this._character.accessible_name = this._t('accessibility.character');
         this._panelClose.accessible_name = this._t('accessibility.close');
         this._logBottom.accessible_name = this._t('accessibility.bottom');
@@ -355,6 +359,7 @@ export default class ZaikoExtension extends Extension {
         const font = Pango.FontDescription.from_string(this._interfaceSettings.get_string('font-name'));
         const family = (font.get_family() || 'sans-serif').replaceAll('\\', '\\\\').replaceAll('"', '\\"');
         for (const actor of [this._panel, this._inputOverlay, this._answerLabel, this._characterMenu.actor,
+            this._quitConfirm.actor,
             ...this._commandMenus.map(menu => menu.actor),
             this._overlayEntry.menu.actor, this._logEntry.menu.actor,
             ...this._logMessageMenus().map(menu => menu.actor)])
@@ -465,6 +470,7 @@ export default class ZaikoExtension extends Extension {
         if (!drag.dragging && Math.hypot(dx, dy) >= 8) {
             drag.dragging = true;
             this._characterMenu.close();
+            this._quitConfirm.close();
         }
         if (drag.dragging)
             this._positionCharacter(drag.x + dx, drag.y + dy);
@@ -784,7 +790,7 @@ export default class ZaikoExtension extends Extension {
         this._vimMenuItem = new ChoiceMenuItem(() => this._toggleVim());
         this._characterMenu.addMenuItem(this._vimMenuItem);
         this._syncChoiceMenus();
-        this._quitMenuItem = this._characterMenu.addAction(this._t('menu.quit'), () => this._quitCore());
+        this._quitMenuItem = this._characterMenu.addAction(this._t('menu.quit'), () => this._openQuitConfirm());
         Main.uiGroup.add_child(this._characterMenu.actor);
         this._characterMenu.actor.hide();
         this._characterMenuManager = new PopupMenu.PopupMenuManager(this._character);
@@ -792,6 +798,69 @@ export default class ZaikoExtension extends Extension {
         this._characterMenu.connect('open-state-changed', () => {
             if (this._enabled)
                 this._updateVisibility();
+        });
+        this._buildQuitConfirm();
+    }
+
+    // Quit replaces the menu with a confirm popup at the same point.
+    _buildQuitConfirm() {
+        this._quitConfirm = new PopupMenu.PopupMenu(this._character, 0, St.Side.TOP);
+        this._styleContextMenu(this._quitConfirm, this._characterMenuAnchor);
+        this._quitConfirmTitle = new PopupMenu.PopupMenuItem(this._t('quit.confirm'), {
+            reactive: false, can_focus: false, style_class: 'zaiko-confirm-title',
+        });
+        this._quitConfirm.addMenuItem(this._quitConfirmTitle);
+        const row = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false, style_class: 'zaiko-confirm-row'});
+        const buttons = new St.BoxLayout({style_class: 'zaiko-confirm-buttons', x_expand: true,
+            x_align: Clutter.ActorAlign.END});
+        this._quitCancel = new St.Button({label: this._t('action.cancel'), style_class: 'zaiko-confirm-button',
+            can_focus: true});
+        this._quitAccept = new St.Button({label: this._t('action.quit'), style_class: 'zaiko-confirm-button',
+            can_focus: true});
+        this._quitCancel.connect('clicked', () => this._quitConfirm.close());
+        this._quitAccept.connect('clicked', () => {
+            this._quitConfirm.close();
+            this._quitCore();
+        });
+        buttons.add_child(this._quitCancel);
+        buttons.add_child(this._quitAccept);
+        row.add_child(buttons);
+        this._quitConfirm.addMenuItem(row);
+        Main.uiGroup.add_child(this._quitConfirm.actor);
+        this._quitConfirm.actor.hide();
+        // A manager of its own: sharing the character menu's manager and source
+        // would switch back to that menu while the pointer is over the character.
+        this._quitConfirmManager = new PopupMenu.PopupMenuManager(this._character);
+        this._quitConfirmManager.addMenu(this._quitConfirm);
+        this._quitConfirm.connect('open-state-changed', (_menu, open) => {
+            if (!this._enabled)
+                return;
+            // Cancel is the safe default for Enter.
+            if (open)
+                this._quitCancel.grab_key_focus();
+            this._updateVisibility();
+        });
+    }
+
+    _openQuitConfirm() {
+        // Wait until the activating click has finished closing the main menu,
+        // or its menu manager closes the new popup with it.
+        if (this._quitConfirmSource)
+            return;
+        // Open at the pointer, where Quit was clicked. From the keyboard, keep
+        // the menu's own point.
+        const keyboard = Clutter.get_current_event()?.type() === Clutter.EventType.KEY_PRESS;
+        const [x, y] = global.get_pointer();
+        this._quitConfirmSource = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            this._quitConfirmSource = 0;
+            if (!this._enabled || !this._character.visible)
+                return GLib.SOURCE_REMOVE;
+            if (!keyboard) {
+                this._characterMenuAnchor.set_position(x, y);
+                this._characterMenuAnchor.allocate_preferred_size(x, y);
+            }
+            this._quitConfirm.open();
+            return GLib.SOURCE_REMOVE;
         });
     }
 
@@ -935,6 +1004,7 @@ export default class ZaikoExtension extends Extension {
             this._endCharacterDrag();
             this._releaseFocus(false);
             this._characterMenu?.close();
+            this._quitConfirm?.close();
         }
         this._character.visible = show;
         this._motion?.setActive(show);
@@ -981,6 +1051,7 @@ export default class ZaikoExtension extends Extension {
     _showLog() {
         this._rememberFocus();
         this._characterMenu.close();
+        this._quitConfirm.close();
         this._logEntry.menu?.close();
         this._hideInput(false);
         this._panelOpen = true;
@@ -1013,13 +1084,15 @@ export default class ZaikoExtension extends Extension {
     _rememberFocus() {
         const focus = global.stage.get_key_focus();
         const roots = [this._panel, this._panelClose, this._inputOverlay, this._answerLabel, this._characterMenu?.actor,
+            this._quitConfirm?.actor,
             this._overlayEntry?.menu?.actor, this._logEntry?.menu?.actor,
             ...this._logMessageMenus().map(menu => menu.actor)];
         if (!this._ownsFocus(focus, roots))
             this._focusBeforeUI = global.display.focus_window;
     }
 
-    _releaseFocus(restore, actors = [this._panel, this._inputOverlay, this._answerLabel, this._characterMenu?.actor]) {
+    _releaseFocus(restore, actors = [this._panel, this._inputOverlay, this._answerLabel, this._characterMenu?.actor,
+        this._quitConfirm?.actor]) {
         const focus = global.stage.get_key_focus();
         const roots = [...actors];
         if (actors.includes(this._inputOverlay)) {
@@ -1037,6 +1110,8 @@ export default class ZaikoExtension extends Extension {
         }
         if (actors.includes(this._characterMenu?.actor))
             this._characterMenu?.close();
+        if (actors.includes(this._quitConfirm?.actor))
+            this._quitConfirm?.close();
         const ownedFocus = this._ownsFocus(focus, roots);
         if (!ownedFocus)
             return;
@@ -1141,7 +1216,7 @@ export default class ZaikoExtension extends Extension {
         this._focusDismissSource = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
             this._focusDismissSource = 0;
             const allowed = [this._inputOverlay, this._character, this._overlayEntry?.menu?.actor,
-                this._characterMenu?.actor];
+                this._characterMenu?.actor, this._quitConfirm?.actor];
             if (this._enabled && this._inputOpen && !this._ownsFocus(global.stage.get_key_focus(), allowed))
                 this._hideInput(false);
             return GLib.SOURCE_REMOVE;
@@ -1865,6 +1940,15 @@ export default class ZaikoExtension extends Extension {
         this._endCharacterDrag();
         this._endSelectionDrag();
         this._releaseFocus(false);
+        if (this._quitConfirmSource)
+            GLib.Source.remove(this._quitConfirmSource);
+        this._quitConfirmSource = 0;
+        this._quitConfirm?.destroy();
+        this._quitConfirm = null;
+        this._quitConfirmManager = null;
+        this._quitConfirmTitle = null;
+        this._quitCancel = null;
+        this._quitAccept = null;
         this._characterMenu?.destroy();
         this._characterMenu = null;
         this._characterMenuManager = null;

@@ -1859,6 +1859,38 @@ export default class OverlayQA extends ZaikoExtension {
             qaColor(this._characterMenu.box.get_theme_node().get_background_color(), '#282c34'), 'Character menu uses the One Half Dark surface');
         const logItem = items.find(item => item.label?.text === 'Log');
         qaAssert(!items.some(item => item.label?.text === 'Theme') && items.some(item => item.label?.text === 'Quit'), 'Quit is reachable and theme selection is gone');
+        // Quit asks first: Cancel keeps Zaiko running, Quit quits.
+        const quitItem = items.find(item => item.label?.text === 'Quit');
+        const quitCore = this._quitCore;
+        let quits = 0;
+        this._quitCore = async () => {
+            quits++;
+            return true;
+        };
+        await this._click(quitItem);
+        // Let the popup finish sliding in before clicking its buttons.
+        await qaPause(400);
+        qaAssert(!this._characterMenu.isOpen && this._quitConfirm.isOpen &&
+            this._quitConfirmTitle.label.text === 'Confirm quit?' && this._quitCancel.label === 'Cancel' &&
+            this._quitAccept.label === 'Quit' && this._quitCancel.has_key_focus(),
+        'Quit closes the menu and asks to confirm, with Cancel focused');
+        const [pointerX, pointerY] = global.get_pointer();
+        const [confirmX, confirmY] = this._quitConfirm.actor.get_transformed_position();
+        const gap = (value, start, size) => Math.max(0, start - value, value - start - size);
+        qaAssert(gap(pointerX, confirmX, this._quitConfirm.actor.width) <= 24 &&
+            gap(pointerY, confirmY, this._quitConfirm.actor.height) <= 24,
+        `The confirmation opens at the pointer: ${JSON.stringify({pointer: [pointerX, pointerY], confirm: [confirmX, confirmY]})}`);
+        await this._click(this._quitCancel);
+        await qaPause(200);
+        qaAssert(!this._quitConfirm.isOpen && !quits, 'Cancel closes the confirmation without quitting');
+        await this._click(this._character, Clutter.BUTTON_SECONDARY);
+        await this._click(quitItem);
+        await qaPause(400);
+        await this._click(this._quitAccept);
+        qaAssert(!this._quitConfirm.isOpen && quits === 1, 'Quit in the confirmation quits once');
+        this._quitCore = quitCore;
+        await this._click(this._character, Clutter.BUTTON_SECONDARY);
+        qaAssert(this._characterMenu.isOpen, 'The menu opens again after the confirmation');
         await this._key(Clutter.KEY_Escape);
         qaAssert(this._answerLabel.visible, 'Closing menu keeps unexpired floating text visible');
         await this._click(this._character, Clutter.BUTTON_SECONDARY);

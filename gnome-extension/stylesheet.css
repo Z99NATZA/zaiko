@@ -179,6 +179,20 @@
 .zaiko-context .popup-menu-item:active, .zaiko-context .popup-menu-item:hover,
 .zaiko-context.zaiko-keyboard .popup-menu-item:focus { color: #dcdfe4; background-color: rgba(220, 223, 228, 0.1); }
 .zaiko-context .popup-menu-item:insensitive { color: #5c6370; background-color: transparent; }
+/* Quit confirmation: the title row is plain text, the buttons sit on the right. */
+.zaiko-context .popup-menu-item.zaiko-confirm-title:insensitive { color: #dcdfe4; }
+.zaiko-context .popup-menu-item.zaiko-confirm-row { padding: 2px 4px 0; }
+.zaiko-confirm-buttons { spacing: 4px; }
+.zaiko-confirm-button {
+    color: #dcdfe4;
+    background-color: transparent;
+    border: none;
+    border-radius: 4px;
+    padding: 5px 10px;
+    transition-duration: 0;
+}
+.zaiko-confirm-button:hover, .zaiko-confirm-button:active,
+.zaiko-context.zaiko-keyboard .zaiko-confirm-button:focus { background-color: rgba(220, 223, 228, 0.1); }
 .zaiko-command-menu {
     color: #dcdfe4;
     background-color: rgba(40, 44, 52, 0.98);

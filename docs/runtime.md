@@ -164,6 +164,10 @@ right-click position and flips or shifts to stay inside the monitor's work area
 at screen edges. It is stacked
 above the floating reply. Input Copy/Paste and message
 Copy menus share the Log/Quit menu's surface, corners, spacing and desktop font.
+Choosing Quit closes the menu and opens a confirm popup at the pointer (at the
+menu's point when Quit is chosen from the keyboard):
+"Confirm quit?" with Cancel and Quit on the right. Cancel has focus, so Enter
+or Escape keeps Zaiko running; Quit quits.
 Input menus retain GNOME's Copy/Paste actions and disabled states, without
 additional shortcut labels.
 Menus appear above the companion surfaces; input menus sit outside the complete
@@ -206,8 +210,8 @@ with your user's permissions once Aiko calls them. /status shows the mode.
 Type /clear or /cls (they are the same) to clear the chat and start over: the Log
 and the history sent to the model are emptied, and the provider/model stays as it is.
 It takes no arguments and, like other commands, waits until no request is active.
-Type /exit to quit Zaiko exactly like the Quit menu; the extension handles it
-without submitting it to the core. If Quit fails, the draft is restored.
+Type /exit to quit Zaiko right away, without the Quit menu's confirm popup; the
+extension handles it without submitting it to the core. If Quit fails, the draft is restored.
 Typing / opens a command picker above the focused compact or Log composer.
 Each row shows a command and its description; typing filters command prefixes.
 The flat list aligns to the input's width, with shared command/description
