@@ -184,6 +184,36 @@ export default class OverlayQA extends ZaikoExtension {
         await qaPause(40);
         const selection = text.get_selection();
         qaAssert(selection && selection.length < label.text.length, 'Dragging selects part of a read-only transcript message');
+
+        // A drag that leaves Log keeps its grab, selection and release.
+        this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), x + startX + 1, y + startY + lineHeight / 2);
+        await qaPause(25);
+        this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
+        await qaPause(25);
+        const [panelX] = this._panel.get_transformed_position();
+        for (let step = 1; step <= 4; step++) {
+            this._pointer.notify_absolute_motion(GLib.get_monotonic_time(),
+                x + startX + (panelX + this._panel.width + 80 - x - startX) * step / 4, y + startY + lineHeight / 2);
+            await qaPause(25);
+        }
+        const grabbed = Boolean(this._selectionGrab);
+        this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
+        await qaPause(40);
+        qaAssert(grabbed && !this._selectionGrab && !this._selectionDrag && text.has_key_focus() &&
+            text.get_selection()?.length > selection.length,
+        `A selection drag that leaves Log keeps selecting until release: ${JSON.stringify({grabbed, selection: text.get_selection()})}`);
+        text.set_selection(0, 0);
+        this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), x + startX + 1, y + startY + lineHeight / 2);
+        await qaPause(25);
+        this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
+        for (let step = 1; step <= 4; step++) {
+            this._pointer.notify_absolute_motion(GLib.get_monotonic_time(),
+                x + startX + (endX - startX) * step / 4, y + endY + lineHeight / 2);
+            await qaPause(25);
+        }
+        this._pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
+        await qaPause(40);
+        qaAssert(text.get_selection() === selection, 'The partial selection is restored for the copy checks');
         qaAssert(text.has_key_focus() && !text.editable, 'Transcript selection receives keyboard focus without enabling edits');
         qaAssert(qaColor(text.get_selection_color(), '#4a6988') &&
             qaColor(text.get_selected_text_color(), '#dcdfe4'), 'Transcript selection uses the existing visible selection palette');

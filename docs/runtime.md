@@ -110,7 +110,8 @@ and [Aiko] message directly, without bubbles or separate role headings. Only
 the prefixes have participant-specific colors; all message bodies use the same
 color. Tool results use [Action]. Markup-like message content is literal text.
 Drag to select text within a message (shown in the inputs' blue #4a6988) and
-press Ctrl+C to copy it. Typing or pasting (Ctrl+V, Ctrl+Shift+V, Shift+Insert)
+press Ctrl+C to copy it. The drag keeps selecting until release, even after the
+pointer leaves Log or crosses an app window. Typing or pasting (Ctrl+V, Ctrl+Shift+V, Shift+Insert)
 while a message is selected clears the selection and continues in the Log input,
 including Vim and the command picker. Right click a
 message and choose Copy to copy the selection, or the whole message when nothing

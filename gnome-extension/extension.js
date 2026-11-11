@@ -104,6 +104,7 @@ export default class ZaikoExtension extends Extension {
         this._knownReplies = null;
         this._focusDismissSource = 0;
         this._selectionDrag = null;
+        this._selectionGrab = null;
         this._logClick = null;
         this._dragOrigin = null;
         this._characterGrab = null;
@@ -484,6 +485,25 @@ export default class ZaikoExtension extends Extension {
             grab.dismiss();
         }
         this._characterGrabSignal = 0;
+    }
+
+    // Over an app window, GNOME sends pointer events to the app unless the
+    // Shell holds a grab, so a drag that leaves Log would lose its release.
+    _startSelectionDrag(label, text, anchor) {
+        this._endSelectionDrag();
+        this._selectionDrag = {text, anchor};
+        this._selectionGrab = global.stage.grab(label);
+        this._selectionGrab.connect('notify::revoked', grab => {
+            if (grab.is_revoked() && grab === this._selectionGrab)
+                this._endSelectionDrag();
+        });
+    }
+
+    _endSelectionDrag() {
+        this._selectionDrag = null;
+        const grab = this._selectionGrab;
+        this._selectionGrab = null;
+        grab?.dismiss();
     }
 
     _buildPanel() {
@@ -1077,7 +1097,7 @@ export default class ZaikoExtension extends Extension {
             const {text, anchor} = this._selectionDrag;
             text.set_selection(anchor, this._textPositionAtEvent(text, event));
             if (event.type() === Clutter.EventType.BUTTON_RELEASE)
-                this._selectionDrag = null;
+                this._endSelectionDrag();
         }
         this._focusLogOnClick(event);
         if (![Clutter.EventType.BUTTON_PRESS, Clutter.EventType.TOUCH_BEGIN].includes(event.type()))
@@ -1426,6 +1446,12 @@ export default class ZaikoExtension extends Extension {
         label.can_focus = true;
         text.reactive = true;
         label.connect('captured-event', (_actor, event) => {
+            // The drag's grab sends motion and release here, even over windows.
+            if (this._selectionDrag?.text === text &&
+                [Clutter.EventType.MOTION, Clutter.EventType.BUTTON_RELEASE].includes(event.type())) {
+                this._dismissFocusOutside(event);
+                return Clutter.EVENT_STOP;
+            }
             // Track content and padding together, keeping release observable so
             // a plain click can focus the composer while a drag selects text.
             if (event.type() !== Clutter.EventType.BUTTON_PRESS || event.get_button() !== Clutter.BUTTON_PRIMARY)
@@ -1434,7 +1460,7 @@ export default class ZaikoExtension extends Extension {
             text.grab_key_focus();
             const anchor = this._textPositionAtEvent(text, event);
             text.set_selection(anchor, anchor);
-            this._selectionDrag = {text, anchor};
+            this._startSelectionDrag(label, text, anchor);
             return Clutter.EVENT_STOP;
         });
         // St.Label does not forward the entry selection CSS to Clutter.Text.
@@ -1493,7 +1519,7 @@ export default class ZaikoExtension extends Extension {
         label.add_action_full('copy-menu', Clutter.EventPhase.CAPTURE, click);
         label.connect('destroy', () => {
             if (this._selectionDrag?.text === text)
-                this._selectionDrag = null;
+                this._endSelectionDrag();
             label.menu.destroy();
             label.menu = null;
             label._menuManager = null;
@@ -1837,7 +1863,7 @@ export default class ZaikoExtension extends Extension {
     disable() {
         this._enabled = false;
         this._endCharacterDrag();
-        this._selectionDrag = null;
+        this._endSelectionDrag();
         this._releaseFocus(false);
         this._characterMenu?.destroy();
         this._characterMenu = null;
