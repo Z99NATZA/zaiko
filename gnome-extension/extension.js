@@ -916,8 +916,8 @@ export default class ZaikoExtension extends Extension {
         this._answerMaxWidth = Math.min(320, Math.max(1, area.width - 16));
         this._renderCompact();
         if (!this._positioned) {
-            this._positionCharacter(area.x + area.width - this._characterBox.width - 24,
-                area.y + area.height - this._characterBox.height - 16);
+            // First appear at the bottom-left of the work area.
+            this._positionCharacter(area.x + 24, area.y + area.height - this._characterBox.height - 16);
             this._positioned = true;
         } else {
             this._positionCharacter(this._character.x, this._character.y);
