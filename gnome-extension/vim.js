@@ -360,7 +360,7 @@ export class InputVim {
             if (key === 'a')
                 cursor = Math.min(characters.length, cursor + 1);
             else if (key === 'A')
-                cursor = characters.length;
+                cursor = line(characters, cursor)[1];
             else if (key === 'C')
                 characters.splice(cursor);
         } else if (['d', 'c', 'r'].includes(key)) {

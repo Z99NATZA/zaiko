@@ -55,6 +55,20 @@ test('insert and append preserve drafts, and Escape moves back to the last edite
     assert.equal(input.cursor, Array.from(input.text).length - 1);
 });
 
+test('A appends at the end of the cursor line, not the whole draft', () => {
+    for (const [text, cursor, expected] of [
+        ['one\ntwo\nthree', 1, 'one!\ntwo\nthree'],
+        ['one\ntwo\nthree', 5, 'one\ntwo!\nthree'],
+        ['one\ntwo\nthree', 9, 'one\ntwo\nthree!'],
+        ['one\n\nthree', 4, 'one\n!\nthree'],
+        ['ไทย\nabc', 0, 'ไทย!\nabc'],
+    ]) {
+        const input = editor(text, cursor);
+        input.keys('A!');
+        assert.equal(input.text, expected, JSON.stringify({text, cursor}));
+    }
+});
+
 test('ciw and C edit word boundaries without affecting neighboring text', () => {
     const input = editor('alpha beta tail');
     input.keys('wciwgamma');

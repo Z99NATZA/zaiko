@@ -278,7 +278,7 @@ Following zhyprbola Tasks, normal mode uses a steady block cursor. h/l or the
 left/right arrows move by character, j/k move down/up a displayed row (keeping the
 horizontal position), including rows wrapped automatically to fit either input.
 0/$ move to the start/end, and b/w move by
-word. i inserts before the cursor, a after it, and A at the end. ciw changes the
+word. i inserts before the cursor, a after it, and A at the end of the cursor's line. ciw changes the
 current word, C changes through the end, x deletes the character under the cursor, r replaces one character, and R replaces
 continuously; Backspace restores overwritten characters in R mode. dd deletes
 only the current line in the input draft, preserving the other lines; on a line
