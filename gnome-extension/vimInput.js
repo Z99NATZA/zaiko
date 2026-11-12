@@ -12,14 +12,14 @@ const NORMAL_KEYS = new Map([
 ]);
 
 export class VimInput {
-    constructor(entry, caret, submit, keepsFocus = null, onMode = null, modeState = null) {
+    constructor(entry, caret, submit, keepsFocus = null, onMode = null, modeState = null, sent = []) {
         this.entry = entry;
         this._text = entry.clutter_text;
         this._caret = caret;
         this._submit = submit;
         this._onMode = onMode;
         this._modeState = modeState;
-        this._state = new InputVim();
+        this._state = new InputVim(sent);
         this._restoreMode();
         this._enabled = false;
         this._available = false;
@@ -58,6 +58,7 @@ export class VimInput {
             if (!this._updating) {
                 this._state.pending = '';
                 this._state.history = [];
+                this._state.forgetRecall();
                 this._leaveVisual();
             }
             this._queueCursor();

@@ -23,6 +23,7 @@ import {CharacterMotion} from './characterMotion.js';
 import {TICK_MS, Typewriter, firstGraphemes, graphemes} from './typewriter.js';
 import {answerPreview} from './answerPreview.js';
 import {CaretBlink} from './caret.js';
+import {rememberSent} from './vim.js';
 import {VimInput} from './vimInput.js';
 import {CommandMenu} from './commandMenu.js';
 import {LANGUAGES, normalizeLanguage, createTranslator} from './i18n.js';
@@ -123,6 +124,8 @@ export default class ZaikoExtension extends Extension {
         this._characterSize = this._loadCharacterSize();
         this._characterBox = characterBox(this._characterSize);
         this._vimModeState = {mode: 'normal'};
+        // The latest sent drafts, shared by both inputs for Vim j/k.
+        this._sentDrafts = [];
         this._catalogs = this._loadCatalogs();
         this._language = this._loadLanguage();
         this._translate = createTranslator(this._catalogs, this._language);
@@ -148,7 +151,8 @@ export default class ZaikoExtension extends Extension {
                     ? focus => this._ownsFocus(focus, [this._panel, ...this._logMessageMenus().map(menu => menu.actor)])
                     : null;
                 const onMode = entry === this._logEntry ? mode => this._renderLogVimMode(mode) : null;
-                const vim = new VimInput(entry, caret, () => this._submit(entry), keepsFocus, onMode, this._vimModeState);
+                const vim = new VimInput(entry, caret, () => this._submit(entry), keepsFocus, onMode, this._vimModeState,
+                    this._sentDrafts);
                 this._vimInputs.push(vim);
                 vim.setEnabled(this._vimEnabled);
                 vim.setAvailable(Boolean(this._coreOwner && !this._busy()));
@@ -1797,6 +1801,7 @@ export default class ZaikoExtension extends Extension {
         const text = entry.get_text().trim();
         if (!text || this._busy() || !this._coreOwner)
             return;
+        rememberSent(this._sentDrafts, text);
         // /vim toggles input Vim like its menu row, without reaching the core.
         if (text === '/vim') {
             entry.set_text('');

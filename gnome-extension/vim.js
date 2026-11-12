@@ -84,15 +84,54 @@ function changeCase(characters, from, to, upper) {
 }
 
 const UNDO_LIMIT = 10;
+export const SENT_LIMIT = 10;
+
+// Adds a sent draft as the newest entry, dropping an older copy of it and
+// anything past the limit, so the list holds the latest distinct drafts.
+export function rememberSent(sent, text) {
+    const index = sent.indexOf(text);
+    if (index >= 0)
+        sent.splice(index, 1);
+    sent.push(text);
+    if (sent.length > SENT_LIMIT)
+        sent.splice(0, sent.length - SENT_LIMIT);
+}
 
 export class InputVim {
-    constructor() {
+    // sent lists earlier drafts, oldest first; inputs may share one list.
+    constructor(sent = []) {
+        this.sent = sent;
+        this.forgetRecall();
         this.reset();
         // Undo steps are {text, cursor} snapshots; saved is the text as of the
         // last step, so edits made outside Vim commands are noticed later.
         this.undos = [];
         this.redos = [];
         this.saved = null;
+    }
+
+    // recalled is the index in sent shown in place of draft, or null for the
+    // draft itself. Editing a recalled entry makes it the new draft.
+    forgetRecall() {
+        this.recalled = null;
+        this.draft = '';
+    }
+
+    // At the first/last row, k/j step to an older/newer sent draft and, past
+    // the newest, back to the draft. The cursor lands where moving on in the
+    // same direction continues: the last line's start for k, the start for j.
+    _recall(characters, cursor, key) {
+        const older = key === 'k';
+        const next = this.recalled === null ? (older ? this.sent.length - 1 : -1)
+            : this.recalled + (older ? -1 : 1);
+        if (next < 0 || (this.recalled === null && !older))
+            return {characters, cursor, recalled: false};
+        if (this.recalled === null)
+            this.draft = characters.join('');
+        this.recalled = next < this.sent.length ? next : null;
+        const text = Array.from(this.recalled === null ? this.draft : this.sent[this.recalled]);
+        const [start] = line(text, text.length);
+        return {characters: text, cursor: older ? normal(text, start) : 0, recalled: true};
     }
 
     // Visual mode needs its anchor, so it never survives a reset.
@@ -147,7 +186,10 @@ export class InputVim {
         if (mode === 'normal' && !this.pending && (key === 'u' || key === 'C-r'))
             return key === 'u' ? this._step(value, position, this.undos, this.redos)
                 : this._step(value, position, this.redos, this.undos);
+        const recalled = this.recalled;
         const result = this._command(value, position, key, measure);
+        if (this.recalled === recalled && result.handled && result.text !== value)
+            this.forgetRecall();
         // A command that enters insert or replace mode joins the typing after
         // it in a single step, which track() records on Escape.
         if (result.handled && ['normal', 'visual'].includes(this.mode))
@@ -156,7 +198,7 @@ export class InputVim {
     }
 
     _command(value, position, key, measure) {
-        const characters = Array.from(value);
+        let characters = Array.from(value);
         let cursor = position < 0 ? characters.length : position;
         if (this.mode === 'visual' && this.anchor === null)
             this.mode = 'normal';
@@ -267,6 +309,13 @@ export class InputVim {
             const heights = [...rows.keys()].sort((a, b) => a - b);
             const index = heights.indexOf(current.y);
             const target = rows.get(heights[index + (key === 'j' ? 1 : -1)]);
+            if (index >= 0 && !target && !visual) {
+                const recall = this._recall(characters, cursor, key);
+                if (recall.recalled)
+                    this.column = null;
+                ({characters, cursor} = recall);
+                return result();
+            }
             if (index < 0 || !target)
                 return result();
             let distance = Infinity;

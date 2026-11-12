@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {InputVim} from '../vim.js';
+import {InputVim, rememberSent, SENT_LIMIT} from '../vim.js';
 
-function editor(text, cursor = 0) {
-    const vim = new InputVim();
+function editor(text, cursor = 0, sent = []) {
+    const vim = new InputVim(sent);
     return {
         vim, text, cursor,
         key(key) {
@@ -482,4 +482,43 @@ test('undo keeps the 10 latest steps and a new change clears redo', () => {
     const vim = new InputVim();
     vim.handle('draft', 0, 'l');
     assert.deepEqual(vim.handle('', 0, 'u'), {handled: true, text: 'draft', cursor: 1});
+});
+
+test('sent drafts keep the latest distinct entries, at most the limit', () => {
+    const sent = [];
+    for (let index = 0; index < SENT_LIMIT + 3; index++)
+        rememberSent(sent, `m${index}`);
+    assert.equal(sent.length, SENT_LIMIT);
+    assert.equal(sent[0], 'm3');
+    rememberSent(sent, 'm5');
+    assert.equal(sent.length, SENT_LIMIT);
+    assert.equal(sent.at(-1), 'm5');
+    assert.equal(sent.filter(text => text === 'm5').length, 1);
+});
+
+test('k and j past the first and last rows step through sent drafts and back', () => {
+    const input = editor('draft', 2, ['old', 'two\nlines', 'new']);
+    input.key('k'); assert.equal(input.text, 'new');
+    input.key('k'); assert.equal(input.text, 'two\nlines');
+    assert.equal(input.cursor, 4);
+    // Inside a multi-line entry, k moves up a line before reaching older drafts.
+    input.key('k'); assert.equal(input.text, 'two\nlines'); assert.equal(input.cursor, 0);
+    input.key('k'); assert.equal(input.text, 'old');
+    input.key('k'); assert.equal(input.text, 'old');
+    input.key('j'); assert.equal(input.text, 'two\nlines'); assert.equal(input.cursor, 0);
+    input.key('j'); assert.equal(input.cursor, 4);
+    input.key('j'); assert.equal(input.text, 'new');
+    input.key('j'); assert.equal(input.text, 'draft');
+    input.key('j'); assert.equal(input.text, 'draft');
+});
+
+test('editing a recalled draft makes it the draft, and visual mode never recalls', () => {
+    const input = editor('', 0, ['first', 'second']);
+    input.key('k'); assert.equal(input.text, 'second');
+    input.key('x'); assert.equal(input.text, 'econd');
+    input.key('k'); assert.equal(input.text, 'second');
+    input.key('j'); assert.equal(input.text, 'econd');
+    input.key('V');
+    input.key('k'); assert.equal(input.text, 'econd');
+    input.key('j'); assert.equal(input.text, 'econd');
 });
