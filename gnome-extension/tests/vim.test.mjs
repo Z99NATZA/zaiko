@@ -494,6 +494,12 @@ test('sent drafts keep the latest distinct entries, at most the limit', () => {
     assert.equal(sent.length, SENT_LIMIT);
     assert.equal(sent.at(-1), 'm5');
     assert.equal(sent.filter(text => text === 'm5').length, 1);
+    for (const command of ['/status', '/model gpt-6.1-mini', '/vim', '  /clear'])
+        rememberSent(sent, command);
+    assert.equal(sent.length, SENT_LIMIT);
+    assert.equal(sent.at(-1), 'm5');
+    rememberSent(sent, 'see /tmp/log');
+    assert.equal(sent.at(-1), 'see /tmp/log');
 });
 
 test('k and j past the first and last rows step through sent drafts and back', () => {

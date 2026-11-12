@@ -88,7 +88,11 @@ export const SENT_LIMIT = 10;
 
 // Adds a sent draft as the newest entry, dropping an older copy of it and
 // anything past the limit, so the list holds the latest distinct drafts.
+// Slash commands (a first word starting with /, as the core reads them) are
+// not messages and stay out.
 export function rememberSent(sent, text) {
+    if (text.trimStart().startsWith('/'))
+        return;
     const index = sent.indexOf(text);
     if (index >= 0)
         sent.splice(index, 1);
