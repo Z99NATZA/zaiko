@@ -210,6 +210,9 @@ with your user's permissions once Aiko calls them. /status shows the mode.
 Type /clear or /cls (they are the same) to clear the chat and start over: the Log
 and the history sent to the model are emptied, and the provider/model stays as it is.
 It takes no arguments and, like other commands, waits until no request is active.
+Type /vim to toggle input Vim, exactly like the Vim: off/on menu row; the
+extension handles it without submitting it to the core, empties the draft and
+keeps the input open.
 Type /exit to quit Zaiko right away, without the Quit menu's confirm popup; the
 extension handles it without submitting it to the core. If Quit fails, the draft is restored.
 Typing / opens a command picker above the focused compact or Log composer.
@@ -262,8 +265,8 @@ or invalid value means 3.
 Input Vim
 ----------
 
-Vim is off by default. Click the Vim: off/on menu row to toggle it; the menu stays
-open and the row immediately shows the current value. The choice is saved in
+Vim is off by default. Click the Vim: off/on menu row or type /vim to toggle it;
+the menu stays open and the row immediately shows the current value. The choice is saved in
 ~/.config/zaiko/input-vim-enabled (following XDG_CONFIG_HOME), independently of
 zhyprbola. It applies to both the compact input and the Log input.
 

@@ -50,7 +50,7 @@ requests are the user's own actions and are not affected.
 switch, with no message and only an idle state event. Arguments get a usage reply;
 a rejected request (active slot or duplicate ID) clears nothing. Request IDs stay used.
 /exit never reaches Submit: the extension calls
-Quit instead. Arguments and unknown slash commands receive local
+Quit instead. /vim never reaches Submit either: the extension toggles input Vim. Arguments and unknown slash commands receive local
 usage/unsupported replies. Local replies use the normal message/state events and
 retained history; the same active-slot and request-ID guards apply.
 Only terminal and vscode are valid app aliases.

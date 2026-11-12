@@ -426,8 +426,8 @@ export default class OverlayQA extends ZaikoExtension {
             const menu = this._commandMenus.find(candidate => candidate.entry === entry);
             entry.set_text('/');
             await qaPause(180);
-            qaAssert(menu.actor.visible && menu._rows.length === 6 &&
-                menu._matches.map(command => command.name).join() === '/status,/model,/permissions,/clear,/cls,/exit',
+            qaAssert(menu.actor.visible && menu._rows.length === 7 &&
+                menu._matches.map(command => command.name).join() === '/status,/model,/permissions,/clear,/cls,/vim,/exit',
                 'The production picker contains only supported commands');
             qaAssert(menu._hint.visible && menu.actor.get_child_at_index(0) === menu._hint &&
                 menu._hintLabel.text === 'Super + j/k or ↑ ↓' &&

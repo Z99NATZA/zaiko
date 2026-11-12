@@ -25,6 +25,7 @@
   "command.model": "Show or switch the model for this session: /model <model-id>",
   "command.permissions": "Choose whether Aiko asks before acting",
   "command.clear": "Clear the chat and start over",
+  "command.vim": "Turn Vim input on or off",
   "command.exit": "Quit Zaiko right away",
   "command.navigate": "Super + j/k or",
   "status.sending": "Sending…",

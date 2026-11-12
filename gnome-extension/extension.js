@@ -1797,6 +1797,12 @@ export default class ZaikoExtension extends Extension {
         const text = entry.get_text().trim();
         if (!text || this._busy() || !this._coreOwner)
             return;
+        // /vim toggles input Vim like its menu row, without reaching the core.
+        if (text === '/vim') {
+            entry.set_text('');
+            this._toggleVim();
+            return;
+        }
         // /exit is handled here, like the Quit menu, rather than by the core.
         if (text === '/exit') {
             entry.set_text('');

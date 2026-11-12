@@ -25,6 +25,7 @@
   "command.model": "ดูหรือสลับโมเดลในเซสชันนี้: /model <model-id>",
   "command.permissions": "เลือกว่าจะให้ถามก่อนลงมือ หรือทำได้ทันที",
   "command.clear": "ล้างแชตแล้วเริ่มใหม่",
+  "command.vim": "เปิดหรือปิดโหมด Vim ในช่องพิมพ์",
   "command.exit": "ปิด",
   "command.navigate": "Super + j/k หรือ",
   "status.sending": "กำลังส่ง…",

@@ -4,6 +4,7 @@ export const SLASH_COMMANDS = Object.freeze([
     {name: '/permissions', descriptionKey: 'command.permissions'},
     {name: '/clear', descriptionKey: 'command.clear'},
     {name: '/cls', descriptionKey: 'command.clear'},
+    {name: '/vim', descriptionKey: 'command.vim'},
     {name: '/exit', descriptionKey: 'command.exit'},
 ]);
 

@@ -50,9 +50,12 @@ test('language changes descriptions, elapsed units and speaker labels without ch
     assert.deepEqual(commandMatches('/c', thai).map(command => command.name), ['/clear', '/cls']);
     assert.equal(thai[3].description, thai[4].description);
     assert.notEqual(english[3].description, thai[3].description);
-    assert.deepEqual(commandMatches('/ex', thai), [thai[5]]);
-    assert.equal(thai[5].name, '/exit');
+    assert.deepEqual(commandMatches('/v', thai), [thai[5]]);
+    assert.equal(thai[5].name, '/vim');
     assert.notEqual(english[5].description, thai[5].description);
+    assert.deepEqual(commandMatches('/ex', thai), [thai[6]]);
+    assert.equal(thai[6].name, '/exit');
+    assert.notEqual(english[6].description, thai[6].description);
     assert.equal(formatElapsed(7290, {hour: th('time.hour'), minute: th('time.minute'), second: th('time.second')}),
         '2ชม. 1นาที 30วินาที');
     const message = {role: 'user', content: '<tag> 🙂 ที่'};
