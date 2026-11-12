@@ -97,6 +97,7 @@
     caret-color: #dcdfe4;
     selection-background-color: #4a6988;
     selected-color: #dcdfe4;
+    font-family: monospace;
     font-size: 13px;
     font-weight: 400;
 }

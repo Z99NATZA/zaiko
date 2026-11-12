@@ -157,7 +157,8 @@ export default class ZaikoExtension extends Extension {
                 vim.setEnabled(this._vimEnabled);
                 vim.setAvailable(Boolean(this._coreOwner && !this._busy()));
             }
-            this._connect(this._interfaceSettings, 'changed::font-name', () => this._applyFont());
+            for (const key of ['font-name', 'monospace-font-name'])
+                this._connect(this._interfaceSettings, `changed::${key}`, () => this._applyFont());
             this._connect(this._interfaceSettings, 'changed::text-scaling-factor', () => this._layout());
             this._connect(St.ThemeContext.get_for_stage(global.stage), 'notify::scale-factor', () => this._layout());
             this._applyFont();
@@ -359,15 +360,23 @@ export default class ZaikoExtension extends Extension {
             entry.clutter_text.editable = available;
     }
 
+    _fontFamily(key, fallback) {
+        const font = Pango.FontDescription.from_string(this._interfaceSettings.get_string(key));
+        return (font.get_family() || fallback).replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+    }
+
     _applyFont() {
-        const font = Pango.FontDescription.from_string(this._interfaceSettings.get_string('font-name'));
-        const family = (font.get_family() || 'sans-serif').replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+        const family = this._fontFamily('font-name', 'sans-serif');
         for (const actor of [this._panel, this._inputOverlay, this._answerLabel, this._characterMenu.actor,
             this._quitConfirm.actor,
             ...this._commandMenus.map(menu => menu.actor),
             this._overlayEntry.menu.actor, this._logEntry.menu.actor,
             ...this._logMessageMenus().map(menu => menu.actor)])
             actor.set_style(`font-family: "${family}";`);
+        // Typed text uses fixed-width glyphs so editing a letter never shifts the rest.
+        const monospace = this._fontFamily('monospace-font-name', 'monospace');
+        for (const entry of [this._logEntry, this._overlayEntry])
+            entry.set_style(`font-family: "${monospace}", monospace;`);
         this._renderCompact();
     }
 
