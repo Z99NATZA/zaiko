@@ -489,8 +489,10 @@ export default class ZaikoExtension extends Extension {
             this._positionCharacter(drag.x + dx, drag.y + dy);
         if (release) {
             this._endCharacterDrag();
-            if (!drag.dragging)
+            if (!drag.dragging) {
+                this._showNextFrame();
                 this._showInput();
+            }
         }
         return Clutter.EVENT_STOP;
     }
