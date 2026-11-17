@@ -403,8 +403,13 @@ models copied them as text ("Command: ... Exit: 0") and claimed actions that
 never ran. When a command fails because a file or folder does not exist, its
 result carries a hint to search for the path before asking the user.
 
-zter cannot type into or change the folder of a tab that is already open; the
-prompt states this so Aiko does not look for a workaround. In general, when the
+zter cannot type into or change the folder of a tab that is already open, and
+Zaiko cannot close terminal tabs or app windows; the prompt states this so Aiko
+does not look for a workaround, and in particular does not kill programs by name
+(another cava, for example, may be running). For DeepSeek and Ollama, a reply
+that reports a finished action ("ให้แล้ว", "เรียบร้อยแล้ว", "I've opened", and
+similar) when no tool ran for the request gets one system note saying nothing
+happened, so the model either calls a tool or says the action is not supported. In general, when the
 tools cannot do something, she says briefly that it is not supported, without
 suggesting alternatives unless asked.
 

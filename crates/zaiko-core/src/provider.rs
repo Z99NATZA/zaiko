@@ -27,6 +27,8 @@ const LANGUAGE_NOTE: &str = "Your previous reply mixed in another language. Rewr
 // Prefixed to Log records in the history sent to the model, so a model does
 // not take them for its own replies and imitate them instead of calling tools.
 const TOOL_LOG_NOTE: &str = "Tool log from earlier in this conversation, recorded by Zaiko, not written by you. Writing text like this does nothing; only tool calls act.";
+// Sent once when a reply reports an action although no tool ran for the request.
+const UNBACKED_NOTE: &str = "Your reply says an action was done, but no tool ran for this request, so nothing happened. If the user asked for something a tool can do, call that tool now. Otherwise reply again without claiming any action, and say briefly that it is not supported yet.";
 const LIMIT_REPLY: &str = "ส่วนที่เหลือไอโกะยังทำให้ไม่ได้ค่ะ ตอนนี้ยังไม่รองรับนะคะ";
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
@@ -320,6 +322,7 @@ impl Client {
         let mut messages = vec![json!({"role":"system","content":self.instructions()})];
         messages.extend(history.iter().map(history_item));
         let mut executed = Executed::default();
+        let mut checked = false;
         for _ in 0..=MAX_TOOL_CALLS {
             let response = self.complete(&messages, Some("auto")).await?;
             let message = choice_message(&response)?;
@@ -328,6 +331,14 @@ impl Client {
                 .filter(|calls| !calls.is_empty());
             let Some(calls) = calls else {
                 let text = message["content"].as_str().unwrap_or_default().to_owned();
+                // A reply reporting an action when no tool ran is made up; give
+                // the model one chance to act or to say it cannot.
+                if executed.count == 0 && !checked && claims_action(&text) {
+                    checked = true;
+                    messages.push(json!({"role":"assistant","content":text}));
+                    messages.push(json!({"role":"system","content":UNBACKED_NOTE}));
+                    continue;
+                }
                 let text = self.keep_voice(history, &messages, text).await;
                 return self.reply(text);
             };
@@ -568,6 +579,30 @@ fn feminine(text: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("```")
+}
+
+/// Whether a reply reports a finished action, such as "เปิดให้แล้วค่ะ".
+fn claims_action(text: &str) -> bool {
+    const THAI: [&str; 8] = [
+        "ให้แล้ว",
+        "เรียบร้อยแล้ว",
+        "เรียกเปิด",
+        "เปิดแล้ว",
+        "ปิดแล้ว",
+        "รันแล้ว",
+        "แก้แล้ว",
+        "ลบแล้ว",
+    ];
+    const ENGLISH: [&str; 8] = [
+        "opened", "closed", "started", "stopped", "changed", "updated", "deleted", "ran ",
+    ];
+    let lower = text.to_lowercase();
+    THAI.iter().any(|marker| text.contains(marker))
+        || ["i've ", "i have "].iter().any(|subject| {
+            ENGLISH
+                .iter()
+                .any(|verb| lower.contains(&format!("{subject}{verb}")))
+        })
 }
 
 /// Han, kana, hangul, and their punctuation and full-width forms.
@@ -1445,6 +1480,48 @@ mod tests {
             .await;
         assert!(error.unwrap_err().contains("did not complete"));
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn claimed_actions_without_a_tool_get_one_correction() {
+        let reply =
+            |text: &str| json!({"choices":[{"message":{"role":"assistant","content":text}}]});
+        let history = [Message {
+            role: "user".into(),
+            content: "ปิด terminal ที่เปิดเมื่อกี้หน่อย".into(),
+            tool: false,
+        }];
+        let (url, server) = mock_server(vec![
+            reply("ปิด terminal ให้แล้วนะคะ"),
+            reply("ตอนนี้ยังปิด terminal ไม่ได้ค่ะ"),
+        ])
+        .await;
+        let mut tools = FakeTools::default();
+        let answer = test_client(Provider::DeepSeek, url)
+            .chat(&history, &mut tools)
+            .await;
+        assert_eq!(answer.unwrap(), "ตอนนี้ยังปิด terminal ไม่ได้ค่ะ");
+        let requests = server.await.unwrap();
+        let messages = requests[1]["messages"].as_array().unwrap();
+        assert_eq!(messages.last().unwrap()["content"], UNBACKED_NOTE);
+        assert_eq!(requests[1]["tool_choice"], "auto");
+
+        // Only one correction, and none for ordinary replies.
+        let (url, server) = mock_server(vec![
+            reply("ปิดให้แล้วค่ะ"),
+            reply("ปิดให้แล้วค่ะ"),
+            reply("สบายดีค่ะ"),
+        ])
+        .await;
+        let client = test_client(Provider::DeepSeek, url);
+        assert_eq!(
+            client.chat(&history, &mut tools).await.unwrap(),
+            "ปิดให้แล้วค่ะ"
+        );
+        assert_eq!(client.chat(&history, &mut tools).await.unwrap(), "สบายดีค่ะ");
+        assert_eq!(server.await.unwrap().len(), 3);
+        assert!(claims_action("Done, I've opened it."));
+        assert!(!claims_action("ขอบคุณที่ถามนะคะ สบายดีค่ะ"));
     }
 
     #[test]
