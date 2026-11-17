@@ -390,10 +390,18 @@ A structured field is easier for small local models than composing the zter
 call themselves. zter types the command into a new tab's shell, so any program
 available in zter works without a per-program rule. This needs a zter build with
 --run. A new tab in a running zter starts in the active tab's folder rather than
-the launching workdir, so a requested folder goes into the command:
-"cd '/path' && codex". Full-screen programs such as cava cannot run through
-run_command, which has no terminal; its output has terminal escape sequences and
-control characters removed, so such output cannot garble the Log.
+the launching workdir, so a requested folder goes into open_app's path, which
+starts the tab with cd into it. The same path opens VS Code at a folder or file
+("เปิด vscode ที่ my_code/rs"); relative paths are under home. Full-screen
+programs such as cava cannot run through run_command, which has no terminal;
+its output has terminal escape sequences and control characters removed, so
+such output cannot garble the Log.
+
+Command and app results in the Log are sent to the model in later requests as
+system notes marked as an earlier tool log. As plain assistant messages, small
+models copied them as text ("Command: ... Exit: 0") and claimed actions that
+never ran. When a command fails because a file or folder does not exist, its
+result carries a hint to search for the path before asking the user.
 
 zter cannot type into or change the folder of a tab that is already open; the
 prompt states this so Aiko does not look for a workaround. In general, when the

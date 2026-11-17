@@ -24,6 +24,9 @@ const ASK_NOTE: &str = "Permission mode: Ask for approval. Before calling any to
 const OLLAMA_NOTE: &str = "Write every reply only in the language of the user's latest message, for example only Thai when they write Thai. Never switch to Chinese or any other language mid-reply.";
 // Sent with tools disabled when a reply contains CJK text the user did not write.
 const LANGUAGE_NOTE: &str = "Your previous reply mixed in another language. Rewrite it entirely in the language of the user's latest message, keeping the same meaning and tone. Use no Chinese, Japanese, or Korean characters. Reply with the rewritten text only.";
+// Prefixed to Log records in the history sent to the model, so a model does
+// not take them for its own replies and imitate them instead of calling tools.
+const TOOL_LOG_NOTE: &str = "Tool log from earlier in this conversation, recorded by Zaiko, not written by you. Writing text like this does nothing; only tool calls act.";
 const LIMIT_REPLY: &str = "ส่วนที่เหลือไอโกะยังทำให้ไม่ได้ค่ะ ตอนนี้ยังไม่รองรับนะคะ";
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
@@ -114,6 +117,10 @@ impl Permissions {
 pub struct Message {
     pub role: String,
     pub content: String,
+    /// A Log record written by Zaiko, such as a tool result, rather than by
+    /// the user or the model. Snapshots do not include it.
+    #[serde(skip)]
+    pub tool: bool,
 }
 
 pub trait Tools {
@@ -246,10 +253,7 @@ impl Client {
         history: &[Message],
         tools: &mut impl Tools,
     ) -> Result<String, String> {
-        let mut input: Vec<Value> = history
-            .iter()
-            .map(|m| json!({"role":m.role,"content":m.content}))
-            .collect();
+        let mut input: Vec<Value> = history.iter().map(history_item).collect();
         let instructions = self.instructions();
         let request = |input: &[Value], tool_choice: &str| {
             let mut request = json!({
@@ -314,11 +318,7 @@ impl Client {
         tools: &mut impl Tools,
     ) -> Result<String, String> {
         let mut messages = vec![json!({"role":"system","content":self.instructions()})];
-        messages.extend(
-            history
-                .iter()
-                .map(|m| json!({"role":m.role,"content":m.content})),
-        );
+        messages.extend(history.iter().map(history_item));
         let mut executed = Executed::default();
         for _ in 0..=MAX_TOOL_CALLS {
             let response = self.complete(&messages, Some("auto")).await?;
@@ -398,7 +398,7 @@ impl Client {
     async fn keep_voice(&self, history: &[Message], messages: &[Value], text: String) -> String {
         let text = self.keep_language(history, messages, text).await;
         if self.config.provider == Provider::Ollama {
-            feminine(&text)
+            feminine(without_speaker(&text))
         } else {
             text
         }
@@ -447,6 +447,15 @@ impl Client {
             return Ok(text.to_owned());
         }
         Ok(text.replace(&self.config.api_key, "[redacted]"))
+    }
+}
+
+/// A history message as sent to the model; Log records become system notes.
+fn history_item(message: &Message) -> Value {
+    if message.tool {
+        json!({"role":"system","content":format!("{TOOL_LOG_NOTE}\n{}", message.content)})
+    } else {
+        json!({"role":message.role,"content":message.content})
     }
 }
 
@@ -518,6 +527,23 @@ fn ollama_response(mut response: Value, turn: usize) -> Value {
         _ => "stop",
     };
     json!({"choices":[{"message":message,"finish_reason":finish}]})
+}
+
+/// Drops a leading speaker label such as "ไอโกะ:", which local models copy
+/// from chat transcripts; the Log already names the speaker.
+fn without_speaker(text: &str) -> &str {
+    let trimmed = text.trim_start();
+    for label in ["ไอโกะ", "Aiko", "[Aiko]"] {
+        if let Some(rest) = trimmed.strip_prefix(label) {
+            if let Some(rest) = rest.trim_start().strip_prefix([':', '：']) {
+                return rest.trim_start();
+            }
+            if label == "[Aiko]" {
+                return rest.trim_start();
+            }
+        }
+    }
+    text
 }
 
 /// Replaces masculine Thai particles with feminine ones outside code blocks.
@@ -621,14 +647,14 @@ fn field<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
 }
 
 fn schema() -> Value {
-    json!({"type":"object","properties":{"app":{"type":"string","enum":["terminal","vscode"]},"mode":{"type":["string","null"],"enum":["default","tab","standalone",null]},"command":{"type":["string","null"],"maxLength":4096,"description":"One-line shell command to run in a new zter tab, or null to just open the app."}},"required":["app","mode","command"],"additionalProperties":false})
+    json!({"type":"object","properties":{"app":{"type":"string","enum":["terminal","vscode"]},"mode":{"type":["string","null"],"enum":["default","tab","standalone",null]},"command":{"type":["string","null"],"maxLength":4096,"description":"One-line shell command to run in a new zter tab, or null to just open the app."},"path":{"type":["string","null"],"maxLength":4096,"description":"Folder to open in (or a file, for VS Code): absolute or relative to home, for example my_code/rs. null for none."}},"required":["app","mode","command","path"],"additionalProperties":false})
 }
 
 fn tool_definitions(responses: bool) -> Vec<Value> {
     let definitions = [
         (
             "open_app",
-            "Open or focus the primary zter terminal with default mode; use tab to add a tab, or standalone only when a separate new terminal is requested. To open zter with a program running in it (for example cava, htop, or codex), set command to that one-line shell command: it runs in a new tab, or a new window with standalone. VS Code always opens a new window, only accepts default mode, and takes command null.",
+            "Open or focus the primary zter terminal with default mode; use tab to add a tab, or standalone only when a separate new terminal is requested. To open zter with a program running in it (for example cava, htop, or codex), set command to that one-line shell command: it runs in a new tab, or a new window with standalone. Set path to open VS Code at a folder or file, or to start a new terminal tab in a folder. VS Code always opens a new window, only accepts default mode, and takes command null.",
             schema(),
         ),
         (
@@ -670,27 +696,89 @@ struct Arguments {
     mode: Option<LaunchMode>,
     #[serde(default)]
     command: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
 }
 
-/// The run_command request that opens zter with `command` typed into the
-/// shell of a new tab (or a new window in standalone mode).
-fn terminal_command(mode: LaunchMode, command: &str) -> Result<CommandRequest, String> {
-    let command = command.trim();
-    if command.len() > 4096 || command.chars().any(char::is_control) {
-        return Err("command must be one line of up to 4096 bytes.".into());
-    }
-    let flag = match mode {
-        LaunchMode::Standalone => "-s",
-        _ => "--new-tab",
+/// The run_command request for an open_app call with a command or path:
+/// zter with `command` typed into the shell of a new tab (or a new window in
+/// standalone mode), or VS Code at `path`.
+fn launch_command(
+    app: App,
+    mode: LaunchMode,
+    command: Option<&str>,
+    path: Option<&str>,
+) -> Result<CommandRequest, String> {
+    let one_line = |value: &str, name: &str| {
+        let value = value.trim();
+        if value.len() > 4096 || value.chars().any(char::is_control) {
+            Err(format!("{name} must be one line of up to 4096 bytes."))
+        } else {
+            Ok(value.to_owned())
+        }
     };
-    let quoted = format!("'{}'", command.replace('\'', r"'\''"));
+    let quote = |value: &str| format!("'{}'", value.replace('\'', r"'\''"));
+    let path = match path {
+        Some(path) => Some(home_path(&one_line(path, "path")?)?),
+        None => None,
+    };
+    let script = match app {
+        App::Vscode => {
+            let path = quote(path.as_deref().ok_or("path is required.")?);
+            format!(
+                "[ -e {path} ] || {{ printf 'Not found: %s. Search for it, then try again.\\n' {path} >&2; exit 1; }}\n\
+                 for code in code code-oss codium; do\n\
+                 if command -v \"$code\" >/dev/null; then setsid \"$code\" --new-window {path} </dev/null >/dev/null 2>&1 & exit 0; fi\n\
+                 done\n\
+                 echo 'VS Code is not installed.' >&2; exit 127"
+            )
+        }
+        App::Terminal => {
+            let mut run = Vec::new();
+            let mut check = String::new();
+            if let Some(path) = &path {
+                let path = quote(path);
+                check = format!(
+                    "[ -d {path} ] || {{ printf 'Folder not found: %s. Search for it, then try again.\\n' {path} >&2; exit 1; }}\n"
+                );
+                run.push(format!("cd {path}"));
+            }
+            if let Some(command) = command {
+                run.push(one_line(command, "command")?);
+            }
+            let flag = match mode {
+                LaunchMode::Standalone => "-s",
+                _ => "--new-tab",
+            };
+            format!(
+                "{check}command -v zter >/dev/null || {{ echo 'zter is not installed.' >&2; exit 127; }}\n\
+                 setsid zter {flag} --run {} </dev/null >/dev/null 2>&1 &",
+                quote(&run.join(" && "))
+            )
+        }
+    };
     Ok(CommandRequest {
-        command: format!(
-            "command -v zter >/dev/null || {{ echo 'zter is not installed.' >&2; exit 127; }}\n\
-             setsid zter {flag} --run {quoted} </dev/null >/dev/null 2>&1 &"
-        ),
+        command: script,
         workdir: None,
         timeout_ms: Some(10_000),
+    })
+}
+
+/// Resolves `path` against the user's home unless it is absolute; ~ means home.
+fn home_path(path: &str) -> Result<String, String> {
+    if path.starts_with('/') {
+        return Ok(path.to_owned());
+    }
+    let home =
+        std::env::var("HOME").map_err(|_| "Cannot locate your home; use an absolute path.")?;
+    let relative = path
+        .strip_prefix('~')
+        .unwrap_or(path)
+        .trim_start_matches('/');
+    Ok(if relative.is_empty() {
+        home
+    } else {
+        format!("{}/{relative}", home.trim_end_matches('/'))
     })
 }
 
@@ -700,6 +788,24 @@ struct Executed {
     apps: HashMap<(App, LaunchMode), Value>,
     count: usize,
     failures: usize,
+}
+
+const NOT_FOUND_HINT: &str = "A file or folder was not found. Before asking the user, search for it with run_command, for example: find ~/my_code/rs -name main.rs -not -path '*/target/*' -not -path '*/.*' (source files are often under src). Then retry with the path found.";
+
+/// Whether a failed result says a file or folder does not exist.
+fn missing_path(result: &Value) -> bool {
+    ["stderr", "message"].iter().any(|key| {
+        result[key].as_str().is_some_and(|text| {
+            [
+                "No such file or directory",
+                "not found",
+                "can't read",
+                "cannot access",
+            ]
+            .iter()
+            .any(|marker| text.contains(marker))
+        })
+    })
 }
 
 // A tool call failed when it was rejected, its command exited nonzero, or it timed out.
@@ -721,12 +827,17 @@ impl Executed {
         arguments: &str,
         tools: &mut impl Tools,
     ) -> Result<Value, String> {
-        let result = self.run(id, name, arguments, tools).await?;
+        let mut result = self.run(id, name, arguments, tools).await?;
         self.failures = if failed(&result) {
             self.failures + 1
         } else {
             0
         };
+        // Small models ask the user right away; a hint next to the error works
+        // better than the same rule in the system prompt.
+        if failed(&result) && missing_path(&result) {
+            result["hint"] = json!(NOT_FOUND_HINT);
+        }
         Ok(result)
     }
 
@@ -746,13 +857,19 @@ impl Executed {
         }
         let result = match name {
             "open_app" => match serde_json::from_str::<Arguments>(arguments) {
-                Ok(Arguments { app, mode, command }) => {
+                Ok(Arguments {
+                    app,
+                    mode,
+                    command,
+                    path,
+                }) => {
                     let mode = mode.unwrap_or_default();
                     let command = command.filter(|command| !command.trim().is_empty());
+                    let path = path.filter(|path| !path.trim().is_empty());
                     if app == App::Vscode && (mode != LaunchMode::Default || command.is_some()) {
-                        json!({"success":false,"message":"VS Code only supports default mode and command null; tab, standalone, and commands are terminal options."})
-                    } else if let Some(command) = command {
-                        match terminal_command(mode, &command) {
+                        json!({"success":false,"message":"VS Code only supports default mode and command null; tab, standalone, and commands are terminal options. Use path to open a folder."})
+                    } else if command.is_some() || path.is_some() {
+                        match launch_command(app, mode, command.as_deref(), path.as_deref()) {
                             Ok(request) => tools.run_command(request).await?,
                             Err(message) => json!({"success":false,"message":message}),
                         }
@@ -765,7 +882,7 @@ impl Executed {
                     }
                 }
                 Err(_) => {
-                    json!({"success":false,"message":"open_app requires app: terminal or vscode, optional mode: default, tab, or standalone, and optional command."})
+                    json!({"success":false,"message":"open_app requires app: terminal or vscode, optional mode: default, tab, or standalone, and optional command and path."})
                 }
             },
             "run_command" => match serde_json::from_str::<CommandRequest>(arguments) {
@@ -891,6 +1008,105 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn paths_open_vscode_or_a_terminal_tab_in_that_folder() {
+        let home = std::env::var("HOME").unwrap();
+        let mut executed = Executed::default();
+        let mut tools = FakeTools::default();
+        for (id, arguments) in [
+            (
+                "a",
+                r#"{"app":"vscode","mode":null,"command":null,"path":"my_code/rs"}"#,
+            ),
+            (
+                "b",
+                r#"{"app":"terminal","mode":null,"command":"cargo run","path":"~/my_code/rs"}"#,
+            ),
+            (
+                "c",
+                r#"{"app":"terminal","mode":"tab","command":null,"path":"/tmp"}"#,
+            ),
+        ] {
+            let result = executed
+                .call(id, "open_app", arguments, &mut tools)
+                .await
+                .unwrap();
+            assert_eq!(result["success"], true);
+        }
+        assert!(tools.calls.is_empty());
+        let folder = format!("'{home}/my_code/rs'");
+        assert!(tools.commands[0].starts_with(&format!("[ -e {folder} ]")));
+        assert!(tools.commands[0].contains(&format!("--new-window {folder} </dev/null")));
+        assert!(tools.commands[1].starts_with(&format!("[ -d {folder} ]")));
+        assert!(tools.commands[1].contains(&format!(
+            "--run 'cd {} && cargo run'",
+            folder.replace('\'', r"'\''")
+        )));
+        assert!(tools.commands[2].contains(r"zter --new-tab --run 'cd '\''/tmp'\''' "));
+        let result = executed
+            .call(
+                "d",
+                "open_app",
+                r#"{"app":"vscode","mode":null,"command":"ls","path":"/tmp"}"#,
+                &mut tools,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["success"], false);
+        assert_eq!(tools.commands.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn missing_files_add_a_search_hint() {
+        struct Missing;
+        impl Tools for Missing {
+            async fn open_app(&mut self, _: App, _: LaunchMode) -> Result<Value, String> {
+                unreachable!()
+            }
+            async fn run_command(&mut self, request: CommandRequest) -> Result<Value, String> {
+                let stderr = if request.command == "missing" {
+                    "sed: can't read main.rs: No such file or directory\n"
+                } else {
+                    "permission denied\n"
+                };
+                Ok(json!({"success":false,"exit_code":2,"stderr":stderr}))
+            }
+        }
+        let mut executed = Executed::default();
+        let call = |command: &str| format!(r#"{{"command":"{command}","workdir":null}}"#);
+        let result = executed
+            .call("a", "run_command", &call("missing"), &mut Missing)
+            .await
+            .unwrap();
+        assert_eq!(result["hint"], NOT_FOUND_HINT);
+        let result = executed
+            .call("b", "run_command", &call("denied"), &mut Missing)
+            .await
+            .unwrap();
+        assert!(result.get("hint").is_none());
+    }
+
+    #[test]
+    fn log_records_reach_the_model_as_system_notes() {
+        let record = Message {
+            role: "assistant".into(),
+            content: "Command: pwd".into(),
+            tool: true,
+        };
+        assert_eq!(
+            history_item(&record),
+            json!({"role":"system","content":format!("{TOOL_LOG_NOTE}\nCommand: pwd")})
+        );
+        let reply = Message {
+            tool: false,
+            ..record
+        };
+        assert_eq!(
+            history_item(&reply),
+            json!({"role":"assistant","content":"Command: pwd"})
+        );
+    }
+
+    #[tokio::test]
     async fn terminal_modes_are_validated_and_deduplicated_separately() {
         let mut executed = Executed::default();
         let mut tools = FakeTools::default();
@@ -1001,7 +1217,8 @@ mod tests {
                 .chat(
                     &[Message {
                         role: "user".into(),
-                        content: "เปิดแท็บใหม่".into()
+                        content: "เปิดแท็บใหม่".into(),
+                        tool: false,
                     }],
                     &mut tools
                 )
@@ -1014,7 +1231,7 @@ mod tests {
         assert_eq!(requests[0]["store"], false);
         assert_eq!(
             requests[0]["tools"][0]["parameters"]["required"],
-            json!(["app", "mode", "command"])
+            json!(["app", "mode", "command", "path"])
         );
         assert_eq!(requests[1]["input"][1], first["output"][0]);
         assert_eq!(requests[1]["input"][3]["type"], "function_call_output");
@@ -1231,6 +1448,14 @@ mod tests {
     }
 
     #[test]
+    fn leading_speaker_labels_are_dropped() {
+        assert_eq!(without_speaker("ไอโกะ: เสร็จแล้วค่ะ"), "เสร็จแล้วค่ะ");
+        assert_eq!(without_speaker(" Aiko : done"), "done");
+        assert_eq!(without_speaker("[Aiko] hi"), "hi");
+        assert_eq!(without_speaker("ไอโกะช่วยได้ค่ะ"), "ไอโกะช่วยได้ค่ะ");
+    }
+
+    #[test]
     fn feminine_particles_replace_masculine_ones_outside_code() {
         assert_eq!(
             feminine("สวัสดีครับ! ได้ครับผม เอาอะไรครับ นะครับ บอกนะค่ะ\n```sh\necho ครับ\n```\nโอเคครับ"),
@@ -1257,6 +1482,7 @@ mod tests {
         let history = [Message {
             role: "user".into(),
             content: "ดีครับ".into(),
+            tool: false,
         }];
         let (url, server) = mock_server(vec![mixed.clone(), thai]).await;
         let reply = test_client(Provider::Ollama, url)
@@ -1286,6 +1512,7 @@ mod tests {
         let asked = [Message {
             role: "user".into(),
             content: "你好 แปลว่าอะไร".into(),
+            tool: false,
         }];
         let (url, server) = mock_server(vec![mixed]).await;
         let reply = test_client(Provider::Ollama, url)

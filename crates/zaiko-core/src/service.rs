@@ -111,6 +111,7 @@ impl State {
         self.append(Message {
             role: "user".into(),
             content,
+            tool: false,
         });
         Ok((cancel, self.snapshot.messages.clone()))
     }
@@ -477,6 +478,7 @@ impl Runtime {
                     state.append(Message {
                         role: "assistant".into(),
                         content: content.clone(),
+                        tool: false,
                     });
                     emit(connection,json!({"type":"message","request_id":id,"role":"assistant","content":content})).await;
                 }
@@ -516,6 +518,7 @@ impl Runtime {
         state.append(Message {
             role: "assistant".into(),
             content: content.into(),
+            tool: true,
         });
         emit(
             connection,
@@ -591,6 +594,7 @@ impl Tools for DesktopTools<'_> {
         state.append(Message {
             role: "assistant".into(),
             content: content.clone(),
+            tool: true,
         });
         emit(
             self.connection,
@@ -654,6 +658,7 @@ impl Tools for DesktopTools<'_> {
         state.append(Message {
             role: "assistant".into(),
             content: content.clone(),
+            tool: true,
         });
         emit(
             self.connection,
@@ -936,6 +941,7 @@ mod tests {
             state.append(Message {
                 role: "user".into(),
                 content: "x".repeat(4096),
+                tool: false,
             });
         }
         assert!(

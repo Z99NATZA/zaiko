@@ -97,12 +97,22 @@ visibility. Unknown aliases, modes, and missing desktop actions fail explicitly.
 Use desktop IDs io.github.z99natza.zter.desktop and code.desktop/code-oss.desktop.
 
 The provider open_app tool accepts app plus nullable mode (default, tab,
-standalone) and nullable command. Omitted/null mode defaults to default. Only
-terminal accepts tab, standalone, or a command; VS Code uses default and null.
-A one-line command opens zter with it running (zter --new-tab --run, or -s --run
-in standalone mode) through the run_command path, once per call. Duplicate tool
-calls for the same app and mode without a command within a request execute
-once; different modes are distinct actions.
+standalone), nullable command, and nullable path. Omitted/null mode defaults to
+default. Only terminal accepts tab, standalone, or a command; VS Code uses
+default and a null command. A one-line command opens zter with it running
+(zter --new-tab --run, or -s --run in standalone mode); a path, absolute or
+relative to home, opens VS Code there (code --new-window) or starts the new zter
+tab in that folder. Both run through the run_command path, once per call, and
+fail with a not-found message when the path does not exist. Duplicate tool
+calls for the same app and mode without a command or path within a request
+execute once; different modes are distinct actions.
+
+Log records written by the core (command and app results, the cancellation
+notice) stay assistant messages in snapshots, but later provider requests send
+them as system notes marked as an earlier tool log, so models do not imitate
+them as replies instead of calling tools. A failed command whose output says a
+file or folder does not exist gets a hint field asking the model to search for
+it before asking the user.
 
 The run_command provider tool accepts command, nullable workdir, and nullable
 timeout_ms. It executes in the Rust core; no raw-command method is exported by
