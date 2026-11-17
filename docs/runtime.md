@@ -26,8 +26,15 @@ used by ZAIKO_LLM_MODELS.
 Ollama runs models locally and needs no API key. Start it with ollama serve and
 pull a model that supports tool calling (for example ollama pull qwen3:8b).
 ZAIKO_OLLAMA_URL sets the server, default http://127.0.0.1:11434. Zaiko uses its
-OpenAI-compatible /v1/chat/completions endpoint and allows 180 seconds per
-request, since a model may first need to load.
+native /api/chat endpoint and allows 180 seconds per request, since a model may
+first need to load. Requests turn thinking off (several times faster, and less
+drift into other languages), keep the model loaded for 30 minutes, and ask for
+a context of ZAIKO_OLLAMA_CONTEXT tokens, default 8192. Ollama's own default of
+4096 is too small for the system prompt, tools, and a few turns; a larger
+context only helps while the model still fits in GPU memory (ollama ps shows
+the split). Ollama replies that mix in Chinese, Japanese, or Korean the user
+did not write are rewritten once, and masculine Thai particles such as ครับ
+become feminine outside code blocks.
 
 make install copies the project .env to ~/.config/zaiko/.env. If the installed
 file differs, it is first saved as ~/.config/zaiko/.env.backup-<timestamp>.
@@ -375,13 +382,18 @@ absent, this creates its first window with one tab. An explicit new-terminal or
 separate-window request uses new-window (--standalone). Default and tab requests
 target the primary instance, even when standalone windows are open.
 
-To open zter with a program running ("เปิด zter พร้อมรัน codex"), Aiko uses
-run_command to start zter --new-tab --run '<command>' (or zter -s --run for
-separate windows), once per requested terminal. zter types the command into a
-new tab's shell, so any program available in zter works without a per-program
-rule. This needs a zter build with --run. A new tab in a running zter starts in
-the active tab's folder rather than the launching workdir, so a requested folder
-goes into the command: zter --new-tab --run "cd '/path' && codex".
+To open zter with a program running ("เปิด zter พร้อมรัน codex", "เปิด terminal +
+cava"), Aiko calls open_app with a command, once per requested terminal. The
+core runs it through the run_command path as zter --new-tab --run '<command>'
+(or zter -s --run for standalone mode), so it shows in the Log like a command.
+A structured field is easier for small local models than composing the zter
+call themselves. zter types the command into a new tab's shell, so any program
+available in zter works without a per-program rule. This needs a zter build with
+--run. A new tab in a running zter starts in the active tab's folder rather than
+the launching workdir, so a requested folder goes into the command:
+"cd '/path' && codex". Full-screen programs such as cava cannot run through
+run_command, which has no terminal; its output has terminal escape sequences and
+control characters removed, so such output cannot garble the Log.
 
 zter cannot type into or change the folder of a tab that is already open; the
 prompt states this so Aiko does not look for a workaround. In general, when the

@@ -141,7 +141,7 @@ impl Client {
         let endpoint = match config.provider {
             Provider::OpenAi => "https://api.openai.com/v1/responses".to_owned(),
             Provider::DeepSeek => "https://api.deepseek.com/chat/completions".to_owned(),
-            Provider::Ollama => format!("{}/v1/chat/completions", config.ollama_url),
+            Provider::Ollama => format!("{}/api/chat", config.ollama_url),
         };
         Self::with_endpoint(config, endpoint)
     }
@@ -319,33 +319,16 @@ impl Client {
                 .iter()
                 .map(|m| json!({"role":m.role,"content":m.content})),
         );
-        let request = |messages: &[Value], tool_choice: &str| {
-            let mut request = json!({
-                "model":self.config.model,
-                "messages":messages,
-                "tools":tool_definitions(false),
-                "tool_choice":tool_choice,
-                "max_tokens":2048,
-                "stream":false
-            });
-            // Ollama may ignore tool_choice, so offer no tools when none may run.
-            if self.config.provider == Provider::Ollama && tool_choice == "none" {
-                let request = request.as_object_mut().expect("request is an object");
-                request.remove("tools");
-                request.remove("tool_choice");
-            }
-            request
-        };
         let mut executed = Executed::default();
         for _ in 0..=MAX_TOOL_CALLS {
-            let response = self.post(request(&messages, "auto")).await?;
+            let response = self.complete(&messages, Some("auto")).await?;
             let message = choice_message(&response)?;
             let calls = message["tool_calls"]
                 .as_array()
                 .filter(|calls| !calls.is_empty());
             let Some(calls) = calls else {
                 let text = message["content"].as_str().unwrap_or_default().to_owned();
-                let text = self.keep_language(history, &messages, text).await;
+                let text = self.keep_voice(history, &messages, text).await;
                 return self.reply(text);
             };
             if calls.len() + executed.count > MAX_TOOL_CALLS {
@@ -372,7 +355,7 @@ impl Client {
             }
         }
         messages.push(json!({"role":"system","content":LIMIT_NOTE}));
-        let response = self.post(request(&messages, "none")).await?;
+        let response = self.complete(&messages, Some("none")).await?;
         let message = choice_message(&response)?;
         if message["tool_calls"]
             .as_array()
@@ -381,8 +364,44 @@ impl Client {
             return Ok(LIMIT_REPLY.to_owned());
         }
         let text = message["content"].as_str().unwrap_or_default().to_owned();
-        let text = self.keep_language(history, &messages, text).await;
+        let text = self.keep_voice(history, &messages, text).await;
         self.reply(text).or_else(|_| Ok(LIMIT_REPLY.to_owned()))
+    }
+
+    /// Sends chat-completions `messages` and returns a chat-completions
+    /// response. `tool_choice` None offers no tools. Ollama uses its native
+    /// API, which can set the context size, thinking, and keep-alive.
+    async fn complete(
+        &self,
+        messages: &[Value],
+        tool_choice: Option<&str>,
+    ) -> Result<Value, String> {
+        if self.config.provider == Provider::Ollama {
+            // Ollama ignores tool_choice, so it gets no tools when none may run.
+            let request = ollama_request(&self.config, messages, tool_choice == Some("auto"));
+            return Ok(ollama_response(self.post(request).await?, messages.len()));
+        }
+        let mut request = json!({
+            "model":self.config.model,
+            "messages":messages,
+            "max_tokens":2048,
+            "stream":false
+        });
+        if let Some(tool_choice) = tool_choice {
+            request["tools"] = json!(tool_definitions(false));
+            request["tool_choice"] = json!(tool_choice);
+        }
+        self.post(request).await
+    }
+
+    /// Keeps Aiko's language, and for Ollama her feminine voice.
+    async fn keep_voice(&self, history: &[Message], messages: &[Value], text: String) -> String {
+        let text = self.keep_language(history, messages, text).await;
+        if self.config.provider == Provider::Ollama {
+            feminine(&text)
+        } else {
+            text
+        }
     }
 
     /// Returns `text` without CJK script the user did not write: the model
@@ -399,13 +418,7 @@ impl Client {
         let mut retry = messages.to_vec();
         retry.push(json!({"role":"assistant","content":text}));
         retry.push(json!({"role":"system","content":LANGUAGE_NOTE}));
-        let body = json!({
-            "model":self.config.model,
-            "messages":retry,
-            "max_tokens":2048,
-            "stream":false
-        });
-        let rewritten = match self.post(body).await {
+        let rewritten = match self.complete(&retry, None).await {
             Ok(response) => choice_message(&response)
                 .ok()
                 .and_then(|message| message["content"].as_str())
@@ -435,6 +448,100 @@ impl Client {
         }
         Ok(text.replace(&self.config.api_key, "[redacted]"))
     }
+}
+
+/// Converts chat-completions messages into an Ollama /api/chat request.
+fn ollama_request(config: &Config, messages: &[Value], tools: bool) -> Value {
+    let mut names = HashMap::new();
+    let mut native = Vec::with_capacity(messages.len());
+    for message in messages {
+        let mut message = message.clone();
+        // Native tool calls carry arguments as an object, and tool results name their tool.
+        if let Some(calls) = message["tool_calls"].as_array_mut() {
+            for call in calls {
+                if let (Some(id), Some(name)) =
+                    (call["id"].as_str(), call["function"]["name"].as_str())
+                {
+                    names.insert(id.to_owned(), name.to_owned());
+                }
+                if let Some(arguments) = call["function"]["arguments"].as_str()
+                    && let Ok(arguments) = serde_json::from_str::<Value>(arguments)
+                {
+                    call["function"]["arguments"] = arguments;
+                }
+            }
+        }
+        if message["role"] == "tool"
+            && let Some(name) = message["tool_call_id"]
+                .as_str()
+                .and_then(|id| names.get(id))
+        {
+            message["tool_name"] = json!(name);
+        }
+        native.push(message);
+    }
+    let mut request = json!({
+        "model":config.model,
+        "messages":native,
+        "stream":false,
+        // Thinking makes small local models several times slower and more
+        // likely to drift into another language.
+        "think":false,
+        // Stay loaded between messages instead of the default five minutes.
+        "keep_alive":"30m",
+        "options":{"num_ctx":config.ollama_context,"num_predict":2048}
+    });
+    if tools {
+        request["tools"] = json!(tool_definitions(false));
+    }
+    request
+}
+
+/// Converts an Ollama /api/chat response into a chat-completions response.
+/// `turn` keeps generated tool call IDs unique within a request.
+fn ollama_response(mut response: Value, turn: usize) -> Value {
+    let mut message = response["message"].take();
+    if let Some(calls) = message["tool_calls"].as_array_mut() {
+        for (index, call) in calls.iter_mut().enumerate() {
+            if !call["id"].as_str().is_some_and(|id| !id.is_empty()) {
+                call["id"] = json!(format!("call-{turn}-{index}"));
+            }
+            call["type"] = json!("function");
+            let arguments = &call["function"]["arguments"];
+            if !arguments.is_string() && !arguments.is_null() {
+                call["function"]["arguments"] = json!(arguments.to_string());
+            }
+        }
+    }
+    let finish = match response["done_reason"].as_str() {
+        Some("length") => "length",
+        _ => "stop",
+    };
+    json!({"choices":[{"message":message,"finish_reason":finish}]})
+}
+
+/// Replaces masculine Thai particles with feminine ones outside code blocks.
+/// Small local models often echo the user's "ครับ".
+fn feminine(text: &str) -> String {
+    const QUESTIONS: [&str; 7] = ["ไหม", "มั้ย", "เปล่า", "อะไร", "ไร", "หรอ", "เหรอ"];
+    text.split("```")
+        .enumerate()
+        .map(|(index, part)| {
+            if index % 2 == 1 {
+                return part.to_owned();
+            }
+            let mut part = part.replace("ครับผม", "ค่ะ").replace("นะครับ", "นะคะ");
+            // "นะ" takes the short particle; models often misspell it.
+            part = part.replace("นะค่ะ", "นะคะ");
+            for question in QUESTIONS {
+                part = part.replace(&format!("{question}ครับ"), &format!("{question}คะ"));
+            }
+            part.replace("ครับ?", "คะ?")
+                .replace("ครับ ?", "คะ ?")
+                .replace("ครับ", "ค่ะ")
+        })
+        .collect::<Vec<_>>()
+        .join("```")
 }
 
 /// Han, kana, hangul, and their punctuation and full-width forms.
@@ -514,19 +621,19 @@ fn field<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
 }
 
 fn schema() -> Value {
-    json!({"type":"object","properties":{"app":{"type":"string","enum":["terminal","vscode"]},"mode":{"type":["string","null"],"enum":["default","tab","standalone",null]}},"required":["app","mode"],"additionalProperties":false})
+    json!({"type":"object","properties":{"app":{"type":"string","enum":["terminal","vscode"]},"mode":{"type":["string","null"],"enum":["default","tab","standalone",null]},"command":{"type":["string","null"],"maxLength":4096,"description":"One-line shell command to run in a new zter tab, or null to just open the app."}},"required":["app","mode","command"],"additionalProperties":false})
 }
 
 fn tool_definitions(responses: bool) -> Vec<Value> {
     let definitions = [
         (
             "open_app",
-            "Open or focus the primary zter terminal with default mode; use tab to add a tab, or standalone only when a separate new terminal is requested. VS Code always opens a new window and only accepts default mode.",
+            "Open or focus the primary zter terminal with default mode; use tab to add a tab, or standalone only when a separate new terminal is requested. To open zter with a program running in it (for example cava, htop, or codex), set command to that one-line shell command: it runs in a new tab, or a new window with standalone. VS Code always opens a new window, only accepts default mode, and takes command null.",
             schema(),
         ),
         (
             "run_command",
-            "Run a noninteractive Bash command on this computer as the current user. Use for inspecting/editing files, running installed programs, and general local tasks. Supports pipes and scripts. Prefer open_app for supported desktop actions. workdir must be absolute or null for home; each call has a fresh shell. timeout_ms is 1–120000 or null for 30000. Returns stdout/stderr (first 8192 bytes each), exit_code, timed_out, and truncated. Stdin is closed. Timeout/cancellation stop the active process group. To start a persistent job, explicitly redirect its stdin/stdout/stderr and capture its PID; detached jobs are not tracked or cancelled after this call completes. Interactive sessions are unavailable.",
+            "Run a noninteractive Bash command on this computer as the current user. Use for inspecting/editing files, running installed programs, and general local tasks. Supports pipes and scripts. Prefer open_app for supported desktop actions. workdir must be absolute or null for home; each call has a fresh shell. timeout_ms is 1–120000 or null for 30000. Returns stdout/stderr (first 8192 bytes each), exit_code, timed_out, and truncated. Stdin is closed. Timeout/cancellation stop the active process group. To start a persistent job, explicitly redirect its stdin/stdout/stderr and capture its PID; detached jobs are not tracked or cancelled after this call completes. Interactive sessions are unavailable: never run full-screen or interactive programs such as cava, htop, vim, or codex here; open them with open_app and command instead.",
             json!({
                 "type":"object",
                 "properties":{
@@ -561,6 +668,30 @@ struct Arguments {
     app: App,
     #[serde(default)]
     mode: Option<LaunchMode>,
+    #[serde(default)]
+    command: Option<String>,
+}
+
+/// The run_command request that opens zter with `command` typed into the
+/// shell of a new tab (or a new window in standalone mode).
+fn terminal_command(mode: LaunchMode, command: &str) -> Result<CommandRequest, String> {
+    let command = command.trim();
+    if command.len() > 4096 || command.chars().any(char::is_control) {
+        return Err("command must be one line of up to 4096 bytes.".into());
+    }
+    let flag = match mode {
+        LaunchMode::Standalone => "-s",
+        _ => "--new-tab",
+    };
+    let quoted = format!("'{}'", command.replace('\'', r"'\''"));
+    Ok(CommandRequest {
+        command: format!(
+            "command -v zter >/dev/null || {{ echo 'zter is not installed.' >&2; exit 127; }}\n\
+             setsid zter {flag} --run {quoted} </dev/null >/dev/null 2>&1 &"
+        ),
+        workdir: None,
+        timeout_ms: Some(10_000),
+    })
 }
 
 #[derive(Default)]
@@ -615,10 +746,16 @@ impl Executed {
         }
         let result = match name {
             "open_app" => match serde_json::from_str::<Arguments>(arguments) {
-                Ok(Arguments { app, mode }) => {
+                Ok(Arguments { app, mode, command }) => {
                     let mode = mode.unwrap_or_default();
-                    if app == App::Vscode && mode != LaunchMode::Default {
-                        json!({"success":false,"message":"VS Code only supports default mode; tab and standalone are terminal modes."})
+                    let command = command.filter(|command| !command.trim().is_empty());
+                    if app == App::Vscode && (mode != LaunchMode::Default || command.is_some()) {
+                        json!({"success":false,"message":"VS Code only supports default mode and command null; tab, standalone, and commands are terminal options."})
+                    } else if let Some(command) = command {
+                        match terminal_command(mode, &command) {
+                            Ok(request) => tools.run_command(request).await?,
+                            Err(message) => json!({"success":false,"message":message}),
+                        }
                     } else if let Some(result) = self.apps.get(&(app, mode)) {
                         result.clone()
                     } else {
@@ -628,7 +765,7 @@ impl Executed {
                     }
                 }
                 Err(_) => {
-                    json!({"success":false,"message":"open_app requires app: terminal or vscode and optional mode: default, tab, or standalone."})
+                    json!({"success":false,"message":"open_app requires app: terminal or vscode, optional mode: default, tab, or standalone, and optional command."})
                 }
             },
             "run_command" => match serde_json::from_str::<CommandRequest>(arguments) {
@@ -700,6 +837,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn terminal_commands_open_zter_with_the_program_running() {
+        let mut executed = Executed::default();
+        let mut tools = FakeTools::default();
+        for (id, arguments) in [
+            (
+                "a",
+                r#"{"app":"terminal","mode":"default","command":"cava"}"#,
+            ),
+            (
+                "b",
+                r#"{"app":"terminal","mode":"standalone","command":"echo 'hi'"}"#,
+            ),
+            // Each call is its own terminal, unlike plain opens.
+            ("c", r#"{"app":"terminal","mode":null,"command":"cava"}"#),
+        ] {
+            let result = executed
+                .call(id, "open_app", arguments, &mut tools)
+                .await
+                .unwrap();
+            assert_eq!(result["success"], true);
+        }
+        assert!(tools.calls.is_empty());
+        assert_eq!(tools.commands.len(), 3);
+        assert!(tools.commands[0].contains("setsid zter --new-tab --run 'cava' </dev/null"));
+        let quoted = ["'echo ", r"'\''", "hi", r"'\''", "'"].concat();
+        assert!(tools.commands[1].contains(&format!("setsid zter -s --run {quoted} ")));
+        // An empty command just opens the terminal.
+        executed
+            .call(
+                "d",
+                "open_app",
+                r#"{"app":"terminal","mode":null,"command":" "}"#,
+                &mut tools,
+            )
+            .await
+            .unwrap();
+        assert_eq!(tools.calls, [(App::Terminal, LaunchMode::Default)]);
+        for (id, arguments) in [
+            ("e", r#"{"app":"vscode","mode":null,"command":"ls"}"#),
+            (
+                "f",
+                r#"{"app":"terminal","mode":null,"command":"ls\nrm x"}"#,
+            ),
+        ] {
+            let result = executed
+                .call(id, "open_app", arguments, &mut tools)
+                .await
+                .unwrap();
+            assert_eq!(result["success"], false);
+        }
+        assert_eq!(tools.commands.len(), 3);
+    }
+
+    #[tokio::test]
     async fn terminal_modes_are_validated_and_deduplicated_separately() {
         let mut executed = Executed::default();
         let mut tools = FakeTools::default();
@@ -721,7 +912,7 @@ mod tests {
         }
         for arguments in [
             r#"{"app":"terminal","mode":"shell"}"#,
-            r#"{"app":"terminal","mode":"tab","command":"ls"}"#,
+            r#"{"app":"terminal","mode":"tab","extra":"ls"}"#,
             r#"{"app":"vscode","mode":"tab"}"#,
             r#"{"app":"vscode","mode":"standalone"}"#,
         ] {
@@ -799,6 +990,7 @@ mod tests {
                 api_key: "dummy-test-key".into(),
                 keys: Vec::new(),
                 ollama_url: String::new(),
+                ollama_context: 8192,
             },
             url,
         )
@@ -822,7 +1014,7 @@ mod tests {
         assert_eq!(requests[0]["store"], false);
         assert_eq!(
             requests[0]["tools"][0]["parameters"]["required"],
-            json!(["app", "mode"])
+            json!(["app", "mode", "command"])
         );
         assert_eq!(requests[1]["input"][1], first["output"][0]);
         assert_eq!(requests[1]["input"][3]["type"], "function_call_output");
@@ -845,6 +1037,7 @@ mod tests {
                 api_key: "dummy-test-key".into(),
                 keys: Vec::new(),
                 ollama_url: String::new(),
+                ollama_context: 8192,
             },
             url,
         )
@@ -875,6 +1068,7 @@ mod tests {
                 api_key: "dummy-test-key".into(),
                 keys: Vec::new(),
                 ollama_url: String::new(),
+                ollama_context: 8192,
             },
             url,
         )
@@ -901,6 +1095,7 @@ mod tests {
                 api_key: "dummy-test-key".into(),
                 keys: Vec::new(),
                 ollama_url: String::new(),
+                ollama_context: 8192,
             },
             url,
         )
@@ -925,6 +1120,7 @@ mod tests {
                 api_key: "dummy-test-key".into(),
                 keys: Vec::new(),
                 ollama_url: String::new(),
+                ollama_context: 8192,
             },
             url,
         )
@@ -987,26 +1183,58 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ollama_uses_completions_without_a_key_and_drops_tools_at_the_limit() {
-        let command = r#"{"command":"pwd","workdir":"/tmp","timeout_ms":null}"#;
-        let call = |index: usize| json!({"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":format!("call-{index}"),"type":"function","function":{"name":"run_command","arguments":command}}]}}]});
+    async fn ollama_uses_its_native_api_without_a_key_and_drops_tools_at_the_limit() {
+        let arguments = json!({"command":"pwd","workdir":"/tmp","timeout_ms":null});
+        // Ollama may omit tool call IDs; generated ones must not repeat.
+        let call = |_| json!({"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"run_command","arguments":arguments}}]},"done":true,"done_reason":"stop"});
         let mut responses: Vec<Value> = (0..=MAX_TOOL_CALLS).map(call).collect();
-        responses.push(json!({"choices":[{"message":{"role":"assistant","content":"เสร็จแล้วค่ะ","reasoning":"thinking"}}]}));
+        responses.push(json!({"message":{"role":"assistant","content":"เสร็จแล้วครับ ต้องการอะไรอีกไหมครับ?"},"done":true,"done_reason":"stop"}));
         let (url, server) = mock_server(responses).await;
         let mut client = test_client(Provider::Ollama, url);
         client.config.api_key.clear();
         let mut tools = FakeTools::default();
-        // An empty key must not redact anything in the reply.
-        assert_eq!(client.chat(&[], &mut tools).await.unwrap(), "เสร็จแล้วค่ะ");
+        // An empty key redacts nothing, and Aiko keeps her feminine particles.
+        assert_eq!(
+            client.chat(&[], &mut tools).await.unwrap(),
+            "เสร็จแล้วค่ะ ต้องการอะไรอีกไหมคะ?"
+        );
         assert_eq!(tools.commands.len(), MAX_TOOL_CALLS);
         let requests = server.await.unwrap();
-        assert_eq!(requests[0]["tool_choice"], "auto");
-        assert!(requests[0]["tools"].is_array());
+        let first = &requests[0];
+        assert!(first["tools"].is_array() && first.get("tool_choice").is_none());
+        assert_eq!(first["think"], false);
+        assert_eq!(first["keep_alive"], "30m");
+        assert_eq!(first["options"]["num_ctx"], 8192);
+        // Follow-ups send arguments back as an object and name the tool.
+        let messages = requests[1]["messages"].as_array().unwrap();
+        let (assistant, result) = (&messages[1], &messages[2]);
+        assert_eq!(
+            assistant["tool_calls"][0]["function"]["arguments"],
+            arguments
+        );
+        assert_eq!(result["role"], "tool");
+        assert_eq!(result["tool_name"], "run_command");
+        assert_eq!(result["tool_call_id"], assistant["tool_calls"][0]["id"]);
         let last = requests.last().unwrap();
-        assert!(last.get("tools").is_none() && last.get("tool_choice").is_none());
+        assert!(last.get("tools").is_none());
         assert_eq!(
             last["messages"].as_array().unwrap().last().unwrap()["content"],
             LIMIT_NOTE
+        );
+
+        let (url, server) = mock_server(vec![json!({"message":{"role":"assistant","content":"ยาว"},"done":true,"done_reason":"length"})]).await;
+        let error = test_client(Provider::Ollama, url)
+            .chat(&[], &mut tools)
+            .await;
+        assert!(error.unwrap_err().contains("did not complete"));
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn feminine_particles_replace_masculine_ones_outside_code() {
+        assert_eq!(
+            feminine("สวัสดีครับ! ได้ครับผม เอาอะไรครับ นะครับ บอกนะค่ะ\n```sh\necho ครับ\n```\nโอเคครับ"),
+            "สวัสดีค่ะ! ได้ค่ะ เอาอะไรคะ นะคะ บอกนะคะ\n```sh\necho ครับ\n```\nโอเคค่ะ"
         );
     }
 
@@ -1022,8 +1250,10 @@ mod tests {
 
     #[tokio::test]
     async fn replies_in_an_unasked_cjk_script_are_rewritten_once() {
-        let mixed = json!({"choices":[{"message":{"role":"assistant","content":"สวัสดีค่ะ 有什么可以帮您的吗?"}}]});
-        let thai = json!({"choices":[{"message":{"role":"assistant","content":"สวัสดีค่ะ มีอะไรให้ช่วยไหมคะ"}}]});
+        let native =
+            |text: &str| json!({"message":{"role":"assistant","content":text},"done":true});
+        let mixed = native("สวัสดีค่ะ 有什么可以帮您的吗?");
+        let thai = native("สวัสดีค่ะ มีอะไรให้ช่วยไหมคะ");
         let history = [Message {
             role: "user".into(),
             content: "ดีครับ".into(),
@@ -1044,7 +1274,8 @@ mod tests {
         );
 
         // A rewrite that still mixes scripts loses its CJK words.
-        let (url, server) = mock_server(vec![mixed.clone(), mixed.clone()]).await;
+        let mixed_completion = json!({"choices":[{"message":{"role":"assistant","content":"สวัสดีค่ะ 有什么可以帮您的吗?"}}]});
+        let (url, server) = mock_server(vec![mixed_completion.clone(), mixed_completion]).await;
         let reply = test_client(Provider::DeepSeek, url)
             .chat(&history, &mut FakeTools::default())
             .await;
@@ -1135,6 +1366,7 @@ mod tests {
                 api_key: "dummy-test-key".into(),
                 keys: Vec::new(),
                 ollama_url: String::new(),
+                ollama_context: 8192,
             },
             url,
         )
@@ -1173,6 +1405,7 @@ mod tests {
                         api_key: "dummy-test-key".into(),
                         keys: Vec::new(),
                         ollama_url: String::new(),
+                        ollama_context: 8192,
                     },
                     url,
                 )

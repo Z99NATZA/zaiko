@@ -72,6 +72,54 @@ impl Drop for RunningCommand {
     }
 }
 
+/// Decodes output as text without terminal escape sequences or control
+/// characters other than newlines and tabs, which full-screen programs emit.
+fn printable(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\u{1b}' => match chars.next() {
+                // CSI: parameters, then one final byte.
+                Some('[') => {
+                    for c in chars.by_ref() {
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                // OSC and other strings end with BEL or ESC \.
+                Some(']' | 'P' | '_' | '^' | 'X') => {
+                    while let Some(c) = chars.next() {
+                        if c == '\u{7}' {
+                            break;
+                        }
+                        if c == '\u{1b}' {
+                            chars.next_if_eq(&'\\');
+                            break;
+                        }
+                    }
+                }
+                // Character set selection such as ESC ( B.
+                Some('(' | ')' | '*' | '+') => {
+                    chars.next();
+                }
+                _ => {}
+            },
+            '\r' => {
+                if chars.peek() != Some(&'\n') {
+                    out.push('\n');
+                }
+            }
+            '\n' | '\t' => out.push(c),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 fn capture(output: &mut Vec<u8>, bytes: &[u8], truncated: &mut bool) {
     let available = OUTPUT_LIMIT - output.len();
     output.extend_from_slice(&bytes[..bytes.len().min(available)]);
@@ -150,8 +198,8 @@ pub async fn run(request: CommandRequest) -> Result<CommandOutput, String> {
     Ok(CommandOutput {
         success: status.success() && !timed_out,
         exit_code: status.code(),
-        stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
-        stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
+        stdout: printable(&stdout_bytes),
+        stderr: printable(&stderr_bytes),
         timed_out,
         truncated,
         workdir: directory.to_string_lossy().into_owned(),
@@ -182,10 +230,16 @@ mod tests {
         assert!(!result.timed_out);
     }
 
+    #[test]
+    fn terminal_escapes_and_controls_are_removed() {
+        let raw = "\u{1b}[?25l\u{1b}[38;5;39m█\u{1b}[0m ok\u{1b}(B\u{1b}]0;title\u{7}\r\nไทย\tA\u{0}\u{8}\rB";
+        assert_eq!(printable(raw.as_bytes()), "█ ok\nไทย\tA\nB");
+    }
+
     #[tokio::test]
     async fn excess_output_is_drained_and_bounded_without_deadlock() {
         let result = run(request(
-            "head -c 100000 /dev/zero; head -c 100000 /dev/zero >&2",
+            "head -c 100000 /dev/zero | tr '\\0' x; head -c 100000 /dev/zero | tr '\\0' x >&2",
         ))
         .await
         .unwrap();

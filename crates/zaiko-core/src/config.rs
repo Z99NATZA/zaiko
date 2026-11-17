@@ -9,6 +9,9 @@ pub enum Provider {
 }
 
 pub const DEFAULT_OLLAMA_URL: &str = "http://127.0.0.1:11434";
+/// Large enough for the system prompt, tools, and a few turns, while an 8B
+/// model still fits on an 8 GB GPU.
+pub const DEFAULT_OLLAMA_CONTEXT: u32 = 8192;
 
 impl Provider {
     pub fn name(self) -> &'static str {
@@ -87,6 +90,8 @@ pub struct Config {
     pub keys: Vec<(Provider, String)>,
     /// Base URL of the Ollama server.
     pub ollama_url: String,
+    /// Context window, in tokens, requested from Ollama.
+    pub ollama_context: u32,
 }
 
 impl Config {
@@ -156,6 +161,14 @@ pub fn parse(mut get: impl FnMut(&str) -> Option<String>) -> Result<Config, Stri
         return Err("ZAIKO_LLM_MODEL must be a valid model ID.".to_owned());
     }
     let ollama_url = ollama_url(get("ZAIKO_OLLAMA_URL"))?;
+    let ollama_context = match get("ZAIKO_OLLAMA_CONTEXT").as_deref().map(str::trim) {
+        None | Some("") => DEFAULT_OLLAMA_CONTEXT,
+        Some(value) => value
+            .parse()
+            .ok()
+            .filter(|n| (2048..=262_144).contains(n))
+            .ok_or("ZAIKO_OLLAMA_CONTEXT must be a number from 2048 to 262144.")?,
+    };
     // A key is only an error when a configured model needs it.
     let mut key = |name: &str| -> Result<Option<String>, String> {
         let value = get(name).unwrap_or_default().trim().to_owned();
@@ -232,6 +245,7 @@ pub fn parse(mut get: impl FnMut(&str) -> Option<String>) -> Result<Config, Stri
         api_key,
         keys,
         ollama_url,
+        ollama_context,
     })
 }
 
@@ -346,6 +360,7 @@ mod tests {
         let config = parse(get("")).unwrap();
         assert!(config.api_key.is_empty());
         assert_eq!(config.ollama_url, DEFAULT_OLLAMA_URL);
+        assert_eq!(config.ollama_context, DEFAULT_OLLAMA_CONTEXT);
         let listed: Vec<_> = config
             .models
             .iter()
@@ -368,6 +383,18 @@ mod tests {
         let remote = parse(get(" http://gpu-box:11434/ ")).unwrap();
         assert_eq!(remote.ollama_url, "http://gpu-box:11434");
         assert!(parse(get("gpu-box:11434")).is_err());
+
+        let context = |value: &'static str| {
+            let base = get("");
+            parse(move |key| match key {
+                "ZAIKO_OLLAMA_CONTEXT" => Some(value.to_owned()),
+                _ => base(key),
+            })
+        };
+        assert_eq!(context(" 16384 ").unwrap().ollama_context, 16384);
+        for invalid in ["1024", "lots", "999999"] {
+            assert!(!context(invalid).err().unwrap().contains(invalid));
+        }
 
         // Another provider's model still needs that provider's key.
         let openai = parse(|key| {

@@ -97,9 +97,12 @@ visibility. Unknown aliases, modes, and missing desktop actions fail explicitly.
 Use desktop IDs io.github.z99natza.zter.desktop and code.desktop/code-oss.desktop.
 
 The provider open_app tool accepts app plus nullable mode (default, tab,
-standalone). Omitted/null mode defaults to default. Only terminal accepts tab or
-standalone; VS Code uses default. Duplicate tool calls for the same app and mode
-within a request execute once; different modes are distinct actions.
+standalone) and nullable command. Omitted/null mode defaults to default. Only
+terminal accepts tab, standalone, or a command; VS Code uses default and null.
+A one-line command opens zter with it running (zter --new-tab --run, or -s --run
+in standalone mode) through the run_command path, once per call. Duplicate tool
+calls for the same app and mode without a command within a request execute
+once; different modes are distinct actions.
 
 The run_command provider tool accepts command, nullable workdir, and nullable
 timeout_ms. It executes in the Rust core; no raw-command method is exported by

@@ -854,6 +854,7 @@ mod tests {
             api_key: "dummy-secret-value".into(),
             keys: Vec::new(),
             ollama_url: String::new(),
+            ollama_context: 8192,
         }));
         let state = runtime.state.lock().await;
         let Some(Local::Reply(reply)) = runtime.slash_reply("/status", &state) else {
@@ -877,6 +878,7 @@ mod tests {
             api_key: "dummy-secret-value".into(),
             keys: Vec::new(),
             ollama_url: String::new(),
+            ollama_context: 8192,
         }));
         let state = runtime.state.lock().await;
         let reply = |text| match runtime.slash_reply(text, &state) {
@@ -927,6 +929,7 @@ mod tests {
             api_key: "dummy-secret-value".into(),
             keys: Vec::new(),
             ollama_url: String::new(),
+            ollama_context: 8192,
         }));
         let mut state = runtime.state.lock().await;
         for _ in 0..100 {
