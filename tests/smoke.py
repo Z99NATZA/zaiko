@@ -19,7 +19,7 @@ CORE_BUS = "org.zaiko.Companion"
 CORE_PATH = "/org/zaiko/Companion"
 VARIABLES = {
     "ZAIKO_LLM_PROVIDER", "ZAIKO_LLM_MODEL", "ZAIKO_LLM_MODELS", "OPENAI_API_KEY",
-    "DEEPSEEK_API_KEY"
+    "DEEPSEEK_API_KEY", "ZAIKO_OLLAMA_URL"
 }
 
 
@@ -175,7 +175,7 @@ def main():
         check(shutil.which(program), f"Missing test dependency: {program}")
     check(args.binary.is_file(), "Build zaiko-core first or pass --binary PATH")
     check(variable_names(PROJECT / ".env.example") == VARIABLES,
-          "Public example does not have the five documented variables")
+          "Public example does not have the six documented variables")
     print("PASS public configuration variable names (workspace .env was not read)")
 
     with tempfile.TemporaryDirectory(prefix="zaiko QA spaces ") as temporary:
@@ -210,7 +210,7 @@ def main():
         fixture_bytes = (
             "# QA-owned synthetic configuration; not a credential.\n"
             "ZAIKO_LLM_PROVIDER=openai\nZAIKO_LLM_MODEL=qa-local-no-api\nZAIKO_LLM_MODELS=\n"
-            f"OPENAI_API_KEY={synthetic_key}\nDEEPSEEK_API_KEY=\n"
+            f"OPENAI_API_KEY={synthetic_key}\nDEEPSEEK_API_KEY=\nZAIKO_OLLAMA_URL=\n"
         ).encode()
         config_source.write_bytes(fixture_bytes)
         install = [sys.executable, source / "scripts/install.py", "--binary", args.binary.resolve(),

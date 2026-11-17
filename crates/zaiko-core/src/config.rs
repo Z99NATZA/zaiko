@@ -4,13 +4,18 @@ use std::{collections::HashMap, path::Path};
 pub enum Provider {
     OpenAi,
     DeepSeek,
+    /// A local Ollama server; it needs no API key.
+    Ollama,
 }
+
+pub const DEFAULT_OLLAMA_URL: &str = "http://127.0.0.1:11434";
 
 impl Provider {
     pub fn name(self) -> &'static str {
         match self {
             Self::OpenAi => "openai",
             Self::DeepSeek => "deepseek",
+            Self::Ollama => "ollama",
         }
     }
 
@@ -18,16 +23,21 @@ impl Provider {
         match value {
             "openai" => Some(Self::OpenAi),
             "deepseek" => Some(Self::DeepSeek),
+            "ollama" => Some(Self::Ollama),
             _ => None,
         }
     }
 
-    pub fn key_name(self) -> &'static str {
+    /// The variable holding this provider's API key, if it needs one.
+    pub fn key_name(self) -> Option<&'static str> {
         match self {
-            Self::OpenAi => "OPENAI_API_KEY",
-            Self::DeepSeek => "DEEPSEEK_API_KEY",
+            Self::OpenAi => Some("OPENAI_API_KEY"),
+            Self::DeepSeek => Some("DEEPSEEK_API_KEY"),
+            Self::Ollama => None,
         }
     }
+
+    const KEYED: [Self; 2] = [Self::OpenAi, Self::DeepSeek];
 }
 
 /// A model and the provider that serves it.
@@ -38,14 +48,17 @@ pub struct ModelChoice {
 }
 
 impl ModelChoice {
-    /// Reads "openai:<id>" or "deepseek:<id>", or infers the provider from the
-    /// ID: deepseek* is DeepSeek, gpt-* is OpenAI, anything else uses `default`.
+    /// Reads "openai:<id>", "deepseek:<id>" or "ollama:<id>", or infers the
+    /// provider from the ID: a tagged name such as qwen3:8b is Ollama,
+    /// deepseek* is DeepSeek, gpt-* is OpenAI, anything else uses `default`.
     pub fn parse(entry: &str, default: Provider) -> Option<Self> {
         let explicit = entry
             .split_once(':')
             .and_then(|(provider, model)| Provider::parse(provider).map(|p| (p, model)));
         let (provider, model) = explicit.unwrap_or_else(|| {
-            let provider = if entry.starts_with("deepseek") {
+            let provider = if entry.contains(':') {
+                Provider::Ollama
+            } else if entry.starts_with("deepseek") {
                 Provider::DeepSeek
             } else if entry.starts_with("gpt-") {
                 Provider::OpenAi
@@ -68,14 +81,19 @@ pub struct Config {
     pub model: String,
     /// Models offered by the /model picker; starts with `provider`/`model`.
     pub models: Vec<ModelChoice>,
-    /// Key for `provider`.
+    /// Key for `provider`; empty for a provider that needs none.
     pub api_key: String,
     /// Valid keys for the other providers, used by models switched to with /model.
     pub keys: Vec<(Provider, String)>,
+    /// Base URL of the Ollama server.
+    pub ollama_url: String,
 }
 
 impl Config {
     pub fn key(&self, provider: Provider) -> Option<&str> {
+        if provider.key_name().is_none() {
+            return Some("");
+        }
         if provider == self.provider {
             return Some(&self.api_key);
         }
@@ -86,7 +104,9 @@ impl Config {
     }
 
     pub fn secrets(&self) -> impl Iterator<Item = &str> {
-        std::iter::once(self.api_key.as_str()).chain(self.keys.iter().map(|(_, key)| key.as_str()))
+        std::iter::once(self.api_key.as_str())
+            .chain(self.keys.iter().map(|(_, key)| key.as_str()))
+            .filter(|key| !key.is_empty())
     }
 
     /// The same configuration, pointed at another model and its provider's key.
@@ -127,7 +147,7 @@ pub fn parse(mut get: impl FnMut(&str) -> Option<String>) -> Result<Config, Stri
             .unwrap_or("openai")
             .trim(),
     )
-    .ok_or("ZAIKO_LLM_PROVIDER must be openai or deepseek.")?;
+    .ok_or("ZAIKO_LLM_PROVIDER must be openai, deepseek or ollama.")?;
     let model = get("ZAIKO_LLM_MODEL").unwrap_or_default().trim().to_owned();
     if model.is_empty() {
         return Err("ZAIKO_LLM_MODEL is required.".to_owned());
@@ -135,9 +155,9 @@ pub fn parse(mut get: impl FnMut(&str) -> Option<String>) -> Result<Config, Stri
     if !valid_model(&model) {
         return Err("ZAIKO_LLM_MODEL must be a valid model ID.".to_owned());
     }
+    let ollama_url = ollama_url(get("ZAIKO_OLLAMA_URL"))?;
     // A key is only an error when a configured model needs it.
-    let mut key = |provider: Provider| -> Result<Option<String>, String> {
-        let name = provider.key_name();
+    let mut key = |name: &str| -> Result<Option<String>, String> {
         let value = get(name).unwrap_or_default().trim().to_owned();
         if value.is_empty() {
             return Ok(None);
@@ -147,55 +167,52 @@ pub fn parse(mut get: impl FnMut(&str) -> Option<String>) -> Result<Config, Stri
         }
         Ok(Some(value))
     };
-    let api_key = key(provider)?.ok_or_else(|| {
-        format!(
-            "{} is required for {}.",
-            provider.key_name(),
-            provider.name()
-        )
-    })?;
-    let other = match provider {
-        Provider::OpenAi => Provider::DeepSeek,
-        Provider::DeepSeek => Provider::OpenAi,
+    let api_key = match provider.key_name() {
+        Some(name) => {
+            key(name)?.ok_or_else(|| format!("{name} is required for {}.", provider.name()))?
+        }
+        None => String::new(),
     };
-    let other_key = key(other);
+    // Keys of the other keyed providers, checked when a listed model needs one.
+    let others: Vec<_> = Provider::KEYED
+        .into_iter()
+        .filter(|p| *p != provider)
+        .map(|p| (p, key(p.key_name().unwrap_or_default())))
+        .collect();
     let list = get("ZAIKO_LLM_MODELS").unwrap_or_default();
     let mut models = vec![ModelChoice {
         provider,
         model: model.clone(),
     }];
+    let invalid_list =
+        || "ZAIKO_LLM_MODELS must list up to 64 valid model IDs, separated by commas.".to_owned();
     for item in list
         .split(',')
         .map(str::trim)
         .filter(|item| !item.is_empty())
     {
-        let secret = item.contains(&api_key)
-            || other_key
-                .as_ref()
-                .is_ok_and(|key| key.as_ref().is_some_and(|key| item.contains(key)));
+        let secret = (!api_key.is_empty() && item.contains(&api_key))
+            || others.iter().any(|(_, key)| {
+                key.as_ref()
+                    .is_ok_and(|key| key.as_ref().is_some_and(|key| item.contains(key)))
+            });
         // Snapshots are not redacted, so a key must never become a listed model.
         let Some(choice) = ModelChoice::parse(item, provider).filter(|_| !secret) else {
-            return Err(
-                "ZAIKO_LLM_MODELS must list up to 64 valid model IDs, separated by commas."
-                    .to_owned(),
-            );
+            return Err(invalid_list());
         };
         if models.contains(&choice) {
             continue;
         }
         if models.len() >= 64 {
-            return Err(
-                "ZAIKO_LLM_MODELS must list up to 64 valid model IDs, separated by commas."
-                    .to_owned(),
-            );
+            return Err(invalid_list());
         }
-        if choice.provider == other {
-            match &other_key {
+        if let Some((other, key)) = others.iter().find(|(p, _)| *p == choice.provider) {
+            match key {
                 Ok(Some(_)) => {}
                 Ok(None) => {
                     return Err(format!(
                         "{} is required for {} models in ZAIKO_LLM_MODELS.",
-                        other.key_name(),
+                        other.key_name().unwrap_or_default(),
                         other.name()
                     ));
                 }
@@ -204,17 +221,34 @@ pub fn parse(mut get: impl FnMut(&str) -> Option<String>) -> Result<Config, Stri
         }
         models.push(choice);
     }
-    let keys = match other_key {
-        Ok(Some(key)) => vec![(other, key)],
-        _ => Vec::new(),
-    };
+    let keys = others
+        .into_iter()
+        .filter_map(|(p, key)| key.ok().flatten().map(|key| (p, key)))
+        .collect();
     Ok(Config {
         provider,
         model,
         models,
         api_key,
         keys,
+        ollama_url,
     })
+}
+
+/// Reads an http(s) base URL such as http://127.0.0.1:11434, without a trailing slash.
+fn ollama_url(value: Option<String>) -> Result<String, String> {
+    let value = value.unwrap_or_default();
+    let value = value.trim().trim_end_matches('/');
+    if value.is_empty() {
+        return Ok(DEFAULT_OLLAMA_URL.to_owned());
+    }
+    let valid = value.len() <= 512
+        && (value.starts_with("http://") || value.starts_with("https://"))
+        && !value.chars().any(|c| c.is_control() || c.is_whitespace());
+    if !valid {
+        return Err("ZAIKO_OLLAMA_URL must be an http:// or https:// URL.".to_owned());
+    }
+    Ok(value.to_owned())
 }
 
 #[cfg(test)]
@@ -292,6 +326,60 @@ mod tests {
         }
         // Without OpenAI models, the unused OpenAI key is still optional.
         assert!(parse(get("deepseek-chat", "")).unwrap().keys.is_empty());
+    }
+
+    #[test]
+    fn ollama_needs_no_key_and_tagged_ids_infer_it() {
+        let get = |url: &'static str| {
+            move |key: &str| {
+                match key {
+                    "ZAIKO_LLM_PROVIDER" => Some("ollama"),
+                    "ZAIKO_LLM_MODEL" => Some("qwen3:8b"),
+                    "ZAIKO_LLM_MODELS" => Some("llama3.2:3b,ollama:mistral,deepseek-chat"),
+                    "ZAIKO_OLLAMA_URL" => Some(url),
+                    "DEEPSEEK_API_KEY" => Some("dummy-deepseek-key"),
+                    _ => None,
+                }
+                .map(str::to_owned)
+            }
+        };
+        let config = parse(get("")).unwrap();
+        assert!(config.api_key.is_empty());
+        assert_eq!(config.ollama_url, DEFAULT_OLLAMA_URL);
+        let listed: Vec<_> = config
+            .models
+            .iter()
+            .map(|c| format!("{}:{}", c.provider.name(), c.model))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                "ollama:qwen3:8b",
+                "ollama:llama3.2:3b",
+                "ollama:mistral",
+                "deepseek:deepseek-chat"
+            ]
+        );
+        assert_eq!(config.key(Provider::Ollama), Some(""));
+        assert_eq!(config.secrets().collect::<Vec<_>>(), ["dummy-deepseek-key"]);
+        let deepseek = config.with_choice(&config.models[3]).unwrap();
+        assert_eq!(deepseek.api_key, "dummy-deepseek-key");
+
+        let remote = parse(get(" http://gpu-box:11434/ ")).unwrap();
+        assert_eq!(remote.ollama_url, "http://gpu-box:11434");
+        assert!(parse(get("gpu-box:11434")).is_err());
+
+        // Another provider's model still needs that provider's key.
+        let openai = parse(|key| {
+            match key {
+                "ZAIKO_LLM_PROVIDER" => Some("ollama"),
+                "ZAIKO_LLM_MODEL" => Some("qwen3:8b"),
+                "ZAIKO_LLM_MODELS" => Some("gpt-6.1-sol"),
+                _ => None,
+            }
+            .map(str::to_owned)
+        });
+        assert!(openai.err().unwrap().contains("OPENAI_API_KEY"));
     }
 
     #[test]

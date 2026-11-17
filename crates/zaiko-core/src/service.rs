@@ -289,11 +289,10 @@ impl Runtime {
                 "model ID ไม่ถูกต้องค่ะ ใช้ได้เฉพาะตัวอักษร ตัวเลข และ . _ / - : ไม่เกิน 128 ตัว".into(),
             );
         };
-        if config.key(choice.provider).is_none() {
+        if let (None, Some(name)) = (config.key(choice.provider), choice.provider.key_name()) {
             return Err(format!(
-                "ยังใช้ {} ไม่ได้ค่ะ ต้องตั้ง {} ก่อน",
-                choice.provider.name(),
-                choice.provider.key_name()
+                "ยังใช้ {} ไม่ได้ค่ะ ต้องตั้ง {name} ก่อน",
+                choice.provider.name()
             ));
         }
         // Choosing the active model is a silent no-op switch.
@@ -854,6 +853,7 @@ mod tests {
             models: Vec::new(),
             api_key: "dummy-secret-value".into(),
             keys: Vec::new(),
+            ollama_url: String::new(),
         }));
         let state = runtime.state.lock().await;
         let Some(Local::Reply(reply)) = runtime.slash_reply("/status", &state) else {
@@ -876,6 +876,7 @@ mod tests {
             models: Vec::new(),
             api_key: "dummy-secret-value".into(),
             keys: Vec::new(),
+            ollama_url: String::new(),
         }));
         let state = runtime.state.lock().await;
         let reply = |text| match runtime.slash_reply(text, &state) {
@@ -925,6 +926,7 @@ mod tests {
             models: Vec::new(),
             api_key: "dummy-secret-value".into(),
             keys: Vec::new(),
+            ollama_url: String::new(),
         }));
         let mut state = runtime.state.lock().await;
         for _ in 0..100 {

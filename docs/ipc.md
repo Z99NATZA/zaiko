@@ -30,7 +30,7 @@ invalid. It reports the state before reserving this request, provider/model, and
 current permission boundaries. It also recognizes /model: without arguments it
 reports the active provider/model; /model <model-id> switches the model used by
 later provider requests for this core session only, switching provider and key
-when the model belongs to the other provider (a restart returns to configuration).
+when the model belongs to another provider (a restart returns to configuration).
 A successful switch, including to the active model, finishes during Submit: it adds
 no message (so nothing reaches the provider history), skips the thinking state and
 emits only an idle state event.

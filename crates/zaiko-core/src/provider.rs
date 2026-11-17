@@ -19,6 +19,11 @@ const SYSTEM: &str = include_str!("../prompts/aiko.md");
 const LIMIT_NOTE: &str = "No more tools can run for this request. Without calling tools, reply briefly in the language of the user's latest message: say what was done, and that the rest is not supported or cannot be done this way. Do not describe it as an error or mention tool call limits.";
 // Added to the system prompt in Ask for approval mode.
 const ASK_NOTE: &str = "Permission mode: Ask for approval. Before calling any tool (open_app or run_command), first reply in plain text, without calling tools, saying briefly what you will do (the app, or the commands and folder) and asking the user to confirm. Call tools only when the user's latest message clearly agrees to what you proposed, in any wording. If they decline, are unsure, or change the request, do not act; answer or propose again. A confirmation covers only what you described; anything new or different needs a new confirmation.";
+// Added to the system prompt for local Ollama models, which drift into other
+// languages (often Chinese) more easily than hosted models.
+const OLLAMA_NOTE: &str = "Write every reply only in the language of the user's latest message, for example only Thai when they write Thai. Never switch to Chinese or any other language mid-reply.";
+// Sent with tools disabled when a reply contains CJK text the user did not write.
+const LANGUAGE_NOTE: &str = "Your previous reply mixed in another language. Rewrite it entirely in the language of the user's latest message, keeping the same meaning and tone. Use no Chinese, Japanese, or Korean characters. Reply with the rewritten text only.";
 const LIMIT_REPLY: &str = "ส่วนที่เหลือไอโกะยังทำให้ไม่ได้ค่ะ ตอนนี้ยังไม่รองรับนะคะ";
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
@@ -134,16 +139,22 @@ pub struct Client {
 impl Client {
     pub fn new(config: Config) -> Result<Self, String> {
         let endpoint = match config.provider {
-            Provider::OpenAi => "https://api.openai.com/v1/responses",
-            Provider::DeepSeek => "https://api.deepseek.com/chat/completions",
+            Provider::OpenAi => "https://api.openai.com/v1/responses".to_owned(),
+            Provider::DeepSeek => "https://api.deepseek.com/chat/completions".to_owned(),
+            Provider::Ollama => format!("{}/v1/chat/completions", config.ollama_url),
         };
-        Self::with_endpoint(config, endpoint.to_owned())
+        Self::with_endpoint(config, endpoint)
     }
 
     fn with_endpoint(config: Config, endpoint: String) -> Result<Self, String> {
+        // A local model may first need to load into memory, and runs slower.
+        let timeout = match config.provider {
+            Provider::Ollama => 180,
+            _ => 60,
+        };
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(60))
+            .timeout(Duration::from_secs(timeout))
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|_| "Cannot initialize provider connection.".to_owned())?;
@@ -161,10 +172,14 @@ impl Client {
     }
 
     fn instructions(&self) -> String {
-        match self.permissions {
-            Permissions::Ask => format!("{SYSTEM}\n\n{ASK_NOTE}"),
-            Permissions::Full => SYSTEM.to_owned(),
+        let mut instructions = SYSTEM.to_owned();
+        if self.permissions == Permissions::Ask {
+            instructions = format!("{instructions}\n\n{ASK_NOTE}");
         }
+        if self.config.provider == Provider::Ollama {
+            instructions = format!("{instructions}\n\n{OLLAMA_NOTE}");
+        }
+        instructions
     }
 
     pub async fn chat(
@@ -174,28 +189,34 @@ impl Client {
     ) -> Result<String, String> {
         match self.config.provider {
             Provider::OpenAi => self.responses(history, tools).await,
-            Provider::DeepSeek => self.completions(history, tools).await,
+            Provider::DeepSeek | Provider::Ollama => self.completions(history, tools).await,
         }
     }
 
     async fn post(&self, body: Value) -> Result<Value, String> {
-        let mut response = self
-            .http
-            .post(&self.endpoint)
-            .bearer_auth(&self.config.api_key)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|error| {
-                if error.is_timeout() {
-                    "Provider request timed out.".to_owned()
-                } else {
-                    "Cannot reach the selected provider.".to_owned()
-                }
-            })?;
+        let ollama = self.config.provider == Provider::Ollama;
+        let mut request = self.http.post(&self.endpoint).json(&body);
+        if !self.config.api_key.is_empty() {
+            request = request.bearer_auth(&self.config.api_key);
+        }
+        let mut response = request.send().await.map_err(|error| {
+            if error.is_timeout() {
+                "Provider request timed out.".to_owned()
+            } else if ollama {
+                "Cannot reach Ollama. Start it with ollama serve, or check ZAIKO_OLLAMA_URL."
+                    .to_owned()
+            } else {
+                "Cannot reach the selected provider.".to_owned()
+            }
+        })?;
         if !response.status().is_success() {
+            let hint = if ollama {
+                "Check that the model is pulled (ollama pull <model>) and supports tools."
+            } else {
+                "Check the selected model, credentials, and account limits."
+            };
             return Err(format!(
-                "{} request failed (HTTP {}). Check the selected model, credentials, and account limits.",
+                "{} request failed (HTTP {}). {hint}",
                 self.config.provider.name(),
                 response.status().as_u16()
             ));
@@ -299,14 +320,21 @@ impl Client {
                 .map(|m| json!({"role":m.role,"content":m.content})),
         );
         let request = |messages: &[Value], tool_choice: &str| {
-            json!({
+            let mut request = json!({
                 "model":self.config.model,
                 "messages":messages,
                 "tools":tool_definitions(false),
                 "tool_choice":tool_choice,
                 "max_tokens":2048,
                 "stream":false
-            })
+            });
+            // Ollama may ignore tool_choice, so offer no tools when none may run.
+            if self.config.provider == Provider::Ollama && tool_choice == "none" {
+                let request = request.as_object_mut().expect("request is an object");
+                request.remove("tools");
+                request.remove("tool_choice");
+            }
+            request
         };
         let mut executed = Executed::default();
         for _ in 0..=MAX_TOOL_CALLS {
@@ -316,7 +344,9 @@ impl Client {
                 .as_array()
                 .filter(|calls| !calls.is_empty());
             let Some(calls) = calls else {
-                return self.reply(message["content"].as_str().unwrap_or_default().to_owned());
+                let text = message["content"].as_str().unwrap_or_default().to_owned();
+                let text = self.keep_language(history, &messages, text).await;
+                return self.reply(text);
             };
             if calls.len() + executed.count > MAX_TOOL_CALLS {
                 break;
@@ -350,8 +380,46 @@ impl Client {
         {
             return Ok(LIMIT_REPLY.to_owned());
         }
-        self.reply(message["content"].as_str().unwrap_or_default().to_owned())
-            .or_else(|_| Ok(LIMIT_REPLY.to_owned()))
+        let text = message["content"].as_str().unwrap_or_default().to_owned();
+        let text = self.keep_language(history, &messages, text).await;
+        self.reply(text).or_else(|_| Ok(LIMIT_REPLY.to_owned()))
+    }
+
+    /// Returns `text` without CJK script the user did not write: the model
+    /// rewrites it once, and any CJK words left after that are removed.
+    async fn keep_language(&self, history: &[Message], messages: &[Value], text: String) -> String {
+        let user = history
+            .iter()
+            .rev()
+            .find(|m| m.role == "user")
+            .map_or("", |m| m.content.as_str());
+        if !text.chars().any(cjk) || user.chars().any(cjk) {
+            return text;
+        }
+        let mut retry = messages.to_vec();
+        retry.push(json!({"role":"assistant","content":text}));
+        retry.push(json!({"role":"system","content":LANGUAGE_NOTE}));
+        let body = json!({
+            "model":self.config.model,
+            "messages":retry,
+            "max_tokens":2048,
+            "stream":false
+        });
+        let rewritten = match self.post(body).await {
+            Ok(response) => choice_message(&response)
+                .ok()
+                .and_then(|message| message["content"].as_str())
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned),
+            Err(_) => None,
+        };
+        let text = rewritten.unwrap_or(text);
+        if !text.chars().any(cjk) {
+            return text;
+        }
+        let kept = without_cjk(&text);
+        if kept.trim().is_empty() { text } else { kept }
     }
 
     fn reply(&self, text: String) -> Result<String, String> {
@@ -362,8 +430,39 @@ impl Client {
         if text.len() > 16_384 {
             return Err("Provider reply exceeds the text limit.".to_owned());
         }
+        if self.config.api_key.is_empty() {
+            return Ok(text.to_owned());
+        }
         Ok(text.replace(&self.config.api_key, "[redacted]"))
     }
+}
+
+/// Han, kana, hangul, and their punctuation and full-width forms.
+fn cjk(c: char) -> bool {
+    matches!(c,
+        '\u{1100}'..='\u{11FF}'
+        | '\u{2E80}'..='\u{9FFF}'
+        | '\u{A960}'..='\u{A97F}'
+        | '\u{AC00}'..='\u{D7FF}'
+        | '\u{F900}'..='\u{FAFF}'
+        | '\u{FE30}'..='\u{FE4F}'
+        | '\u{FF00}'..='\u{FFEF}'
+        | '\u{20000}'..='\u{3FFFF}')
+}
+
+/// Drops each whitespace-separated word that contains CJK, keeping line breaks.
+fn without_cjk(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            line.split_whitespace()
+                .filter(|word| !word.chars().any(cjk))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_owned()
 }
 
 fn response_output(response: &Value) -> Result<&Vec<Value>, String> {
@@ -699,6 +798,7 @@ mod tests {
                 models: Vec::new(),
                 api_key: "dummy-test-key".into(),
                 keys: Vec::new(),
+                ollama_url: String::new(),
             },
             url,
         )
@@ -744,6 +844,7 @@ mod tests {
                 models: Vec::new(),
                 api_key: "dummy-test-key".into(),
                 keys: Vec::new(),
+                ollama_url: String::new(),
             },
             url,
         )
@@ -773,6 +874,7 @@ mod tests {
                 models: Vec::new(),
                 api_key: "dummy-test-key".into(),
                 keys: Vec::new(),
+                ollama_url: String::new(),
             },
             url,
         )
@@ -798,6 +900,7 @@ mod tests {
                 models: Vec::new(),
                 api_key: "dummy-test-key".into(),
                 keys: Vec::new(),
+                ollama_url: String::new(),
             },
             url,
         )
@@ -821,6 +924,7 @@ mod tests {
                 models: Vec::new(),
                 api_key: "dummy-test-key".into(),
                 keys: Vec::new(),
+                ollama_url: String::new(),
             },
             url,
         )
@@ -880,6 +984,84 @@ mod tests {
             .await;
         assert_eq!(reply.unwrap(), LIMIT_REPLY);
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn ollama_uses_completions_without_a_key_and_drops_tools_at_the_limit() {
+        let command = r#"{"command":"pwd","workdir":"/tmp","timeout_ms":null}"#;
+        let call = |index: usize| json!({"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":format!("call-{index}"),"type":"function","function":{"name":"run_command","arguments":command}}]}}]});
+        let mut responses: Vec<Value> = (0..=MAX_TOOL_CALLS).map(call).collect();
+        responses.push(json!({"choices":[{"message":{"role":"assistant","content":"เสร็จแล้วค่ะ","reasoning":"thinking"}}]}));
+        let (url, server) = mock_server(responses).await;
+        let mut client = test_client(Provider::Ollama, url);
+        client.config.api_key.clear();
+        let mut tools = FakeTools::default();
+        // An empty key must not redact anything in the reply.
+        assert_eq!(client.chat(&[], &mut tools).await.unwrap(), "เสร็จแล้วค่ะ");
+        assert_eq!(tools.commands.len(), MAX_TOOL_CALLS);
+        let requests = server.await.unwrap();
+        assert_eq!(requests[0]["tool_choice"], "auto");
+        assert!(requests[0]["tools"].is_array());
+        let last = requests.last().unwrap();
+        assert!(last.get("tools").is_none() && last.get("tool_choice").is_none());
+        assert_eq!(
+            last["messages"].as_array().unwrap().last().unwrap()["content"],
+            LIMIT_NOTE
+        );
+    }
+
+    #[test]
+    fn cjk_words_are_removed_and_other_text_kept() {
+        assert_eq!(
+            without_cjk("สวัสดีค่ะ 有什么可以帮您的吗？\nเรียกเปิด zter ให้แล้วค่ะ 有什么需要帮忙的吗? 😊"),
+            "สวัสดีค่ะ\nเรียกเปิด zter ให้แล้วค่ะ 😊"
+        );
+        assert!(!"สวัสดี hello 😊 ค่ะ".chars().any(cjk));
+        assert!("こんにちは 안녕 你好".chars().all(|c| c == ' ' || cjk(c)));
+    }
+
+    #[tokio::test]
+    async fn replies_in_an_unasked_cjk_script_are_rewritten_once() {
+        let mixed = json!({"choices":[{"message":{"role":"assistant","content":"สวัสดีค่ะ 有什么可以帮您的吗?"}}]});
+        let thai = json!({"choices":[{"message":{"role":"assistant","content":"สวัสดีค่ะ มีอะไรให้ช่วยไหมคะ"}}]});
+        let history = [Message {
+            role: "user".into(),
+            content: "ดีครับ".into(),
+        }];
+        let (url, server) = mock_server(vec![mixed.clone(), thai]).await;
+        let reply = test_client(Provider::Ollama, url)
+            .chat(&history, &mut FakeTools::default())
+            .await;
+        assert_eq!(reply.unwrap(), "สวัสดีค่ะ มีอะไรให้ช่วยไหมคะ");
+        let requests = server.await.unwrap();
+        let system = requests[0]["messages"][0]["content"].as_str().unwrap();
+        assert!(system.ends_with(OLLAMA_NOTE));
+        let retry = &requests[1];
+        assert!(retry.get("tools").is_none());
+        assert_eq!(
+            retry["messages"].as_array().unwrap().last().unwrap()["content"],
+            LANGUAGE_NOTE
+        );
+
+        // A rewrite that still mixes scripts loses its CJK words.
+        let (url, server) = mock_server(vec![mixed.clone(), mixed.clone()]).await;
+        let reply = test_client(Provider::DeepSeek, url)
+            .chat(&history, &mut FakeTools::default())
+            .await;
+        assert_eq!(reply.unwrap(), "สวัสดีค่ะ");
+        assert_eq!(server.await.unwrap().len(), 2);
+
+        // CJK the user wrote is left alone, with no extra request.
+        let asked = [Message {
+            role: "user".into(),
+            content: "你好 แปลว่าอะไร".into(),
+        }];
+        let (url, server) = mock_server(vec![mixed]).await;
+        let reply = test_client(Provider::Ollama, url)
+            .chat(&asked, &mut FakeTools::default())
+            .await;
+        assert_eq!(reply.unwrap(), "สวัสดีค่ะ 有什么可以帮您的吗?");
+        assert_eq!(server.await.unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -952,6 +1134,7 @@ mod tests {
                 models: Vec::new(),
                 api_key: "dummy-test-key".into(),
                 keys: Vec::new(),
+                ollama_url: String::new(),
             },
             url,
         )
@@ -989,6 +1172,7 @@ mod tests {
                         models: Vec::new(),
                         api_key: "dummy-test-key".into(),
                         keys: Vec::new(),
+                        ollama_url: String::new(),
                     },
                     url,
                 )
@@ -999,7 +1183,7 @@ mod tests {
                 let request = &server.await.unwrap()[0];
                 let system = match provider {
                     Provider::OpenAi => &request["instructions"],
-                    Provider::DeepSeek => &request["messages"][0]["content"],
+                    Provider::DeepSeek | Provider::Ollama => &request["messages"][0]["content"],
                 }
                 .as_str()
                 .unwrap();

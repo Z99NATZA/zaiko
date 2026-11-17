@@ -12,15 +12,22 @@ Node.js is also needed for development checks. Install as your normal desktop us
 Configuration
 ----------
 
-Select openai or deepseek with ZAIKO_LLM_PROVIDER and its model ID with
+Select openai, deepseek or ollama with ZAIKO_LLM_PROVIDER and its model ID with
 ZAIKO_LLM_MODEL. The example selects openai / gpt-6.1-sol.
 Optionally list more model IDs for the /model picker in ZAIKO_LLM_MODELS,
 separated by commas (up to 64, same ID rules). ZAIKO_LLM_MODEL is always first.
-Listed models can use either provider: IDs starting with deepseek use DeepSeek,
-IDs starting with gpt- use OpenAI, and other IDs use ZAIKO_LLM_PROVIDER unless
-written as openai:<id> or deepseek:<id>.
+Listed models can use any provider: tagged IDs such as qwen3:8b use Ollama, IDs
+starting with deepseek use DeepSeek, IDs starting with gpt- use OpenAI, and other
+IDs use ZAIKO_LLM_PROVIDER unless written as openai:<id>, deepseek:<id> or
+ollama:<id>.
 The selected provider's API key is required, plus the key of any other provider
 used by ZAIKO_LLM_MODELS.
+
+Ollama runs models locally and needs no API key. Start it with ollama serve and
+pull a model that supports tool calling (for example ollama pull qwen3:8b).
+ZAIKO_OLLAMA_URL sets the server, default http://127.0.0.1:11434. Zaiko uses its
+OpenAI-compatible /v1/chat/completions endpoint and allows 180 seconds per
+request, since a model may first need to load.
 
 make install copies the project .env to ~/.config/zaiko/.env. If the installed
 file differs, it is first saved as ~/.config/zaiko/.env.backup-<timestamp>.
@@ -189,7 +196,7 @@ share the existing request-ID, cancellation, and active-request guards.
 Type /model to see the active provider/model, or /model <model-id> to switch
 the model for the rest of this session. A listed model keeps its provider; a
 typed ID uses the same provider rules as ZAIKO_LLM_MODELS and needs that
-provider's key. Restarting Zaiko returns to ZAIKO_LLM_PROVIDER/ZAIKO_LLM_MODEL. A successful
+provider's key (Ollama needs none). Restarting Zaiko returns to ZAIKO_LLM_PROVIDER/ZAIKO_LLM_MODEL. A successful
 switch leaves no message in the Log or the model history; the Log footer and
 /status show the switched model. The ID uses the same rules as ZAIKO_LLM_MODEL and is
 not checked against the provider until the next model request. A switched ID
