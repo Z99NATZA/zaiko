@@ -1,5 +1,7 @@
 use std::{collections::HashMap, future::Future, time::Duration};
 
+use tokio::time::{Instant, sleep, sleep_until};
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -8,7 +10,19 @@ use crate::{
     config::{Config, Provider},
 };
 
+// Largest JSON response, or single streamed event.
 const MAX_RESPONSE_BYTES: usize = 1_048_576;
+// Largest streamed response; each token arrives wrapped in its own event.
+const MAX_STREAM_BYTES: usize = 16 * MAX_RESPONSE_BYTES;
+// Longest reply kept; a longer one is cut at a line break and marked.
+const MAX_REPLY_BYTES: usize = 16_384;
+// Output tokens a hosted model may spend on one response, reasoning included.
+const MAX_OUTPUT_TOKENS: u32 = 16_384;
+// Time a client has for all its responses, below the 300-second limit the
+// service puts on a request, so a reply still being written at this point is
+// kept as a cut-off reply instead of being lost to that limit.
+const REQUEST_BUDGET: Duration = Duration::from_secs(270);
+const INCOMPLETE: &str = "Provider did not complete its response. Try a shorter request.";
 const MAX_TOOL_CALLS: usize = 16;
 // Consecutive failed tool calls that end a request early, so a model that
 // keeps trying workarounds answers instead of spending every call.
@@ -30,6 +44,10 @@ const TOOL_LOG_NOTE: &str = "Tool log from earlier in this conversation, recorde
 // Sent once when a reply reports an action although no tool ran for the request.
 const UNBACKED_NOTE: &str = "Your reply says an action was done, but no tool ran for this request, so nothing happened. If the user asked for something a tool can do, call that tool now. Otherwise reply again without claiming any action, and say briefly that it is not supported yet.";
 const LIMIT_REPLY: &str = "ส่วนที่เหลือไอโกะยังทำให้ไม่ได้ค่ะ ตอนนี้ยังไม่รองรับนะคะ";
+// Appended to a reply the model stopped at its output limit.
+const CUT_OFF_TH: &str = "(คำตอบยาวเกินไป ไอโกะเลยตัดไว้ตรงนี้ค่ะ อยากได้ส่วนที่เหลือก็บอกให้เขียนต่อได้นะคะ)";
+const CUT_OFF_EN: &str =
+    "(The reply was too long, so it stops here. Ask me to continue for the rest.)";
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
@@ -143,6 +161,10 @@ pub struct Client {
     config: Config,
     endpoint: String,
     permissions: Permissions,
+    /// Longest wait for the provider to send anything more.
+    idle: Duration,
+    /// When a response still streaming is cut; a client serves one request.
+    deadline: Instant,
 }
 
 impl Client {
@@ -156,14 +178,14 @@ impl Client {
     }
 
     fn with_endpoint(config: Config, endpoint: String) -> Result<Self, String> {
-        // A local model may first need to load into memory, and runs slower.
-        let timeout = match config.provider {
+        // Responses stream, so only silence times out. A local model may first
+        // need to load into memory before it sends anything.
+        let idle = match config.provider {
             Provider::Ollama => 180,
             _ => 60,
         };
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(timeout))
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|_| "Cannot initialize provider connection.".to_owned())?;
@@ -172,6 +194,8 @@ impl Client {
             config,
             endpoint,
             permissions: Permissions::default(),
+            idle: Duration::from_secs(idle),
+            deadline: Instant::now() + REQUEST_BUDGET,
         })
     }
 
@@ -202,15 +226,23 @@ impl Client {
         }
     }
 
+    /// Sends a streaming request and returns the response in the provider's
+    /// non-streaming shape. A server answering with plain JSON also works.
     async fn post(&self, body: Value) -> Result<Value, String> {
+        const TIMED_OUT: &str = "Provider request timed out.";
         let ollama = self.config.provider == Provider::Ollama;
         let mut request = self.http.post(&self.endpoint).json(&body);
         if !self.config.api_key.is_empty() {
             request = request.bearer_auth(&self.config.api_key);
         }
-        let mut response = request.send().await.map_err(|error| {
+        let sent = tokio::select! {
+            sent = request.send() => sent,
+            _ = sleep(self.idle) => return Err(TIMED_OUT.to_owned()),
+            _ = sleep_until(self.deadline) => return Err(TIMED_OUT.to_owned()),
+        };
+        let mut response = sent.map_err(|error| {
             if error.is_timeout() {
-                "Provider request timed out.".to_owned()
+                TIMED_OUT.to_owned()
             } else if ollama {
                 "Cannot reach Ollama. Start it with ollama serve, or check ZAIKO_OLLAMA_URL."
                     .to_owned()
@@ -230,24 +262,68 @@ impl Client {
                 response.status().as_u16()
             ));
         }
-        if response
-            .content_length()
-            .is_some_and(|n| n > MAX_RESPONSE_BYTES as u64)
-        {
-            return Err("Provider response exceeds the size limit.".to_owned());
+        const TOO_LARGE: &str = "Provider response exceeds the size limit.";
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let mut stream = (content_type.contains("text/event-stream")
+            || content_type.contains("ndjson"))
+        .then(|| Stream::new(self.config.provider));
+        let limit = if stream.is_some() {
+            MAX_STREAM_BYTES
+        } else {
+            MAX_RESPONSE_BYTES
+        };
+        if response.content_length().is_some_and(|n| n > limit as u64) {
+            return Err(TOO_LARGE.to_owned());
         }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| "Cannot read provider response.".to_owned())?
-        {
-            if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
-                return Err("Provider response exceeds the size limit.".to_owned());
+        let (mut bytes, mut total) = (Vec::new(), 0);
+        let mut done = false;
+        while !done {
+            let chunk = tokio::select! {
+                chunk = response.chunk() => {
+                    chunk.map_err(|_| "Cannot read provider response.".to_owned())?
+                }
+                _ = sleep(self.idle) => return Err(TIMED_OUT.to_owned()),
+                // Keep what has streamed so far as a cut-off response.
+                _ = sleep_until(self.deadline) => match stream {
+                    Some(stream) => return stream.finish(true),
+                    None => return Err(TIMED_OUT.to_owned()),
+                },
+            };
+            let Some(chunk) = chunk else {
+                // The last event may end without a line break.
+                if let Some(stream) = stream.as_mut()
+                    && !bytes.is_empty()
+                {
+                    stream.line(&bytes)?;
+                }
+                break;
+            };
+            total += chunk.len();
+            if total > limit {
+                return Err(TOO_LARGE.to_owned());
             }
             bytes.extend_from_slice(&chunk);
+            let Some(stream) = stream.as_mut() else {
+                continue;
+            };
+            while !done && let Some(end) = bytes.iter().position(|&b| b == b'\n') {
+                let line: Vec<u8> = bytes.drain(..=end).collect();
+                done = stream.line(&line)?;
+            }
+            if bytes.len() > MAX_RESPONSE_BYTES {
+                return Err(TOO_LARGE.to_owned());
+            }
         }
-        serde_json::from_slice(&bytes).map_err(|_| "Provider returned invalid JSON.".to_owned())
+        match stream {
+            Some(stream) => stream.finish(false),
+            None => serde_json::from_slice(&bytes)
+                .map_err(|_| "Provider returned invalid JSON.".to_owned()),
+        }
     }
 
     async fn responses(
@@ -267,7 +343,8 @@ impl Client {
                 "parallel_tool_calls": false,
                 "store": false,
                 "include": ["reasoning.encrypted_content"],
-                "max_output_tokens": 4096
+                "max_output_tokens": MAX_OUTPUT_TOKENS,
+                "stream": true
             });
             if self.config.model.starts_with("gpt-6") || self.config.model.starts_with("gpt-5") {
                 request["reasoning"] = json!({"effort":"low"});
@@ -277,13 +354,13 @@ impl Client {
         let mut executed = Executed::default();
         for _ in 0..=MAX_TOOL_CALLS {
             let response = self.post(request(&input, "auto")).await?;
-            let output = response_output(&response)?;
+            let (output, cut) = response_output(&response)?;
             let calls: Vec<_> = output
                 .iter()
                 .filter(|item| item["type"] == "function_call")
                 .collect();
             if calls.is_empty() {
-                return self.reply(output_text(output));
+                return self.reply(output_text(output), cut);
             }
             if calls.len() + executed.count > MAX_TOOL_CALLS {
                 break;
@@ -306,11 +383,11 @@ impl Client {
         }
         input.push(json!({"role":"system","content":LIMIT_NOTE}));
         let response = self.post(request(&input, "none")).await?;
-        let output = response_output(&response)?;
+        let (output, cut) = response_output(&response)?;
         if output.iter().any(|item| item["type"] == "function_call") {
             return Ok(LIMIT_REPLY.to_owned());
         }
-        self.reply(output_text(output))
+        self.reply(output_text(output), cut)
             .or_else(|_| Ok(LIMIT_REPLY.to_owned()))
     }
 
@@ -325,7 +402,7 @@ impl Client {
         let mut checked = false;
         for _ in 0..=MAX_TOOL_CALLS {
             let response = self.complete(&messages, Some("auto")).await?;
-            let message = choice_message(&response)?;
+            let (message, cut) = choice_message(&response)?;
             let calls = message["tool_calls"]
                 .as_array()
                 .filter(|calls| !calls.is_empty());
@@ -340,7 +417,7 @@ impl Client {
                     continue;
                 }
                 let text = self.keep_voice(history, &messages, text).await;
-                return self.reply(text);
+                return self.reply(text, cut);
             };
             if calls.len() + executed.count > MAX_TOOL_CALLS {
                 break;
@@ -367,7 +444,7 @@ impl Client {
         }
         messages.push(json!({"role":"system","content":LIMIT_NOTE}));
         let response = self.complete(&messages, Some("none")).await?;
-        let message = choice_message(&response)?;
+        let (message, cut) = choice_message(&response)?;
         if message["tool_calls"]
             .as_array()
             .is_some_and(|calls| !calls.is_empty())
@@ -376,7 +453,8 @@ impl Client {
         }
         let text = message["content"].as_str().unwrap_or_default().to_owned();
         let text = self.keep_voice(history, &messages, text).await;
-        self.reply(text).or_else(|_| Ok(LIMIT_REPLY.to_owned()))
+        self.reply(text, cut)
+            .or_else(|_| Ok(LIMIT_REPLY.to_owned()))
     }
 
     /// Sends chat-completions `messages` and returns a chat-completions
@@ -395,8 +473,8 @@ impl Client {
         let mut request = json!({
             "model":self.config.model,
             "messages":messages,
-            "max_tokens":2048,
-            "stream":false
+            "max_tokens":MAX_OUTPUT_TOKENS,
+            "stream":true
         });
         if let Some(tool_choice) = tool_choice {
             request["tools"] = json!(tool_definitions(false));
@@ -430,9 +508,11 @@ impl Client {
         retry.push(json!({"role":"assistant","content":text}));
         retry.push(json!({"role":"system","content":LANGUAGE_NOTE}));
         let rewritten = match self.complete(&retry, None).await {
+            // A cut-off rewrite would lose part of the reply; keep the original.
             Ok(response) => choice_message(&response)
                 .ok()
-                .and_then(|message| message["content"].as_str())
+                .filter(|(_, cut)| !cut)
+                .and_then(|(message, _)| message["content"].as_str())
                 .map(str::trim)
                 .filter(|text| !text.is_empty())
                 .map(str::to_owned),
@@ -446,18 +526,234 @@ impl Client {
         if kept.trim().is_empty() { text } else { kept }
     }
 
-    fn reply(&self, text: String) -> Result<String, String> {
-        let text = text.trim();
+    /// The reply to show; `cut` marks one the model stopped at its output limit.
+    fn reply(&self, text: String, cut: bool) -> Result<String, String> {
+        let mut text = text.trim();
         if text.is_empty() {
             return Err("Provider returned no text reply.".to_owned());
         }
-        if text.len() > 16_384 {
-            return Err("Provider reply exceeds the text limit.".to_owned());
+        let cut = cut || text.len() > MAX_REPLY_BYTES;
+        if text.len() > MAX_REPLY_BYTES {
+            text = &text[..text.floor_char_boundary(MAX_REPLY_BYTES)];
+            // End at a line break when one is reasonably close.
+            if let Some(end) = text.rfind('\n').filter(|&end| end > MAX_REPLY_BYTES / 2) {
+                text = &text[..end];
+            }
         }
+        let text = if cut { cut_off(text) } else { text.to_owned() };
         if self.config.api_key.is_empty() {
-            return Ok(text.to_owned());
+            return Ok(text);
         }
         Ok(text.replace(&self.config.api_key, "[redacted]"))
+    }
+}
+
+/// Collects a streamed response into the provider's non-streaming shape.
+/// OpenAI and DeepSeek send server-sent events; Ollama sends JSON lines.
+enum Stream {
+    /// OpenAI Responses: the final event carries the whole response.
+    Responses {
+        text: String,
+        response: Option<Value>,
+    },
+    /// Chat completions: deltas of one choice.
+    Chat {
+        content: Option<String>,
+        reasoning: Option<String>,
+        calls: Vec<Value>,
+        finish: Option<String>,
+    },
+    Ollama {
+        content: String,
+        calls: Vec<Value>,
+        finish: Option<String>,
+    },
+}
+
+impl Stream {
+    fn new(provider: Provider) -> Self {
+        match provider {
+            Provider::OpenAi => Self::Responses {
+                text: String::new(),
+                response: None,
+            },
+            Provider::DeepSeek => Self::Chat {
+                content: None,
+                reasoning: None,
+                calls: Vec::new(),
+                finish: None,
+            },
+            Provider::Ollama => Self::Ollama {
+                content: String::new(),
+                calls: Vec::new(),
+                finish: None,
+            },
+        }
+    }
+
+    /// Reads one line of the stream; true once the response is complete.
+    fn line(&mut self, line: &[u8]) -> Result<bool, String> {
+        let line = std::str::from_utf8(line)
+            .map_err(|_| "Provider returned invalid JSON.".to_owned())?
+            .trim();
+        // Server-sent events carry JSON in data fields; other fields, comments
+        // and keep-alives carry nothing needed.
+        let data = match self {
+            Self::Ollama { .. } => line,
+            _ => match line.strip_prefix("data:") {
+                Some(data) => data.trim(),
+                None => return Ok(false),
+            },
+        };
+        if data.is_empty() {
+            return Ok(false);
+        }
+        if data == "[DONE]" {
+            return Ok(true);
+        }
+        let event: Value =
+            serde_json::from_str(data).map_err(|_| "Provider returned invalid JSON.".to_owned())?;
+        // Provider error bodies are not shown; they may echo the request.
+        if event.get("error").is_some_and(|error| !error.is_null()) || event["type"] == "error" {
+            return Err(INCOMPLETE.to_owned());
+        }
+        match self {
+            Self::Responses { text, response } => match event["type"].as_str() {
+                Some("response.output_text.delta") => {
+                    text.push_str(event["delta"].as_str().unwrap_or_default());
+                }
+                Some("response.completed" | "response.incomplete" | "response.failed") => {
+                    *response = Some(event["response"].clone());
+                    return Ok(true);
+                }
+                _ => {}
+            },
+            Self::Chat {
+                content,
+                reasoning,
+                calls,
+                finish,
+            } => {
+                // A last chunk may carry only usage, with no choice.
+                let Some(choice) = event["choices"].get(0) else {
+                    return Ok(false);
+                };
+                let delta = &choice["delta"];
+                if let Some(text) = delta["content"].as_str() {
+                    content.get_or_insert_default().push_str(text);
+                }
+                if let Some(text) = delta["reasoning_content"].as_str() {
+                    reasoning.get_or_insert_default().push_str(text);
+                }
+                for part in delta["tool_calls"].as_array().into_iter().flatten() {
+                    let index = part["index"]
+                        .as_u64()
+                        .map(|index| index as usize)
+                        .filter(|&index| index <= calls.len() && index <= MAX_TOOL_CALLS)
+                        .ok_or_else(|| "Provider returned a malformed tool call.".to_owned())?;
+                    if index == calls.len() {
+                        calls.push(json!({"id":"","type":"function","function":{"name":"","arguments":""}}));
+                    }
+                    let call = &mut calls[index];
+                    if let Some(id) = part["id"].as_str().filter(|id| !id.is_empty()) {
+                        call["id"] = json!(id);
+                    }
+                    for key in ["name", "arguments"] {
+                        if let Some(text) = part["function"][key].as_str() {
+                            let joined = format!(
+                                "{}{text}",
+                                call["function"][key].as_str().unwrap_or_default()
+                            );
+                            call["function"][key] = json!(joined);
+                        }
+                    }
+                }
+                if let Some(reason) = choice["finish_reason"].as_str() {
+                    *finish = Some(reason.to_owned());
+                }
+            }
+            Self::Ollama {
+                content,
+                calls,
+                finish,
+            } => {
+                let message = &event["message"];
+                content.push_str(message["content"].as_str().unwrap_or_default());
+                calls.extend(
+                    message["tool_calls"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .cloned(),
+                );
+                if event["done"] == true {
+                    *finish = Some(event["done_reason"].as_str().unwrap_or("stop").to_owned());
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// The response collected so far. `cut` marks one stopped at the deadline,
+    /// which counts as stopped at the output limit; only its text is kept.
+    fn finish(self, cut: bool) -> Result<Value, String> {
+        const ENDED: &str = "Provider response ended early.";
+        match self {
+            Self::Responses {
+                response: Some(response),
+                ..
+            } => Ok(response),
+            Self::Responses {
+                text,
+                response: None,
+            } => {
+                if !cut {
+                    return Err(ENDED.to_owned());
+                }
+                Ok(
+                    json!({"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"message","content":[{"type":"output_text","text":text}]}]}),
+                )
+            }
+            Self::Chat {
+                content,
+                reasoning,
+                calls,
+                finish,
+            } => {
+                let finish = if cut {
+                    Some("length".to_owned())
+                } else {
+                    finish
+                };
+                let finish = finish.ok_or_else(|| ENDED.to_owned())?;
+                let mut message = json!({"role":"assistant","content":content});
+                if let Some(reasoning) = reasoning {
+                    message["reasoning_content"] = json!(reasoning);
+                }
+                if !calls.is_empty() {
+                    message["tool_calls"] = json!(calls);
+                }
+                Ok(json!({"choices":[{"message":message,"finish_reason":finish}]}))
+            }
+            Self::Ollama {
+                content,
+                calls,
+                finish,
+            } => {
+                let finish = if cut {
+                    Some("length".to_owned())
+                } else {
+                    finish
+                };
+                let finish = finish.ok_or_else(|| ENDED.to_owned())?;
+                let mut message = json!({"role":"assistant","content":content});
+                if !calls.is_empty() {
+                    message["tool_calls"] = json!(calls);
+                }
+                Ok(json!({"message":message,"done":true,"done_reason":finish}))
+            }
+        }
     }
 }
 
@@ -503,7 +799,7 @@ fn ollama_request(config: &Config, messages: &[Value], tools: bool) -> Value {
     let mut request = json!({
         "model":config.model,
         "messages":native,
-        "stream":false,
+        "stream":true,
         // Thinking makes small local models several times slower and more
         // likely to drift into another language.
         "think":false,
@@ -633,15 +929,40 @@ fn without_cjk(text: &str) -> String {
         .to_owned()
 }
 
-fn response_output(response: &Value) -> Result<&Vec<Value>, String> {
-    if matches!(
-        response["status"].as_str(),
-        Some("failed" | "cancelled" | "incomplete")
-    ) {
-        return Err("Provider did not complete its response. Try a shorter request.".to_owned());
+/// Closes a code block left open by a reply cut at the output limit, and
+/// says that it was cut, in Thai when the reply is Thai.
+fn cut_off(text: &str) -> String {
+    let mut text = text.trim_end().to_owned();
+    if text.matches("```").count() % 2 == 1 {
+        text.push_str("\n```");
     }
-    response["output"]
-        .as_array()
+    let thai = text.chars().any(|c| ('\u{0E00}'..='\u{0E7F}').contains(&c));
+    let note = if thai { CUT_OFF_TH } else { CUT_OFF_EN };
+    format!("{text}\n\n{note}")
+}
+
+/// The Responses output items, and whether the model stopped at its output
+/// limit. Only text can be kept from a cut-off response: a cut-off tool call
+/// has partial arguments.
+fn response_output(response: &Value) -> Result<(&Vec<Value>, bool), String> {
+    let output = response["output"].as_array();
+    match response["status"].as_str() {
+        Some("failed" | "cancelled") => return Err(INCOMPLETE.to_owned()),
+        Some("incomplete") => {
+            let kept = response["incomplete_details"]["reason"] == "max_output_tokens"
+                && output.is_some_and(|output| {
+                    !output.iter().any(|item| item["type"] == "function_call")
+                        && !output_text(output).trim().is_empty()
+                });
+            return output
+                .filter(|_| kept)
+                .map(|output| (output, true))
+                .ok_or_else(|| INCOMPLETE.to_owned());
+        }
+        _ => {}
+    }
+    output
+        .map(|output| (output, false))
         .ok_or_else(|| "Provider response has no output.".to_owned())
 }
 
@@ -656,21 +977,34 @@ fn output_text(output: &[Value]) -> String {
         .join("\n")
 }
 
-fn choice_message(response: &Value) -> Result<&Value, String> {
+/// The first choice's message, and whether the model stopped at its output
+/// limit. Only text can be kept from a cut-off message: a cut-off tool call
+/// has partial arguments.
+fn choice_message(response: &Value) -> Result<(&Value, bool), String> {
     let choice = response["choices"]
         .as_array()
         .and_then(|v| v.first())
         .ok_or("Provider response has no choice.")?;
-    if matches!(
-        choice["finish_reason"].as_str(),
-        Some("length" | "content_filter")
-    ) {
-        return Err("Provider did not complete its response. Try a shorter request.".to_owned());
-    }
-    choice
+    let message = choice
         .get("message")
         .filter(|v| v.is_object())
-        .ok_or_else(|| "Provider response has no message.".to_owned())
+        .ok_or_else(|| "Provider response has no message.".to_owned())?;
+    match choice["finish_reason"].as_str() {
+        Some("content_filter") => Err(INCOMPLETE.to_owned()),
+        Some("length") => {
+            let calls = message["tool_calls"]
+                .as_array()
+                .is_some_and(|calls| !calls.is_empty());
+            let text = message["content"]
+                .as_str()
+                .is_some_and(|text| !text.trim().is_empty());
+            if calls || !text {
+                return Err(INCOMPLETE.to_owned());
+            }
+            Ok((message, true))
+        }
+        _ => Ok((message, false)),
+    }
 }
 
 fn field<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -1184,12 +1518,46 @@ mod tests {
     }
 
     async fn mock_server(responses: Vec<Value>) -> (String, tokio::task::JoinHandle<Vec<Value>>) {
+        let replies = responses
+            .into_iter()
+            .map(|response| Reply {
+                content_type: "application/json",
+                body: response.to_string(),
+                stall: false,
+            })
+            .collect();
+        mock_replies(replies).await
+    }
+
+    /// A raw response body; `stall` keeps the connection open after it, as a
+    /// provider still writing would.
+    struct Reply {
+        content_type: &'static str,
+        body: String,
+        stall: bool,
+    }
+
+    /// Server-sent events: one data field per event, then [DONE].
+    fn sse(events: &[Value]) -> Reply {
+        let mut body: String = events
+            .iter()
+            .map(|event| format!("data: {event}\n\n"))
+            .collect();
+        body.push_str("data: [DONE]\n\n");
+        Reply {
+            content_type: "text/event-stream",
+            body,
+            stall: false,
+        }
+    }
+
+    async fn mock_replies(replies: Vec<Reply>) -> (String, tokio::task::JoinHandle<Vec<Value>>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}/mock", listener.local_addr().unwrap());
         let task = tokio::spawn(async move {
             let mut requests = Vec::new();
-            for response in responses {
+            for reply in replies {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let mut bytes = Vec::new();
                 let body_start;
@@ -1220,12 +1588,164 @@ mod tests {
                 }
                 requests
                     .push(serde_json::from_slice(&bytes[body_start..body_start + length]).unwrap());
-                let body = response.to_string();
-                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).as_bytes()).await.unwrap();
+                // A streamed body has no length and ends when the connection closes.
+                let length = if reply.content_type == "application/json" {
+                    format!("Content-Length: {}\r\n", reply.body.len())
+                } else {
+                    String::new()
+                };
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: {}\r\n{length}Connection: close\r\n\r\n{}", reply.content_type, reply.body).as_bytes()).await.unwrap();
+                if reply.stall {
+                    // Wait until the client gives up and closes the connection.
+                    let _ = socket.read(&mut [0; 64]).await;
+                }
             }
             requests
         });
         (endpoint, task)
+    }
+
+    #[tokio::test]
+    async fn deepseek_streams_text_reasoning_and_split_tool_calls() {
+        let delta = |delta: Value, finish: Value| json!({"choices":[{"index":0,"delta":delta,"finish_reason":finish}]});
+        let mut first = sse(&[
+            delta(
+                json!({"role":"assistant","reasoning_content":"open "}),
+                Value::Null,
+            ),
+            delta(json!({"reasoning_content":"it"}), Value::Null),
+            delta(
+                json!({"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"open_app","arguments":""}}]}),
+                Value::Null,
+            ),
+            delta(
+                json!({"tool_calls":[{"index":0,"function":{"arguments":"{\"app\":"}}]}),
+                Value::Null,
+            ),
+            delta(
+                json!({"tool_calls":[{"index":0,"function":{"arguments":"\"vscode\"}"}}]}),
+                Value::Null,
+            ),
+            delta(json!({}), json!("tool_calls")),
+            json!({"choices":[],"usage":{"completion_tokens":9}}),
+        ]);
+        // Keep-alive comments carry nothing.
+        first.body.insert_str(0, ": keep-alive\n\n");
+        let mut last = sse(&[
+            delta(json!({"content":"Rea"}), Value::Null),
+            delta(json!({"content":"dy."}), json!("stop")),
+        ]);
+        // The last event may end without a line break.
+        last.body = last.body.trim_end().to_owned();
+        let (url, server) = mock_replies(vec![first, last]).await;
+        let mut tools = FakeTools::default();
+        let reply = test_client(Provider::DeepSeek, url)
+            .chat(&[], &mut tools)
+            .await;
+        assert_eq!(reply.unwrap(), "Ready.");
+        assert_eq!(tools.calls, vec![(App::Vscode, LaunchMode::Default)]);
+        let requests = server.await.unwrap();
+        assert_eq!(requests[0]["stream"], true);
+        let assistant = &requests[1]["messages"][1];
+        assert_eq!(assistant["reasoning_content"], "open it");
+        assert_eq!(assistant["content"], Value::Null);
+        assert_eq!(
+            assistant["tool_calls"],
+            json!([{"id":"call_1","type":"function","function":{"name":"open_app","arguments":"{\"app\":\"vscode\"}"}}])
+        );
+        assert_eq!(requests[1]["messages"][2]["tool_call_id"], "call_1");
+    }
+
+    #[tokio::test]
+    async fn responses_and_ollama_streams_return_their_final_reply() {
+        let done = json!({"type":"response.completed","response":{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"Hello there."}]}]}});
+        let mut reply = sse(&[
+            json!({"type":"response.created","response":{"status":"in_progress"}}),
+            json!({"type":"response.output_text.delta","delta":"Hello"}),
+            json!({"type":"response.output_text.delta","delta":" there."}),
+            done,
+        ]);
+        // Event names are ignored; the data carries the type.
+        reply.body = reply.body.replace("data: ", "event: x\ndata: ");
+        let (url, server) = mock_replies(vec![reply]).await;
+        let mut tools = FakeTools::default();
+        let client = test_client(Provider::OpenAi, url);
+        assert_eq!(client.chat(&[], &mut tools).await.unwrap(), "Hello there.");
+        assert_eq!(server.await.unwrap()[0]["stream"], true);
+
+        let lines = [
+            json!({"message":{"role":"assistant","content":"สวัสดี"},"done":false}),
+            json!({"message":{"role":"assistant","content":"ครับ"},"done":false}),
+            json!({"message":{"role":"assistant","content":""},"done":true,"done_reason":"stop"}),
+        ];
+        let body = lines.iter().map(|line| format!("{line}\n")).collect();
+        let (url, server) = mock_replies(vec![Reply {
+            content_type: "application/x-ndjson",
+            body,
+            stall: false,
+        }])
+        .await;
+        let reply = test_client(Provider::Ollama, url)
+            .chat(&[], &mut tools)
+            .await;
+        assert_eq!(reply.unwrap(), "สวัสดีค่ะ");
+        assert_eq!(server.await.unwrap()[0]["stream"], true);
+    }
+
+    #[tokio::test]
+    async fn streams_keep_their_text_at_the_deadline_and_fail_when_silent() {
+        let delta = |text: &str| json!({"choices":[{"index":0,"delta":{"content":text},"finish_reason":null}]});
+        let stalled = |events: &[Value]| {
+            let mut reply = sse(events);
+            reply.body = reply.body.replace("data: [DONE]\n\n", "");
+            reply.stall = true;
+            reply
+        };
+        let (url, server) = mock_replies(vec![stalled(&[delta("still "), delta("writing")])]).await;
+        let mut client = test_client(Provider::DeepSeek, url);
+        client.deadline = Instant::now() + Duration::from_millis(300);
+        let mut tools = FakeTools::default();
+        let reply = client.chat(&[], &mut tools).await;
+        assert_eq!(reply.unwrap(), format!("still writing\n\n{CUT_OFF_EN}"));
+        server.await.unwrap();
+
+        let (url, server) = mock_replies(vec![stalled(&[
+            json!({"type":"response.output_text.delta","delta":"ยังเขียนอยู่"}),
+        ])])
+        .await;
+        let mut client = test_client(Provider::OpenAi, url);
+        client.deadline = Instant::now() + Duration::from_millis(300);
+        let reply = client.chat(&[], &mut tools).await;
+        assert_eq!(reply.unwrap(), format!("ยังเขียนอยู่\n\n{CUT_OFF_TH}"));
+        server.await.unwrap();
+
+        // Silence before the deadline is a timeout, not a cut-off reply.
+        let (url, server) = mock_replies(vec![stalled(&[delta("hi")])]).await;
+        let mut client = test_client(Provider::DeepSeek, url);
+        client.idle = Duration::from_millis(200);
+        let error = client.chat(&[], &mut tools).await;
+        assert_eq!(error.unwrap_err(), "Provider request timed out.");
+        server.await.unwrap();
+
+        // A stream that closes without finishing is an error.
+        let mut reply = stalled(&[delta("hi")]);
+        reply.stall = false;
+        let (url, server) = mock_replies(vec![reply]).await;
+        let error = test_client(Provider::DeepSeek, url)
+            .chat(&[], &mut tools)
+            .await;
+        assert_eq!(error.unwrap_err(), "Provider response ended early.");
+        server.await.unwrap();
+
+        // An error event is reported without its body.
+        let (url, server) =
+            mock_replies(vec![sse(&[json!({"error":{"message":"secret detail"}})])]).await;
+        let error = test_client(Provider::DeepSeek, url)
+            .chat(&[], &mut tools)
+            .await;
+        assert_eq!(error.unwrap_err(), INCOMPLETE);
+        server.await.unwrap();
+        assert!(tools.calls.is_empty() && tools.commands.is_empty());
     }
 
     #[tokio::test]
@@ -1475,10 +1995,61 @@ mod tests {
         );
 
         let (url, server) = mock_server(vec![json!({"message":{"role":"assistant","content":"ยาว"},"done":true,"done_reason":"length"})]).await;
-        let error = test_client(Provider::Ollama, url)
+        let reply = test_client(Provider::Ollama, url)
             .chat(&[], &mut tools)
             .await;
-        assert!(error.unwrap_err().contains("did not complete"));
+        assert_eq!(reply.unwrap(), format!("ยาว\n\n{CUT_OFF_TH}"));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn replies_cut_at_the_output_limit_are_kept_and_marked() {
+        // A cut-off code block is closed so the rest of the reply renders.
+        let code = "Here:\n```rust\nfor row in 0..40 {";
+        let (url, server) = mock_server(vec![json!({"choices":[{"message":{"role":"assistant","content":code},"finish_reason":"length"}]})]).await;
+        let mut tools = FakeTools::default();
+        let reply = test_client(Provider::DeepSeek, url)
+            .chat(&[], &mut tools)
+            .await;
+        assert_eq!(reply.unwrap(), format!("{code}\n```\n\n{CUT_OFF_EN}"));
+        let requests = server.await.unwrap();
+        assert_eq!(requests[0]["max_tokens"], MAX_OUTPUT_TOKENS);
+
+        // A cut-off tool call has partial arguments, so it stays an error.
+        let call = json!({"id":"call-0","type":"function","function":{"name":"run_command","arguments":"{\"comm"}});
+        let (url, server) = mock_server(vec![json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[call]},"finish_reason":"length"}]})]).await;
+        let error = test_client(Provider::DeepSeek, url)
+            .chat(&[], &mut tools)
+            .await;
+        assert_eq!(error.unwrap_err(), INCOMPLETE);
+        assert!(tools.commands.is_empty());
+        server.await.unwrap();
+
+        let (url, server) = mock_server(vec![json!({"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"message","content":[{"type":"output_text","text":"ยาวมาก"}]}]})]).await;
+        let reply = test_client(Provider::OpenAi, url)
+            .chat(&[], &mut tools)
+            .await;
+        assert_eq!(reply.unwrap(), format!("ยาวมาก\n\n{CUT_OFF_TH}"));
+        server.await.unwrap();
+
+        let (url, server) = mock_server(vec![json!({"status":"incomplete","incomplete_details":{"reason":"content_filter"},"output":[{"type":"message","content":[{"type":"output_text","text":"x"}]}]})]).await;
+        let error = test_client(Provider::OpenAi, url)
+            .chat(&[], &mut tools)
+            .await;
+        assert_eq!(error.unwrap_err(), INCOMPLETE);
+        server.await.unwrap();
+
+        // An over-long reply is cut at a line break instead of failing.
+        let line = "a".repeat(99);
+        let long = vec![line.as_str(); 400].join("\n");
+        let (url, server) = mock_server(vec![json!({"choices":[{"message":{"role":"assistant","content":long},"finish_reason":"stop"}]})]).await;
+        let reply = test_client(Provider::DeepSeek, url)
+            .chat(&[], &mut tools)
+            .await
+            .unwrap();
+        let (kept, note) = reply.rsplit_once("\n\n").unwrap();
+        assert_eq!(note, CUT_OFF_EN);
+        assert!(kept.len() <= MAX_REPLY_BYTES && kept.ends_with(&line));
         server.await.unwrap();
     }
 

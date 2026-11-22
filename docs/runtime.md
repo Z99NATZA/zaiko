@@ -26,8 +26,8 @@ used by ZAIKO_LLM_MODELS.
 Ollama runs models locally and needs no API key. Start it with ollama serve and
 pull a model that supports tool calling (for example ollama pull qwen3:8b).
 ZAIKO_OLLAMA_URL sets the server, default http://127.0.0.1:11434. Zaiko uses its
-native /api/chat endpoint and allows 180 seconds per request, since a model may
-first need to load. Requests turn thinking off (several times faster, and less
+native /api/chat endpoint and waits up to 180 seconds for it to start
+answering, since a model may first need to load. Requests turn thinking off (several times faster, and less
 drift into other languages), keep the model loaded for 30 minutes, and ask for
 a context of ZAIKO_OLLAMA_CONTEXT tokens, default 8192. Ollama's own default of
 4096 is too small for the system prompt, tools, and a few turns; a larger
@@ -35,6 +35,16 @@ context only helps while the model still fits in GPU memory (ollama ps shows
 the split). Ollama replies that mix in Chinese, Japanese, or Korean the user
 did not write are rewritten once, and masculine Thai particles such as ครับ
 become feminine outside code blocks.
+
+Replies stream from every provider, so a long reply does not time out while it
+is still being written: a request fails only after 60 seconds without new data
+(180 for Ollama). OpenAI and DeepSeek may write up to 16384 output tokens per
+response, reasoning included; Ollama 2048. A reply stopped at that limit, or
+still streaming 270 seconds after the request started (just inside the
+service's 300-second limit), keeps the text written so far: an open code block
+is closed and a note in the reply's language (Thai or English) says it was cut
+and can be continued. Replies over 16 KB are cut at a line break the same way.
+A cut-off tool call is never run; the request ends with an error instead.
 
 make install copies the project .env to ~/.config/zaiko/.env. If the installed
 file differs, it is first saved as ~/.config/zaiko/.env.backup-<timestamp>.
