@@ -314,10 +314,21 @@ export class InputVim {
             const index = heights.indexOf(current.y);
             const target = rows.get(heights[index + (key === 'j' ? 1 : -1)]);
             if (index >= 0 && !target && !visual) {
-                const recall = this._recall(characters, cursor, key);
-                if (recall.recalled)
-                    this.column = null;
-                ({characters, cursor} = recall);
+                // Sent drafts come back only into an empty input, or while already stepping through them.
+                if (this.recalled !== null || !characters.length) {
+                    const recall = this._recall(characters, cursor, key);
+                    if (recall.recalled)
+                        this.column = null;
+                    ({characters, cursor} = recall);
+                    return result();
+                }
+                // With text, the first or last row is as far as j/k go: k to the start, j to the last row like G.
+                if (key === 'k') {
+                    cursor = 0;
+                } else {
+                    const [from] = row(characters, normal(characters, characters.length), measure);
+                    cursor = firstNonBlank(characters, from);
+                }
                 return result();
             }
             if (index < 0 || !target)

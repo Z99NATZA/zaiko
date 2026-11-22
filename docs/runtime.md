@@ -322,10 +322,12 @@ command is one step, and an insert or replace session together with the command
 that began it (such as o or ciw) is one step, like Vim. Changes made outside
 Vim commands, including sending the draft, are a step too, so u after sending
 brings the sent text back. A new change clears redo.
-In normal mode, k on the first row brings back the latest sent draft and each
-further k an older one; j on the last row steps to newer ones and, past the
-newest, back to the unsent draft. Inside a multi-line entry, j/k still move by
-row first. The 10 latest distinct sent messages (never slash commands) are
+In normal mode, k on the first row of an empty input brings back the latest sent
+draft and each further k an older one; j on the last row steps to newer ones and,
+past the newest, back to the unsent draft. While the input has text, j/k never
+recall drafts: k on the first row goes to the start of the text and j on the last
+row goes to its first non-blank character, like G. Inside a multi-line entry, j/k
+still move by row first. The 10 latest distinct sent messages (never slash commands) are
 kept while Zaiko is running, shared by the compact and Log inputs; sending a
 draft again makes it the newest. Editing a recalled draft makes it
 the new draft; visual mode j/k only extend the selection.

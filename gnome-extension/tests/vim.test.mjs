@@ -226,12 +226,14 @@ test('j and k move between lines and keep the wanted column', () => {
     input.key('j'); assert.equal(input.cursor, 8);
     input.key('j'); assert.equal(input.cursor, 10);
     input.key('j'); assert.equal(input.cursor, 15);
-    input.key('j'); assert.equal(input.cursor, 15);
+    // Past the last row, j goes to the last row's first non-blank, like G.
+    input.key('j'); assert.equal(input.cursor, 11);
     input.key('k'); assert.equal(input.cursor, 10);
     input.key('k'); assert.equal(input.cursor, 8);
     input.key('k'); assert.equal(input.cursor, 4);
-    input.key('k'); assert.equal(input.cursor, 4);
-    input.key('h'); input.key('j'); assert.equal(input.cursor, 8);
+    // Past the first row, k goes to the start of the text.
+    input.key('k'); assert.equal(input.cursor, 0);
+    input.key('h'); input.key('j'); assert.equal(input.cursor, 7);
     assert.equal(input.text, 'abcdef\nxy\n\nกขคงจ');
 });
 
@@ -251,8 +253,8 @@ test('j and k follow rendered rows without newlines and stop at the first/last r
     const text = 'abcdefghijkl';
     const measure = position => ({x: position % 5 * 10, y: Math.floor(position / 5) * 20});
     let cursor = 3;
-    for (const [key, expected] of [['k', 3], ['j', 8], ['j', 11], ['j', 11],
-        ['k', 8], ['k', 3], ['k', 3]]) {
+    for (const [key, expected] of [['k', 0], ['j', 8], ['j', 11], ['j', 10],
+        ['k', 8], ['k', 3], ['k', 0]]) {
         const result = vim.handle(text, cursor, key, measure);
         assert.equal(result.cursor, expected);
         assert.equal(result.text, text);
@@ -503,7 +505,7 @@ test('sent drafts keep the latest distinct entries, at most the limit', () => {
 });
 
 test('k and j past the first and last rows step through sent drafts and back', () => {
-    const input = editor('draft', 2, ['old', 'two\nlines', 'new']);
+    const input = editor('', 0, ['old', 'two\nlines', 'new']);
     input.key('k'); assert.equal(input.text, 'new');
     input.key('k'); assert.equal(input.text, 'two\nlines');
     assert.equal(input.cursor, 4);
@@ -514,15 +516,29 @@ test('k and j past the first and last rows step through sent drafts and back', (
     input.key('j'); assert.equal(input.text, 'two\nlines'); assert.equal(input.cursor, 0);
     input.key('j'); assert.equal(input.cursor, 4);
     input.key('j'); assert.equal(input.text, 'new');
-    input.key('j'); assert.equal(input.text, 'draft');
-    input.key('j'); assert.equal(input.text, 'draft');
+    input.key('j'); assert.equal(input.text, '');
+    input.key('j'); assert.equal(input.text, '');
+});
+
+test('with text in the input, k and j stop at the first and last rows instead of recalling', () => {
+    const input = editor('ab\ncd', 4, ['old']);
+    input.key('k'); assert.equal(input.text, 'ab\ncd'); assert.equal(input.cursor, 1);
+    input.key('k'); assert.equal(input.text, 'ab\ncd'); assert.equal(input.cursor, 0);
+    input.key('k'); assert.equal(input.text, 'ab\ncd'); assert.equal(input.cursor, 0);
+    // The wanted column stays 1 from the first k, so j lands on the second row's 'd'.
+    input.key('j'); assert.equal(input.cursor, 4);
+    input.key('j'); assert.equal(input.text, 'ab\ncd'); assert.equal(input.cursor, 3);
+    const single = editor('draft', 2, ['old']);
+    single.key('k'); assert.equal(single.text, 'draft'); assert.equal(single.cursor, 0);
+    single.key('j'); assert.equal(single.text, 'draft'); assert.equal(single.cursor, 0);
 });
 
 test('editing a recalled draft makes it the draft, and visual mode never recalls', () => {
     const input = editor('', 0, ['first', 'second']);
     input.key('k'); assert.equal(input.text, 'second');
     input.key('x'); assert.equal(input.text, 'econd');
-    input.key('k'); assert.equal(input.text, 'second');
+    // The edited draft has text, so k no longer walks back to older drafts.
+    input.key('k'); assert.equal(input.text, 'econd');
     input.key('j'); assert.equal(input.text, 'econd');
     input.key('V');
     input.key('k'); assert.equal(input.text, 'econd');
