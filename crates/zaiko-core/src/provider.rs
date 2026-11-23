@@ -1011,9 +1011,14 @@ fn field<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
     value
         .get(key)
         .and_then(Value::as_str)
-        .filter(|s| !s.is_empty() && s.len() <= 8192)
+        .filter(|s| !s.is_empty() && s.len() <= MAX_ARGUMENT_BYTES)
         .ok_or_else(|| "Provider returned a malformed tool call.".to_owned())
 }
+
+/// Bound on raw tool-call argument JSON. Escaped JSON is much larger than the
+/// command it carries (Thai text and quotes expand), so this must not match the
+/// command's own 8192-byte limit; oversize commands get a tool error instead.
+const MAX_ARGUMENT_BYTES: usize = 1 << 20;
 
 fn schema() -> Value {
     json!({"type":"object","properties":{"app":{"type":"string","enum":["terminal","vscode"]},"mode":{"type":["string","null"],"enum":["default","tab","standalone",null]},"command":{"type":["string","null"],"maxLength":4096,"description":"One-line shell command to run in a new zter tab, or null to just open the app."},"path":{"type":["string","null"],"maxLength":4096,"description":"Folder to open in (or a file, for VS Code): absolute or relative to home, for example my_code/rs. null for none."}},"required":["app","mode","command","path"],"additionalProperties":false})
@@ -1897,6 +1902,31 @@ mod tests {
             url,
         )
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn oversize_command_returns_a_tool_error_instead_of_failing_the_turn() {
+        // Escaped Thai text pushes the arguments past 8192 bytes while the
+        // command itself is over its limit; the model should see a tool error.
+        let command = "x".repeat(9000);
+        let arguments = json!({"command":command,"workdir":null,"timeout_ms":null}).to_string();
+        assert!(arguments.len() > 8192);
+        let responses = vec![
+            json!({"status":"completed","output":[{"type":"function_call","call_id":"call-1","name":"run_command","arguments":arguments}]}),
+            json!({"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ขอโทษค่ะ"}]}]}),
+        ];
+        let (url, server) = mock_server(responses).await;
+        let mut tools = FakeTools::default();
+        let reply = test_client(Provider::OpenAi, url)
+            .chat(&[], &mut tools)
+            .await;
+        assert_eq!(reply.unwrap(), "ขอโทษค่ะ");
+        assert!(tools.commands.is_empty());
+        let requests = server.await.unwrap();
+        let output = requests[1]["input"].as_array().unwrap().last().unwrap()["output"]
+            .as_str()
+            .unwrap();
+        assert!(output.contains("command must contain"));
     }
 
     #[tokio::test]
