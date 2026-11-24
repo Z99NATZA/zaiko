@@ -10,6 +10,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as ShellEntry from 'resource:///org/gnome/shell/ui/shellEntry.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import {Slider} from 'resource:///org/gnome/shell/ui/slider.js';
 
 import {
     APP_IDS, APP_ACTIONS, TERMINAL_ACTIONS, CORE_BUS, CORE_PATH, DESKTOP_BUS, DESKTOP_PATH, DESKTOP_XML,
@@ -20,6 +21,9 @@ import {
     CHARACTER_SIZES, characterBox, frameCycleDelay, imageGeometry, nextCharacterSize, normalizeCharacterSize, pickFrame,
 } from './assets/manifest.js';
 import {CharacterMotion} from './characterMotion.js';
+import {
+    logOpacityFromSlider, logOpacityToSlider, logSurfaceStyle, normalizeLogOpacity,
+} from './logOpacity.js';
 import {TICK_MS, Typewriter, firstGraphemes, graphemes} from './typewriter.js';
 import {answerPreview} from './answerPreview.js';
 import {CaretBlink} from './caret.js';
@@ -41,6 +45,29 @@ const ToggleMenuItem = GObject.registerClass(class ToggleMenuItem extends PopupM
     activate() {
         // This preference toggles in place; Log and Quit keep normal activation.
         this._toggle();
+    }
+});
+
+// A row holding Shell's slider. Activation is a no-op so pressing or dragging
+// the slider does not close the menu, and changes are reported as they happen.
+const OpacityMenuItem = GObject.registerClass(class OpacityMenuItem extends PopupMenu.PopupBaseMenuItem {
+    _init(title, value, onChange) {
+        super._init({reactive: true, can_focus: false});
+        this.label = new St.Label({text: title, y_align: Clutter.ActorAlign.CENTER});
+        this.add_child(this.label);
+        this._slider = new Slider(value);
+        this._slider.x_expand = true;
+        this._slider.y_align = Clutter.ActorAlign.CENTER;
+        this.add_child(this._slider);
+        this._slider.connect('notify::value', () => onChange(this._slider.value));
+    }
+
+    get value() {
+        return this._slider.value;
+    }
+
+    activate() {
+        // Dragging the slider must keep the character menu open.
     }
 });
 
@@ -123,6 +150,7 @@ export default class ZaikoExtension extends Extension {
         this._vimEnabled = this._loadVimEnabled();
         this._characterSize = this._loadCharacterSize();
         this._characterBox = characterBox(this._characterSize);
+        this._logOpacity = this._loadLogOpacity();
         this._vimModeState = {mode: 'normal'};
         // The latest sent drafts, shared by both inputs for Vim j/k.
         this._sentDrafts = [];
@@ -330,6 +358,38 @@ export default class ZaikoExtension extends Extension {
         }
     }
 
+    _loadLogOpacity() {
+        this._logOpacityPath = GLib.build_filenamev([GLib.get_user_config_dir(), 'zaiko', 'log-opacity']);
+        if (!GLib.file_test(this._logOpacityPath, GLib.FileTest.EXISTS))
+            return normalizeLogOpacity(null);
+        try {
+            const [, contents] = GLib.file_get_contents(this._logOpacityPath);
+            return normalizeLogOpacity(new TextDecoder().decode(contents));
+        } catch (error) {
+            console.warn(`Zaiko: could not read log opacity preference: ${error.message}`);
+            return normalizeLogOpacity(null);
+        }
+    }
+
+    _setLogOpacity(percent) {
+        if (percent === this._logOpacity)
+            return;
+        this._logOpacity = percent;
+        this._applyLogOpacity();
+        try {
+            if (GLib.mkdir_with_parents(GLib.path_get_dirname(this._logOpacityPath), 0o700) !== 0)
+                throw new Error('Could not create configuration directory');
+            GLib.file_set_contents(this._logOpacityPath, `${percent}\n`);
+        } catch (error) {
+            console.warn(`Zaiko: could not save log opacity preference: ${error.message}`);
+        }
+    }
+
+    // Only the Log panel's background alpha changes; its text stays opaque.
+    _applyLogOpacity() {
+        this._panel.set_style(logSurfaceStyle(this._logOpacity));
+    }
+
     _cycleCharacterSize() {
         const size = nextCharacterSize(this._characterSize);
         try {
@@ -382,7 +442,6 @@ export default class ZaikoExtension extends Extension {
 
     _styleContextMenu(menu, anchor = null) {
         menu.actor.add_style_class_name('zaiko-context');
-        menu.actor.set_style(this._panel.get_style());
         menu.connect('open-state-changed', (_menu, open) => {
             menu.actor.remove_style_class_name('zaiko-keyboard');
             if (!open)
@@ -580,6 +639,7 @@ export default class ZaikoExtension extends Extension {
         logArea.add_child(this._logScroll);
         logArea.add_child(this._logBottom);
         this._panelContent.add_child(logArea);
+        this._applyLogOpacity();
         this._logStatus = this._wrappedLabel('', 'zaiko-log-status');
         this._logStatus.visible = false;
         this._panelContent.add_child(this._logStatus);
@@ -590,6 +650,47 @@ export default class ZaikoExtension extends Extension {
             this._hidePanel();
             return Clutter.EVENT_STOP;
         });
+        this._buildLogMenu();
+    }
+
+    // Right-click on the Log's empty area opens a menu with the opacity slider.
+    // Messages keep their own Copy menu, so their clicks are left alone.
+    _buildLogMenu() {
+        this._logMenuAnchor = new St.Widget({width: 1, height: 1, opacity: 0, reactive: false});
+        Main.uiGroup.add_child(this._logMenuAnchor);
+        this._logMenu = new PopupMenu.PopupMenu(this._panel, 0, St.Side.TOP);
+        this._styleContextMenu(this._logMenu, this._logMenuAnchor);
+        // A draggable row: the menu stays open while the Log opacity changes.
+        this._opacityMenuItem = new OpacityMenuItem(this._t('menu.opacity'), logOpacityToSlider(this._logOpacity),
+            value => this._setLogOpacity(logOpacityFromSlider(value)));
+        this._logMenu.addMenuItem(this._opacityMenuItem);
+        Main.uiGroup.add_child(this._logMenu.actor);
+        this._logMenu.actor.hide();
+        this._logMenuManager = new PopupMenu.PopupMenuManager(this._panel);
+        this._logMenuManager.addMenu(this._logMenu);
+        const click = new Clutter.ClickGesture();
+        click.set_required_button(Clutter.BUTTON_SECONDARY);
+        click.connect('recognize', gesture => {
+            const coords = gesture.get_coords_abs();
+            if (this._isOnLogMessage(coords))
+                return;
+            this._rememberFocus();
+            const [x, y] = [Math.round(coords.x), Math.round(coords.y)];
+            this._logMenuAnchor.set_position(x, y);
+            this._logMenuAnchor.allocate_preferred_size(x, y);
+            this._logMenu.toggle();
+        });
+        this._panel.add_action(click);
+        this._applyLogOpacity();
+    }
+
+    _isOnLogMessage(coords) {
+        let actor = global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, Math.round(coords.x), Math.round(coords.y));
+        for (; actor && actor !== this._panel; actor = actor.get_parent()) {
+            if (actor.menu)
+                return true;
+        }
+        return false;
     }
 
     _buildLogComposer() {
@@ -1976,9 +2077,15 @@ export default class ZaikoExtension extends Extension {
         this._characterMenuManager = null;
         this._characterMenuAnchor?.destroy();
         this._characterMenuAnchor = null;
+        this._logMenu?.destroy();
+        this._logMenu = null;
+        this._logMenuManager = null;
+        this._logMenuAnchor?.destroy();
+        this._logMenuAnchor = null;
         this._sizeMenuItem = null;
         this._vimMenuItem = null;
         this._langMenuItem = null;
+        this._opacityMenuItem = null;
         this._logMenuItem = null;
         this._quitMenuItem = null;
         this._clearCore();

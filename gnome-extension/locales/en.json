@@ -2,6 +2,7 @@
   "menu.log": "Log",
   "menu.vim": "Vim",
   "menu.language": "Lang",
+  "menu.opacity": "Opacity",
   "menu.size": "CharSize",
   "menu.quit": "Quit",
   "quit.confirm": "Confirm quit?",

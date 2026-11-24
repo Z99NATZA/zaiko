@@ -357,7 +357,11 @@ input without changing the current Vim mode.
 Fixed appearance
 ----------
 
-Zaiko uses a fixed One Half Dark palette: #282c34 surfaces at 90% opacity,
+Zaiko uses a fixed One Half Dark palette: #282c34 surfaces at 90% opacity (the
+Log panel's opacity is set by dragging the Opacity slider in the Log's
+right-click menu on empty space, not on a message, in whole percents from 50 to
+100, saved in ~/.config/zaiko/log-opacity; copy menus and the composer stay
+fixed),
 #dcdfe4 text, subdued gray outlines, rounded controls, and a slim scrollbar.
 Controls, caret, selection, hover, and keyboard focus use the same neutral
 foreground tones. Close uses a gray highlight; errors use brighter, heavier text.

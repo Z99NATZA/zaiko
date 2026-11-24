@@ -2,6 +2,7 @@
   "menu.log": "พูดคุย",
   "menu.vim": "Vim",
   "menu.language": "ภาษา",
+  "menu.opacity": "ความทึบ",
   "menu.size": "ขนาด",
   "menu.quit": "ปิด",
   "quit.confirm": "ยืนยันการปิด?",
