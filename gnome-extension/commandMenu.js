@@ -37,6 +37,7 @@ export class CommandMenu {
         // A bar above the rows names the navigation keys. Adwaita's go-up/down
         // icons are chevrons, so the arrows are text.
         this._hint = new St.BoxLayout({style_class: 'zaiko-command-hint', x_expand: true});
+        this._translate = translate;
         this._hintLabel = new St.Label({text: `${translate('command.navigate')} ↑ ↓`});
         this._hint.add_child(this._hintLabel);
         this.actor.add_child(this._hint);
@@ -90,7 +91,7 @@ export class CommandMenu {
 
     setTranslator(translate) {
         this._commands = translatedCommands(translate);
-        this._hintLabel.text = `${translate('command.navigate')} ↑ ↓`;
+        this._translate = translate;
         this._query = null;
         this.sync();
     }
@@ -139,7 +140,14 @@ export class CommandMenu {
             this._select(Math.max(0, current), current > 0);
         }
         this._open = true;
+        this._updateHint();
         this.layout();
+    }
+
+    // Names only the keys that work for the open list: j/k join the arrows in model and permission lists.
+    _updateHint() {
+        const key = this._isChoiceListOpen() ? 'command.navigate.choice' : 'command.navigate';
+        this._hintLabel.text = `${this._translate(key)} ↑ ↓`;
     }
 
     _createRow(command) {
@@ -305,11 +313,30 @@ export class CommandMenu {
             this._submit();
     }
 
+    // True while the /model or /permissions list is showing all its choices (no filter typed yet).
+    _isChoiceListOpen() {
+        return this._open && this._matches.length > 0 &&
+            (this._matches[0].model || this._matches[0].permission) &&
+            /^\/(model|permissions)\s*$/i.test(this.entry.get_text());
+    }
+
     _event(event) {
         if (!this._open || event.type() !== Clutter.EventType.KEY_PRESS)
             return Clutter.EVENT_PROPAGATE;
         const state = event.get_state();
         const symbol = event.get_key_symbol();
+        // Plain j/k move through an open model or permission list while its filter is still empty
+        // (right after Enter on /model), so they work without Super and without leaving Vim normal mode.
+        if (this._isChoiceListOpen() && !(state & (Clutter.ModifierType.CONTROL_MASK |
+            Clutter.ModifierType.MOD1_MASK | Clutter.ModifierType.SUPER_MASK | Clutter.ModifierType.MOD4_MASK))) {
+            const code = event.get_event_code();
+            const step = code === 36 || [Clutter.KEY_j, Clutter.KEY_J].includes(symbol) ? 1
+                : code === 37 || [Clutter.KEY_k, Clutter.KEY_K].includes(symbol) ? -1 : 0;
+            if (step) {
+                this._select(this._selected + step);
+                return Clutter.EVENT_STOP;
+            }
+        }
         // Super+J/K move down/up like the arrows and stop at the first/last row.
         // Physical keys (evdev 36/37) keep working under the Thai layout.
         if (state & (Clutter.ModifierType.SUPER_MASK | Clutter.ModifierType.MOD4_MASK) &&

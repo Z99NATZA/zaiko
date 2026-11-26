@@ -29,6 +29,7 @@
   "command.vim": "Turn Vim input on or off",
   "command.exit": "Quit Zaiko right away",
   "command.navigate": "Super + j/k or",
+  "command.navigate.choice": "j/k or",
   "status.sending": "Sending…",
   "status.thinking": "Thinking... ({elapsed})",
   "status.opening": "Opening app…",

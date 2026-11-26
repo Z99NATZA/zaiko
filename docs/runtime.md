@@ -249,7 +249,10 @@ Popup geometry is measured after the input is allocated, keeping its full
 width stable during text edits.
 At most eight rows are visible, with native mouse-wheel scrolling for the rest.
 Up/Down, or Super+J/K (also under the Thai layout), select and scroll the chosen
-row into view, stopping at the first/last command without wrapping. Tab fills the command without
+row into view, stopping at the first/last command without wrapping. While the /model or
+/permissions list shows all its choices (no filter typed yet), plain j/k also select
+rows, in Vim normal or insert mode, so no Super is needed. Once a filter is typed, j/k
+go back to Vim or text. Tab fills the command without
 submitting; Enter or clicking a row submits it once. Escape closes the picker
 and preserves the draft; the next Escape follows the normal composer/Vim behavior.
 The picker hides while busy, on focus loss, and when its composer is hidden.

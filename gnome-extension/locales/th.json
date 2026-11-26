@@ -29,6 +29,7 @@
   "command.vim": "เปิดหรือปิดโหมด Vim ในช่องพิมพ์",
   "command.exit": "ปิด",
   "command.navigate": "Super + j/k หรือ",
+  "command.navigate.choice": "j/k หรือ",
   "status.sending": "กำลังส่ง…",
   "status.thinking": "กำลังคิด... ({elapsed})",
   "status.opening": "กำลังเปิดแอป…",
