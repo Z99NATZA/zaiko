@@ -1462,16 +1462,16 @@ export default class ZaikoExtension extends Extension {
         this._syncThinkingClock();
         this._renderCompact();
         this._renderLogState();
-        const signature = JSON.stringify(this._snapshot.messages);
+        // An empty Log (first open or after /clear) shows Aiko's greeting as a normal reply.
+        const messages = this._snapshot.messages.length
+            ? this._snapshot.messages
+            : [{role: 'assistant', content: this._t('log.empty')}];
+        const signature = JSON.stringify(messages);
         if (signature === this._historySignature)
             return;
         this._historySignature = signature;
         this._logHistory.destroy_all_children();
-        if (!this._snapshot.messages.length) {
-            const placeholder = this._wrappedLabel(this._t('log.empty'), 'zaiko-placeholder');
-            this._logHistory.add_child(placeholder);
-        }
-        for (const [index, message] of this._snapshot.messages.entries()) {
+        for (const [index, message] of messages.entries()) {
             const {prefix, text, color} = transcriptLine(message, {
                 me: this._t('speaker.me'), action: this._t('speaker.action'),
             });

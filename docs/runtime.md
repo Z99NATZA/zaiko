@@ -133,6 +133,8 @@ session conversation. Its flat, left-aligned transcript displays [Me] message
 and [Aiko] message directly, without bubbles or separate role headings. Only
 the prefixes have participant-specific colors; all message bodies use the same
 color. Tool results use [Action]. Markup-like message content is literal text.
+An empty Log, on first open or after /clear, shows the localized greeting
+(log.empty, for example "[Aiko] Halo >_< ~~~") as a normal [Aiko] message.
 Drag to select text within a message (shown in the inputs' blue #4a6988) and
 press Ctrl+C to copy it. The drag keeps selecting until release, even after the
 pointer leaves Log or crosses an app window. Typing or pasting (Ctrl+V, Ctrl+Shift+V, Shift+Insert)

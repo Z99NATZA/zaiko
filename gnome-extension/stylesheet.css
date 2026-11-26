@@ -60,8 +60,7 @@
     font-size: 14px;
     font-weight: 400;
 }
-.zaiko-placeholder, .zaiko-log-status { color: #a0a6b1; font-size: 12px; }
-.zaiko-placeholder { padding: 12px 0; }
+.zaiko-log-status { color: #a0a6b1; font-size: 12px; }
 .zaiko-log-status.zaiko-log-error { color: #dcdfe4; font-weight: 500; }
 .zaiko-log-composer, .zaiko-log-composer:focus,
 .zaiko-input-overlay, .zaiko-input-overlay:focus {
