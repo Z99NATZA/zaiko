@@ -19,7 +19,7 @@
   "accessibility.close": "Close conversation",
   "accessibility.message": "Message",
   "accessibility.cancel": "Cancel request",
-  "log.empty": "Halo >_< ~~~",
+  "log.empty": "Halo >_<",
   "speaker.me": "Me",
   "speaker.action": "Action",
   "command.status": "Show the current model, status and permissions",
