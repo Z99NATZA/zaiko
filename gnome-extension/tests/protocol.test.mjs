@@ -107,3 +107,22 @@ test('choice labels list every choice and dim the inactive ones by UTF-8 byte ra
     assert.deepEqual(choiceLabel('ภาษา', ['en', 'th'], 'th'), {text: 'ภาษา: en th', dim: [[14, 16]]});
     assert.deepEqual(choiceLabel('Vim', ['เปิด', 'ปิด'], 'เปิด'), {text: 'Vim: เปิด ปิด', dim: [[18, 27]]});
 });
+
+test('the Log is one text across messages, with prefix colors by UTF-8 byte range', async () => {
+    const {transcriptText} = await import('../protocol.js');
+    const speakers = {me: 'ฉัน', action: 'Action'};
+    const messages = [
+        {role: 'user', content: 'สวัสดี'},
+        {role: 'assistant', content: 'hi'},
+        {role: 'tool', content: 'ok'},
+    ];
+    const {text, colors} = transcriptText(messages, speakers);
+    assert.equal(text, '[ฉัน] สวัสดี\n\n[Aiko] hi\n\n[Action] ok');
+    const bytes = new TextEncoder().encode(text);
+    const slice = ({start, end}) => new TextDecoder().decode(bytes.slice(start, end));
+    assert.deepEqual(colors.map(slice), ['[ฉัน]', '[Aiko]']);
+    assert.deepEqual(colors.map(c => c.color), ['#98c379', '#c678dd']);
+
+    const revealing = transcriptText(messages, speakers, {index: 1, content: 'h'});
+    assert.equal(revealing.text, '[ฉัน] สวัสดี\n\n[Aiko] h\n\n[Action] ok');
+});

@@ -116,6 +116,31 @@ export function transcriptLine(message, speakers = {me: 'Me', action: 'Action'})
     return {prefix, text: `${prefix} ${message.content}`, color};
 }
 
+// The whole Log as one text, so a selection can run across messages. Messages
+// are separated by a blank line. Each colored prefix gets a span in UTF-8 bytes.
+// revealed replaces one message's content while it is being typed out.
+export function transcriptText(messages, speakers, revealed = null) {
+    const encoder = new TextEncoder();
+    let text = '';
+    let offset = 0;
+    const colors = [];
+    for (const [index, message] of messages.entries()) {
+        if (index) {
+            const separator = '\n\n';
+            text += separator;
+            offset += encoder.encode(separator).length;
+        }
+        const content = revealed?.index === index ? revealed.content : message.content;
+        const line = transcriptLine({role: message.role, content}, speakers);
+        if (line.color) {
+            colors.push({start: offset, end: offset + encoder.encode(line.prefix).length, color: line.color});
+        }
+        text += line.text;
+        offset += encoder.encode(line.text).length;
+    }
+    return {text, colors};
+}
+
 export function formatElapsed(seconds, units = {hour: 'h', minute: 'm', second: 's'}) {
     const elapsed = Math.max(0, Math.floor(seconds));
     const hours = Math.floor(elapsed / 3600);

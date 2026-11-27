@@ -15,7 +15,7 @@ import {Slider} from 'resource:///org/gnome/shell/ui/slider.js';
 import {
     APP_IDS, APP_ACTIONS, TERMINAL_ACTIONS, CORE_BUS, CORE_PATH, DESKTOP_BUS, DESKTOP_PATH, DESKTOP_XML,
     panelPosition, clampPosition, compactPosition, expressionFor, isBusy, latestAssistant, parseEvent, parseSnapshot,
-    transcriptLine, formatElapsed, choiceLabel,
+    transcriptText, formatElapsed, choiceLabel,
 } from './protocol.js';
 import {
     CHARACTER_SIZES, characterBox, frameCycleDelay, imageGeometry, nextCharacterSize, normalizeCharacterSize, pickFrame,
@@ -1471,38 +1471,42 @@ export default class ZaikoExtension extends Extension {
             return;
         this._historySignature = signature;
         this._logHistory.destroy_all_children();
-        for (const [index, message] of messages.entries()) {
-            const {prefix, text, color} = transcriptLine(message, {
-                me: this._t('speaker.me'), action: this._t('speaker.action'),
-            });
-            const label = this._wrappedLabel(text, 'zaiko-log-message');
-            this._makeMessageCopyable(label);
-            label.clutter_text.set_line_alignment(Pango.Alignment.LEFT);
-            let applyPrefix = null;
-            if (color) {
-                applyPrefix = () => {
-                    const channels = [1, 3, 5].map(offset => Number.parseInt(color.slice(offset, offset + 2), 16) * 257);
-                    const attribute = Pango.attr_foreground_new(...channels);
-                    attribute.start_index = 0;
-                    attribute.end_index = new TextEncoder().encode(prefix).length;
-                    const attributes = label.clutter_text.get_attributes()?.copy() ?? Pango.AttrList.new();
-                    attributes.change(attribute);
-                    label.clutter_text.set_attributes(attributes);
-                };
-                // St replaces foreground attributes when applying CSS. Run after
-                // its style handler, overriding only the prefix's UTF-8 byte range.
-                // All message text remains literal; no markup is parsed.
-                label.connect_after('style-changed', applyPrefix);
-                applyPrefix();
-            }
-            if (this._reveal?.index === index) {
-                Object.assign(this._reveal, {label, prefix, applyPrefix});
-                label.text = `${prefix} ${this._reveal.typewriter.text}`;
-                applyPrefix?.();
-            }
-            this._logHistory.add_child(label);
-        }
+        // One label for the whole Log, so a selection can run across messages.
+        this._logMessages = messages;
+        const label = this._wrappedLabel('', 'zaiko-log-message');
+        this._makeMessageCopyable(label);
+        label.clutter_text.set_line_alignment(Pango.Alignment.LEFT);
+        // St replaces foreground attributes when applying CSS, so the speaker
+        // colors are applied again after its style handler.
+        label.connect_after('style-changed', () => this._applyLogText());
+        this._logHistoryLabel = label;
+        if (this._reveal)
+            this._reveal.label = label;
+        this._logHistory.add_child(label);
+        this._applyLogText();
         this._queueLogScroll();
+    }
+
+    // Set the Log's text from its messages, including any reply still being typed.
+    _applyLogText() {
+        const label = this._logHistoryLabel;
+        if (!label || !this._logMessages)
+            return;
+        const revealed = this._reveal ? {index: this._reveal.index, content: this._reveal.typewriter.text} : null;
+        const {text, colors} = transcriptText(this._logMessages, {
+            me: this._t('speaker.me'), action: this._t('speaker.action'),
+        }, revealed);
+        label.text = text;
+        const attributes = Pango.AttrList.new();
+        for (const {start, end, color} of colors) {
+            const channels = [1, 3, 5].map(at => Number.parseInt(color.slice(at, at + 2), 16) * 257);
+            const attribute = Pango.attr_foreground_new(...channels);
+            attribute.start_index = start;
+            attribute.end_index = end;
+            attributes.change(attribute);
+        }
+        // Message text stays literal; only the speaker prefixes are colored.
+        label.clutter_text.set_attributes(attributes);
     }
 
     // force jumps to the bottom even when the reader has scrolled up.
@@ -1862,7 +1866,7 @@ export default class ZaikoExtension extends Extension {
         if (!St.Settings.get().enable_animations || !messages[index].content)
             return;
         this._reveal = {index, content: messages[index].content, typewriter: new Typewriter(messages[index].content),
-            label: null, prefix: '', applyPrefix: null};
+            label: null};
         this._motion?.setTalking(true);
         this._revealSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, TICK_MS, () => {
             if (this._reveal.typewriter.advance()) {
@@ -1870,10 +1874,8 @@ export default class ZaikoExtension extends Extension {
                 this._finishReveal();
                 return GLib.SOURCE_REMOVE;
             }
-            const {label, prefix, applyPrefix, typewriter} = this._reveal;
-            if (label) {
-                label.text = `${prefix} ${typewriter.text}`;
-                applyPrefix?.();
+            if (this._reveal.label) {
+                this._applyLogText();
                 this._queueLogScroll();
             }
             this._showRevealInAnswer();
@@ -1899,10 +1901,8 @@ export default class ZaikoExtension extends Extension {
         this._motion?.setTalking(false);
         if (!reveal || !render)
             return;
-        if (reveal.label) {
-            reveal.label.text = `${reveal.prefix} ${reveal.content}`;
-            reveal.applyPrefix?.();
-        }
+        if (reveal.label)
+            this._applyLogText();
         this._renderCompact();
     }
 
