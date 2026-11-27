@@ -453,8 +453,9 @@ The command and a compact result appear in Log, including failures and partial
 output. The model receives stdout, stderr, exit code, actual working directory,
 and flags for timeout and output truncation before choosing its next action.
 
-Commands use /bin/bash --noprofile --norc -c with closed stdin. workdir must be
-an absolute existing directory, or null to use HOME. Each call has a fresh shell;
+Commands use /bin/bash --noprofile --norc -c with closed stdin. workdir may be
+null or ~ for HOME, a folder relative to HOME (for example my_code/rs), or an
+absolute existing directory. Each call has a fresh shell;
 directory changes, shell variables, and startup-file aliases do not persist.
 Installed programs are resolved through the core's inherited PATH.
 Interactive sessions are unavailable. Explicitly detached jobs with redirected

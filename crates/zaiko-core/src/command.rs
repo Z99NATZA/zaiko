@@ -1,4 +1,8 @@
-use std::{path::PathBuf, process::Stdio, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    process::Stdio,
+    time::Duration,
+};
 
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncReadExt, process::Command};
@@ -24,9 +28,9 @@ impl CommandRequest {
             return Err("command must contain 1–8192 UTF-8 bytes and no NUL bytes.".into());
         }
         if let Some(path) = &self.workdir
-            && (path.len() > 4096 || path.contains('\0') || !PathBuf::from(path).is_absolute())
+            && (path.trim().is_empty() || path.len() > 4096 || path.contains('\0'))
         {
-            return Err("workdir must be an absolute directory path or null for your home.".into());
+            return Err("workdir must be a folder path, ~, or null for your home.".into());
         }
         if self
             .timeout_ms
@@ -126,19 +130,41 @@ fn capture(output: &mut Vec<u8>, bytes: &[u8], truncated: &mut bool) {
     *truncated |= bytes.len() > available;
 }
 
+/// Resolves a requested workdir: null and ~ are home, ~/x and relative paths
+/// are under home, and absolute paths stay as they are.
+pub fn resolve_workdir(workdir: Option<&str>, home: &Path) -> PathBuf {
+    let Some(path) = workdir else {
+        return home.to_path_buf();
+    };
+    if path == "~" {
+        return home.to_path_buf();
+    }
+    if let Some(rest) = path.strip_prefix("~/") {
+        return home.join(rest);
+    }
+    let path = PathBuf::from(path);
+    if path.is_absolute() {
+        path
+    } else {
+        home.join(path)
+    }
+}
+
 pub async fn run(request: CommandRequest) -> Result<CommandOutput, String> {
     request.validate()?;
-    let directory = match &request.workdir {
-        Some(path) => PathBuf::from(path),
-        None => std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .ok_or("Cannot locate your home; provide an absolute workdir.")?,
-    };
-    let directory = directory
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or("Cannot locate your home; use an absolute workdir.")?;
+    let requested = resolve_workdir(request.workdir.as_deref(), &home);
+    // Name the folder as the model wrote it, so a wrong guess is easy to correct.
+    let shown = request.workdir.as_deref().unwrap_or("~");
+    let directory = requested
         .canonicalize()
         .ok()
         .filter(|path| path.is_dir())
-        .ok_or("workdir must be an existing accessible directory.")?;
+        .ok_or_else(|| format!(
+            "workdir {shown} is not an existing folder. Use null or ~ for your home, or a folder under it such as my_code/rs."
+        ))?;
     let child = Command::new("/bin/bash")
         .args(["--noprofile", "--norc", "-c", &request.command])
         .current_dir(&directory)
@@ -259,12 +285,40 @@ mod tests {
         assert_eq!(result.stdout, "started");
     }
 
+    #[test]
+    fn workdirs_resolve_home_relative_and_absolute_paths() {
+        let home = Path::new("/home/someone");
+        assert_eq!(resolve_workdir(None, home), PathBuf::from("/home/someone"));
+        assert_eq!(
+            resolve_workdir(Some("~"), home),
+            PathBuf::from("/home/someone")
+        );
+        assert_eq!(
+            resolve_workdir(Some("~/my_code/rs"), home),
+            PathBuf::from("/home/someone/my_code/rs")
+        );
+        assert_eq!(
+            resolve_workdir(Some("my_code/rs"), home),
+            PathBuf::from("/home/someone/my_code/rs")
+        );
+        assert_eq!(
+            resolve_workdir(Some("/srv/app"), home),
+            PathBuf::from("/srv/app")
+        );
+    }
+
     #[tokio::test]
     async fn invalid_arguments_are_rejected_before_spawning() {
         for mut command in [request(""), request("echo ok")] {
-            command.workdir = Some("relative/path".into());
+            command.workdir = Some(String::new());
             assert!(run(command).await.is_err());
         }
+        let mut command = request("echo ok");
+        command.workdir = Some("no-such-folder-for-zaiko-test".into());
+        let Err(error) = run(command).await else {
+            panic!("a missing workdir must fail");
+        };
+        assert!(error.contains("no-such-folder-for-zaiko-test"), "{error}");
         let mut command = request("echo ok");
         command.timeout_ms = Some(120_001);
         assert!(run(command).await.is_err());

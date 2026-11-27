@@ -1033,12 +1033,12 @@ fn tool_definitions(responses: bool) -> Vec<Value> {
         ),
         (
             "run_command",
-            "Run a noninteractive Bash command on this computer as the current user. Use for inspecting/editing files, running installed programs, and general local tasks. Supports pipes and scripts. Prefer open_app for supported desktop actions. workdir must be absolute or null for home; each call has a fresh shell. timeout_ms is 1–120000 or null for 30000. Returns stdout/stderr (first 8192 bytes each), exit_code, timed_out, and truncated. Stdin is closed. Timeout/cancellation stop the active process group. To start a persistent job, explicitly redirect its stdin/stdout/stderr and capture its PID; detached jobs are not tracked or cancelled after this call completes. Interactive sessions are unavailable: never run full-screen or interactive programs such as cava, htop, vim, or codex here; open them with open_app and command instead.",
+            "Run a noninteractive Bash command on this computer as the current user. Use for inspecting/editing files, running installed programs, and general local tasks. Supports pipes and scripts. Prefer open_app for supported desktop actions. workdir may be null or ~ for home, a path relative to home, or absolute; each call has a fresh shell. timeout_ms is 1–120000 or null for 30000. Returns stdout/stderr (first 8192 bytes each), exit_code, timed_out, and truncated. Stdin is closed. Timeout/cancellation stop the active process group. To start a persistent job, explicitly redirect its stdin/stdout/stderr and capture its PID; detached jobs are not tracked or cancelled after this call completes. Interactive sessions are unavailable: never run full-screen or interactive programs such as cava, htop, vim, or codex here; open them with open_app and command instead.",
             json!({
                 "type":"object",
                 "properties":{
                     "command":{"type":"string","minLength":1,"maxLength":8192},
-                    "workdir":{"type":["string","null"],"description":"Absolute directory, or null to use the user's home."},
+                    "workdir":{"type":["string","null"],"description":"Folder the command starts in; it must already exist. Use null (home) for most commands and put paths in the command. Also accepts ~, a path relative to home, or an absolute folder."},
                     "timeout_ms":{"type":["integer","null"],"minimum":1,"maximum":120000}
                 },
                 "required":["command","workdir","timeout_ms"],
@@ -2235,7 +2235,7 @@ mod tests {
         let mut tools = FakeTools::default();
         for (index, arguments) in [
             r#"{"command":""}"#,
-            r#"{"command":"pwd","workdir":"relative"}"#,
+            r#"{"command":"pwd","workdir":""}"#,
             r#"{"command":"pwd","timeout_ms":0}"#,
             r#"{"command":"pwd","timeout_ms":120001}"#,
             r#"{"command":"pwd","shell":"/bin/sh"}"#,
