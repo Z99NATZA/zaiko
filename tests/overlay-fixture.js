@@ -155,7 +155,8 @@ export default class OverlayQA extends ZaikoExtension {
         const [lastOk, lastX] = text.position_to_coords(-1);
         qaAssert(lastOk, 'The last character has selection coordinates');
         for (const [paddingX, paddingY] of [
-            [labelX + label.width - 2, y + lineHeight / 2],
+            // The transcript is one label: its end is the last line, not the first.
+            [labelX + label.width - 2, y + text.height - lineHeight / 2],
             [Math.min(x + lastX + 2, labelX + label.width - 2), y + text.height + 2],
         ]) {
             this._pointer.notify_absolute_motion(GLib.get_monotonic_time(), paddingX, paddingY);
@@ -951,7 +952,7 @@ export default class OverlayQA extends ZaikoExtension {
                 'Switching languages preserves drafts, conversation content and reply expiry');
             const row = this._logHistory.get_child_at_index(0);
             const prefixBytes = new TextEncoder().encode('[ฉัน]').length;
-            qaAssert(row.text === '[ฉัน] ข้อความเดิม <tag> 🙂' &&
+            qaAssert(row.text.startsWith('[ฉัน] ข้อความเดิม <tag> 🙂') &&
                 qaTextColorAt(row, prefixBytes - 1) !== qaTextColorAt(row, prefixBytes + 1),
                 'Thai speaker prefixes retain their color without coloring the message body');
             qaAssert(row.menu._getMenuItems()[0].label.text === 'คัดลอก' &&
@@ -1022,12 +1023,15 @@ export default class OverlayQA extends ZaikoExtension {
             const seen = [];
             for (let tick = 0; tick < 8 && this._reveal; tick++) {
                 await qaPause(90);
-                seen.push([this._answerLabel.text, row.text]);
+                // Typing ends by merging this label into the Log, so only sample while it is live.
+                if (this._reveal)
+                    seen.push([this._answerLabel.text, row.text]);
                 depths.push([this._body.translation_y, Boolean(talk()?.is_playing() || !this._reveal)]);
             }
+            // The typing label starts after a blank line when earlier messages exist.
             qaAssert(seen.length > 3 && seen.every(([answer, log]) =>
                 prefixes.includes(answer) &&
-                log.startsWith('[Aiko] ') && reply.startsWith(log.slice(7))) &&
+                log.replace(/^\n\n/, '').startsWith('[Aiko] ') && reply.startsWith(log.replace(/^\n\n/, '').slice(7))) &&
                 seen.at(-1)[0].length > seen[0][0].length && seen[0][0] !== parts.join(''),
             `A new reply types out by whole characters in the bubble and Log: ${JSON.stringify(seen)}`);
             qaAssert(this._answerLabel.width === size[0] && this._answerLabel.height === size[1] && !this._answerHideSource,
@@ -1036,7 +1040,8 @@ export default class OverlayQA extends ZaikoExtension {
                 depth >= 0 && depth <= Math.round(this._body.height * 0.03) + 0.5),
             `She bobs down behind her bottom edge while the reply types: ${JSON.stringify(depths)}`);
             await qaPause(2600);
-            qaAssert(!this._reveal && this._answerLabel.text === `[Aiko] ${reply}` && row.text === `[Aiko] ${reply}`,
+            qaAssert(!this._reveal && this._answerLabel.text === `[Aiko] ${reply}` &&
+                this._logHistory.get_children().at(-1).text.endsWith(`[Aiko] ${reply}`),
                 'Typing finishes with the full reply');
             qaAssert(!talk() && this._body.translation_y === 0, 'She stops bobbing and settles when typing ends');
             this._knownReplies = null;
@@ -1905,24 +1910,26 @@ export default class OverlayQA extends ZaikoExtension {
         qaAssert(this._panelClose.width === this._panelClose.height &&
             this._panelClose.get_theme_node().get_border_radius(St.Corner.TOPLEFT) >= this._panelClose.width / 2,
         'Close is circular rather than a rounded rectangle');
+        // The finished messages are one selectable label, so a selection runs across them.
         const rows = this._logHistory.get_children();
-        qaAssert(rows.length === 3 && rows.every(row => row instanceof St.Label), 'Transcript is flat text without message containers');
-        qaAssert(rows[0].text === `[Me] ${literal}` && rows[1].text === '[Aiko] คุยใน Log ได้เลยค่ะ <>& 😊', 'Role prefixes and literal contents render inline');
-        for (const row of rows) {
-            qaAssert(row.get_theme_node().get_background_color().alpha === 0 &&
-                row.get_theme_node().get_padding(St.Side.LEFT) === 6 &&
-                row.get_theme_node().get_padding(St.Side.TOP) === 4,
-            'Transcript stays transparent with 6 px horizontal and 4 px vertical selection padding');
-            qaAssert(row.clutter_text.get_line_alignment() === Pango.Alignment.LEFT, 'All text is left aligned');
-            qaAssert(qaColor(row.get_theme_node().get_foreground_color(), '#dcdfe4'), 'Message bodies share the One Half Dark foreground');
-        }
-        const meColor = qaTextColorAt(rows[0], 1);
-        const aikoColor = qaTextColorAt(rows[1], 1);
-        const bodyColor = qaTextColorAt(rows[0], 5);
+        qaAssert(rows.length === 1 && rows[0] instanceof St.Label, 'Transcript is one selectable text label');
+        const [transcript] = rows;
+        const aikoPrefixStart = new TextEncoder().encode(`[Me] ${literal}\n\n`).length;
+        qaAssert(transcript.text.startsWith(`[Me] ${literal}\n\n[Aiko] คุยใน Log ได้เลยค่ะ <>& 😊`),
+            'Role prefixes and literal contents render inline');
+        qaAssert(transcript.get_theme_node().get_background_color().alpha === 0 &&
+            transcript.get_theme_node().get_padding(St.Side.LEFT) === 6 &&
+            transcript.get_theme_node().get_padding(St.Side.TOP) === 4,
+        'Transcript stays transparent with 6 px horizontal and 4 px vertical selection padding');
+        qaAssert(transcript.clutter_text.get_line_alignment() === Pango.Alignment.LEFT, 'All text is left aligned');
+        qaAssert(qaColor(transcript.get_theme_node().get_foreground_color(), '#dcdfe4'), 'Message bodies share the One Half Dark foreground');
+        const meColor = qaTextColorAt(transcript, 1);
+        const aikoColor = qaTextColorAt(transcript, aikoPrefixStart + 1);
+        const bodyColor = qaTextColorAt(transcript, 5);
         qaAssert(meColor && aikoColor && meColor !== aikoColor, 'Participants have distinct rendered prefix colors');
-        qaAssert(bodyColor === qaTextColorAt(rows[1], 7), 'Rendered message bodies share one color');
+        qaAssert(bodyColor === qaTextColorAt(transcript, aikoPrefixStart + 7), 'Rendered message bodies share one color');
         qaAssert(meColor !== bodyColor && aikoColor !== bodyColor, 'Only prefixes carry participant-specific colors');
-        await this._checkMessageCopy(rows[1]);
+        await this._checkMessageCopy(transcript);
         this._overlayEntry.set_text('compact draft retained');
         await this._click(this._character);
         qaAssert(!this._inputOverlay.visible && this._logEntry.contains(global.stage.get_key_focus()), 'Character click routes to Log while open');
@@ -1938,7 +1945,7 @@ export default class OverlayQA extends ZaikoExtension {
         await this._checkMenuHover(this._logEntry.menu, this._logComposer);
         await this._key(Clutter.KEY_Escape);
 
-        await this._checkFocusDismiss(rows[1]);
+        await this._checkFocusDismiss(transcript);
         await this._checkMultilineInput();
         this._callCore = async (method, parameters) => {
             calls.push({method, args: parameters?.deep_unpack()});
@@ -1982,7 +1989,7 @@ export default class OverlayQA extends ZaikoExtension {
         this._logEntry.set_text('style keeps this draft');
         this._interfaceSettings.set_string('font-name', 'Serif 11');
         await qaPause(100);
-        qaAssert(qaTextColorAt(this._logHistory.get_child_at_index(1), 1) === aikoColor, 'Fixed prefix color survives desktop font changes');
+        qaAssert(qaTextColorAt(this._logHistory.get_child_at_index(0), aikoPrefixStart + 1) === aikoColor, 'Fixed prefix color survives desktop font changes');
         qaAssert(this._logEntry.get_text() === 'style keeps this draft' && qaContainsText(this._logHistory, literal), 'Font updates preserve draft and literal message');
         this._interfaceSettings.set_string('font-name', 'Sans 11');
         const originalMessages = this._snapshot.messages;

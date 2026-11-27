@@ -135,21 +135,22 @@ the prefixes have participant-specific colors; all message bodies use the same
 color. Tool results use [Action]. Markup-like message content is literal text.
 An empty Log, on first open or after /clear, shows the localized greeting
 (log.empty, for example "[Aiko] Halo >_<") as a normal [Aiko] message.
-Drag to select text within a message (shown in the inputs' blue #4a6988) and
-press Ctrl+C to copy it. The drag keeps selecting until release, even after the
+Drag to select text across the finished messages (shown in the inputs' blue #4a6988) and
+press Ctrl+C to copy it. The Log is one text, so a selection can span several messages.
+A reply that is still typing is shown in its own label until typing ends. The drag keeps selecting until release, even after the
 pointer leaves Log or crosses an app window. Typing or pasting (Ctrl+V, Ctrl+Shift+V, Shift+Insert)
 while a message is selected clears the selection and continues in the Log input,
-including Vim and the command picker. Right click a
-message and choose Copy to copy the selection, or the whole message when nothing
+including Vim and the command picker. Right click the Log
+and choose Copy to copy the selection, or the whole Log when nothing
 is selected. This menu uses the existing One Half Dark context-menu style.
 Click outside Log to clear a message or input selection and release its keyboard
 focus. A plain click on a message or unused space inside Log focuses its input.
 Log stays open and input drafts are
 preserved. Using a text field's or message's own context menu keeps its selection
 available for Copy/Paste.
-Each message has 6 px horizontal and 4 px vertical mouse padding. Dragging from
-this padding starts selection at the nearest character, including beyond the
-last character. The padding stays transparent and replaces the old row spacing.
+Messages are separated by a blank line. The text has 6 px horizontal and 4 px vertical
+mouse padding. Dragging from this padding starts selection at the nearest character,
+including beyond the last character. The padding stays transparent.
 
 The input at the bottom of Log is a multiline composer with a leading › prompt.
 It wraps long lines and grows with the draft, without a fixed row limit. When

@@ -15,7 +15,7 @@ import {Slider} from 'resource:///org/gnome/shell/ui/slider.js';
 import {
     APP_IDS, APP_ACTIONS, TERMINAL_ACTIONS, CORE_BUS, CORE_PATH, DESKTOP_BUS, DESKTOP_PATH, DESKTOP_XML,
     panelPosition, clampPosition, compactPosition, expressionFor, isBusy, latestAssistant, parseEvent, parseSnapshot,
-    transcriptText, formatElapsed, choiceLabel,
+    transcriptText, characterIndexAtByte, formatElapsed, choiceLabel,
 } from './protocol.js';
 import {
     CHARACTER_SIZES, characterBox, frameCycleDelay, imageGeometry, nextCharacterSize, normalizeCharacterSize, pickFrame,
@@ -1287,8 +1287,6 @@ export default class ZaikoExtension extends Extension {
         if (this._selectionDrag && [Clutter.EventType.MOTION, Clutter.EventType.BUTTON_RELEASE].includes(event.type())) {
             const {text, anchor} = this._selectionDrag;
             text.set_selection(anchor, this._textPositionAtEvent(text, event));
-            if (event.type() === Clutter.EventType.BUTTON_RELEASE)
-                this._endSelectionDrag();
         }
         this._focusLogOnClick(event);
         if (![Clutter.EventType.BUTTON_PRESS, Clutter.EventType.TOUCH_BEGIN].includes(event.type()))
@@ -1470,34 +1468,83 @@ export default class ZaikoExtension extends Extension {
         if (signature === this._historySignature)
             return;
         this._historySignature = signature;
-        this._logHistory.destroy_all_children();
-        // One label for the whole Log, so a selection can run across messages.
         this._logMessages = messages;
+        this._buildLogLabels();
+        this._queueLogScroll();
+    }
+
+    // Finished messages share one label, so a selection runs across them. The
+    // reply being typed gets its own small label: relayouting the whole Log on
+    // every typewriter tick would make a long conversation stutter.
+    _buildLogLabels() {
+        if (!this._logHistory || !this._logMessages)
+            return;
+        this._logHistory.destroy_all_children();
+        const typing = this._reveal && this._logMessages[this._reveal.index] ? this._reveal : null;
+        const finished = typing ? this._logMessages.slice(0, typing.index) : this._logMessages;
+        this._logHistoryLabel = this._newLogLabel();
+        this._logHistory.add_child(this._logHistoryLabel);
+        this._setLogLabel(this._logHistoryLabel, transcriptText(finished, this._logSpeakers()));
+        if (typing) {
+            typing.label = this._newLogLabel();
+            this._logHistory.add_child(typing.label);
+            this._refreshRevealLabel();
+        }
+    }
+
+    _newLogLabel() {
         const label = this._wrappedLabel('', 'zaiko-log-message');
         this._makeMessageCopyable(label);
         label.clutter_text.set_line_alignment(Pango.Alignment.LEFT);
         // St replaces foreground attributes when applying CSS, so the speaker
         // colors are applied again after its style handler.
-        label.connect_after('style-changed', () => this._applyLogText());
-        this._logHistoryLabel = label;
-        if (this._reveal)
-            this._reveal.label = label;
-        this._logHistory.add_child(label);
-        this._applyLogText();
-        this._queueLogScroll();
+        label.connect_after('style-changed', () => this._paintLogLabel(label));
+        return label;
     }
 
-    // Set the Log's text from its messages, including any reply still being typed.
-    _applyLogText() {
-        const label = this._logHistoryLabel;
-        if (!label || !this._logMessages)
+    _logSpeakers() {
+        return {me: this._t('speaker.me'), action: this._t('speaker.action')};
+    }
+
+    // Setting the same text again would reflow the label and drop its selection.
+    _setLogLabel(label, {text, colors}) {
+        label.logPaint = {text, colors};
+        if (label.clutter_text.get_text() !== text)
+            label.text = text;
+        this._paintLogLabel(label);
+    }
+
+    // The reply being typed. It starts after a blank line when earlier messages exist.
+    _refreshRevealLabel() {
+        const reveal = this._reveal;
+        if (!reveal?.label)
             return;
-        const revealed = this._reveal ? {index: this._reveal.index, content: this._reveal.typewriter.text} : null;
-        const {text, colors} = transcriptText(this._logMessages, {
-            me: this._t('speaker.me'), action: this._t('speaker.action'),
-        }, revealed);
-        label.text = text;
+        const line = transcriptText([this._logMessages[reveal.index]], this._logSpeakers(),
+            {index: 0, content: reveal.typewriter.text});
+        const lead = reveal.index ? '\n\n' : '';
+        const shift = new TextEncoder().encode(lead).length;
+        this._setLogLabel(reveal.label, {
+            text: lead + line.text,
+            colors: line.colors.map(({start, end, color}) => ({start: start + shift, end: end + shift, color})),
+        });
+    }
+
+    // Recolor without touching the text: St's style changes replace attributes.
+    _paintLogLabel(label) {
+        const paint = label.logPaint;
+        if (!paint)
+            return;
+        const {text, colors} = paint;
         const attributes = Pango.AttrList.new();
+        // Attributes replace the actor's color, so message text takes the
+        // theme's text color explicitly; the speaker prefixes override it below.
+        const [hasColor, base] = label.get_theme_node().lookup_color('color', false);
+        if (hasColor) {
+            const whole = Pango.attr_foreground_new(base.red * 257, base.green * 257, base.blue * 257);
+            whole.start_index = 0;
+            whole.end_index = new TextEncoder().encode(text).length;
+            attributes.change(whole);
+        }
         for (const {start, end, color} of colors) {
             const channels = [1, 3, 5].map(at => Number.parseInt(color.slice(at, at + 2), 16) * 257);
             const attribute = Pango.attr_foreground_new(...channels);
@@ -1606,8 +1653,9 @@ export default class ZaikoExtension extends Extension {
         const [success, x, y] = text.transform_stage_point(stageX, stageY);
         if (!success)
             return text.get_cursor_position();
-        return text.coords_to_position(Math.max(0, Math.min(x, text.width - 1)),
+        const byteOffset = text.coords_to_position(Math.max(0, Math.min(x, text.width - 1)),
             Math.max(0, Math.min(y, text.height - 1)));
+        return characterIndexAtByte(text.get_text(), byteOffset);
     }
 
     // A printable character, or Ctrl+V / Ctrl+Shift+V / Shift+Insert.
@@ -1645,6 +1693,9 @@ export default class ZaikoExtension extends Extension {
             if (this._selectionDrag?.text === text &&
                 [Clutter.EventType.MOTION, Clutter.EventType.BUTTON_RELEASE].includes(event.type())) {
                 this._dismissFocusOutside(event);
+                // Ending here keeps the release from reaching Clutter.Text, which would clear the selection.
+                if (event.type() === Clutter.EventType.BUTTON_RELEASE)
+                    this._endSelectionDrag();
                 return Clutter.EVENT_STOP;
             }
             // Track content and padding together, keeping release observable so
@@ -1875,7 +1926,7 @@ export default class ZaikoExtension extends Extension {
                 return GLib.SOURCE_REMOVE;
             }
             if (this._reveal.label) {
-                this._applyLogText();
+                this._refreshRevealLabel();
                 this._queueLogScroll();
             }
             this._showRevealInAnswer();
@@ -1902,7 +1953,7 @@ export default class ZaikoExtension extends Extension {
         if (!reveal || !render)
             return;
         if (reveal.label)
-            this._applyLogText();
+            this._buildLogLabels();
         this._renderCompact();
     }
 

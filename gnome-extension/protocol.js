@@ -169,3 +169,18 @@ export function choiceLabel(title, choices, active) {
     }
     return {text, dim};
 }
+
+// Clutter.Text.coords_to_position counts UTF-8 bytes, but its cursor and
+// selection count characters. Convert, so Thai and emoji select where drawn.
+export function characterIndexAtByte(text, byteOffset) {
+    let bytes = 0;
+    let characters = 0;
+    for (const character of text) {
+        if (bytes >= byteOffset)
+            break;
+        const code = character.codePointAt(0);
+        bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+        characters++;
+    }
+    return characters;
+}

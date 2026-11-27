@@ -126,3 +126,15 @@ test('the Log is one text across messages, with prefix colors by UTF-8 byte rang
     const revealing = transcriptText(messages, speakers, {index: 1, content: 'h'});
     assert.equal(revealing.text, '[ฉัน] สวัสดี\n\n[Aiko] h\n\n[Action] ok');
 });
+
+test('byte offsets from Clutter convert to character offsets for selection', async () => {
+    const {characterIndexAtByte} = await import('../protocol.js');
+    const text = 'aไทย😊b';
+    // Bytes: a=0, ไ=1..3, ท=4..6, ย=7..9, 😊=10..13, b=14.
+    assert.equal(characterIndexAtByte(text, 0), 0);
+    assert.equal(characterIndexAtByte(text, 1), 1);
+    assert.equal(characterIndexAtByte(text, 4), 2);
+    assert.equal(characterIndexAtByte(text, 10), 4);
+    assert.equal(characterIndexAtByte(text, 14), 5);
+    assert.equal(characterIndexAtByte(text, 99), 6);
+});
